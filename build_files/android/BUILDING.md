@@ -108,17 +108,45 @@ git config credential.helper '!f() { echo username=; echo password=; }; f'
 
 ---
 
-## 2. Cross-compile the dependencies (~56 libraries)
+## 2. Fetch the precompiled dependencies
 
 ```bash
-build_files/android/deps/build.sh all          # everything, in order
-build_files/android/deps/build.sh all --force  # rebuild even what exists
-build_files/android/deps/build.sh <name>       # one dep
+git submodule update --init lib/android_arm64
 ```
 
-`all` skips a dependency whose install directory already has content, so an
-interrupted run can simply be repeated. Each library is checked for aarch64
-after it builds, which catches one silently building for the host.
+The libraries come from the official Android port's prebuilt set, the same way
+every other platform consumes `lib/<platform>`. There is nothing to compile.
+
+They are built for API 29 and this port targets 31, which is the safe
+direction. Packages such as the video codecs, sqlite and libffi are not
+harvested separately: they are linked into ffmpeg, python and OIIO, matching
+what `lib/linux_x64` does.
+
+### Requirements that come with the prebuilt set
+
+**NDK r30 beta1 is required, not merely preferred.** Around thirty of the
+archives, including all of shaderc, SPIRV-Tools, LLVM, abseil and draco,
+reference `std::__ndk1::__hash_memory`, a libc++ internal that NDK 28 does not
+provide. An older NDK compiles everything and then fails at the final link with
+undefined symbols. Install it and point the build at it:
+
+```bash
+export ANDROID_NDK_VERSION=30.0.14904198-beta1
+```
+
+The revision number matches the build id recorded in the libraries themselves,
+visible with `llvm-readelf --notes` on any of their shared objects.
+
+**Vulkan headers are not part of the set.** Every other platform gets them from
+`lib/<platform>/vulkan`, and the NDK sysroot ships header version 275, which
+predates `VK_KHR_dynamic_rendering_local_read` that GHOST uses unconditionally.
+Provide a newer Vulkan-Headers checkout; `platform_android.cmake` looks for it
+as `<LIBDIR>/vulkan/include` and then in `<BUILD_BASE>/lib/vulkan_headers`.
+
+**ffmpeg is currently disabled.** The prebuilt `libavutil.a` and `libx265.a`
+are not built with `-fPIC`, so they cannot be linked into `libblender.so`,
+which an APK needs. Every other archive in the set links fine. Re-enable
+`WITH_CODEC_FFMPEG` in `android_features_full.cmake` once they are rebuilt.
 
 **CMake 3.26 or newer is required.** MaterialX refuses to configure with
 anything older, and 3.x and 4.x disagree about whether `Python3_LIBRARY` reaches
@@ -323,5 +351,5 @@ build_files/android/build.py --clear-caches
   Vulkan surface in `GHOST_ContextVK`.
 - Platform glue: `build_files/cmake/platform/platform_android.cmake`,
   `build_files/android/android_features_full.cmake`.
-- Deps builder: `build_files/android/deps/build.sh` (+ STATUS.md / MISSING.md).
+- Dependencies: `lib/android_arm64` submodule (prebuilt, not built here).
 - APK: `build_files/android/apk/`.

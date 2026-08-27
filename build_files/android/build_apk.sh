@@ -7,7 +7,7 @@
 #   build_files/android/build_apk.sh [lite|full]
 #
 # Steps: host codegen tools (config-matched) -> cross-compile libblender.so ->
-# package APK. Deps must already be built (build_files/android/deps/build.sh).
+# package APK. Requires lib/android_arm64 (git submodule update --init).
 
 set -euo pipefail
 CONFIG="${1:-full}"

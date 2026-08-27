@@ -65,9 +65,9 @@ This proves CMake → NDK → Ninja works before any dependency work.
    App is landscape-only. No backend stubs remain.
    Note: `BlenderActivity.java` needs a Java build step in packaging (step 7);
    soft-keyboard typing only activates once the app runs as that activity.
-6. 🚧 Port third-party dependencies for `android-arm64`. 19 leaf/mid libs done
-   (see deps/STATUS.md); hard tier (Python, LLVM, OIIO, USD …) remains.
-   Builder: `deps/build.sh`, harvest prefix `lib/android_arm64`.
+6. ✅ Third-party dependencies for `android-arm64`, taken prebuilt from the
+   official Android port via the `lib/android_arm64` submodule. The hand built
+   deps builder this port used before has been retired.
 7. ⬜ APK/AAB packaging (NativeActivity manifest) + `adb install` to the tablet.
 
 ## Deploy (once there is an APK)
