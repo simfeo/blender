@@ -179,6 +179,9 @@ endforeach()
 set(WITH_GHOST_X11 OFF)
 set(WITH_GHOST_WAYLAND OFF)
 set(WITH_GHOST_SDL OFF)
+# The port uses NativeActivity, so SDL is not needed at all. Leaving WITH_SDL
+# on declares a dependency target that links SDL3::SDL3, which is never found.
+set(WITH_SDL OFF)
 set(WITH_X11 OFF)
 set(WITH_OPENGL_BACKEND OFF)
 set(WITH_GHOST_XDND OFF)
