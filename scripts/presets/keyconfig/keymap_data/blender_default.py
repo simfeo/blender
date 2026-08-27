@@ -965,6 +965,16 @@ def km_view2d(_params):
         ("view2d.pan", {"type": 'MIDDLEMOUSE', "value": 'PRESS'}, None),
         ("view2d.pan", {"type": 'MIDDLEMOUSE', "value": 'PRESS', "shift": True}, None),
         ("view2d.pan", {"type": 'TRACKPADPAN', "value": 'ANY'}, None),
+        # Touch: drag with one finger to scroll. A tap is CLICK and still
+        # activates whatever is under it, so buttons keep working; only a drag
+        # past the threshold pans. Editors that want the left drag for
+        # themselves -- the node editor for box select and links, the outliner
+        # for drag and drop, the dope sheet, graph editor and sequencer for box
+        # select -- bind it in their own keymap, which is handled before this
+        # one, so they are unaffected. The 3D viewport is not a View2D region at
+        # all. Two-finger scrolling stays available through TRACKPADPAN above,
+        # but is easy to turn into a pinch by accident on a small panel.
+        ("view2d.pan", {"type": 'LEFTMOUSE', "value": 'CLICK_DRAG'}, None),
         ("view2d.scroll_right", {"type": 'WHEELDOWNMOUSE', "value": 'PRESS', "ctrl": True}, None),
         ("view2d.scroll_right", {"type": 'WHEELRIGHTMOUSE', "value": 'PRESS'}, None),
         ("view2d.scroll_left", {"type": 'WHEELUPMOUSE', "value": 'PRESS', "ctrl": True}, None),
@@ -1007,7 +1017,19 @@ def km_view2d_buttons_list(_params):
         ("view2d.scroller_activate", {"type": 'MIDDLEMOUSE', "value": 'PRESS'}, None),
         # Pan scroll
         ("view2d.pan", {"type": 'MIDDLEMOUSE', "value": 'PRESS'}, None),
+        # Matches the "View2D" keymap, so the touch pan gesture (Shift+MMB) also works here.
+        ("view2d.pan", {"type": 'MIDDLEMOUSE', "value": 'PRESS', "shift": True}, None),
         ("view2d.pan", {"type": 'TRACKPADPAN', "value": 'ANY'}, None),
+        # Touch: drag with one finger to scroll. A tap is CLICK and still
+        # activates whatever is under it, so buttons keep working; only a drag
+        # past the threshold pans. Editors that want the left drag for
+        # themselves -- the node editor for box select and links, the outliner
+        # for drag and drop, the dope sheet, graph editor and sequencer for box
+        # select -- bind it in their own keymap, which is handled before this
+        # one, so they are unaffected. The 3D viewport is not a View2D region at
+        # all. Two-finger scrolling stays available through TRACKPADPAN above,
+        # but is easy to turn into a pinch by accident on a small panel.
+        ("view2d.pan", {"type": 'LEFTMOUSE', "value": 'CLICK_DRAG'}, None),
         ("view2d.scroll_down", {"type": 'WHEELDOWNMOUSE', "value": 'PRESS'}, None),
         ("view2d.scroll_up", {"type": 'WHEELUPMOUSE', "value": 'PRESS'}, None),
         ("view2d.scroll_down", {"type": 'PAGE_DOWN', "value": 'PRESS', "repeat": True},
@@ -1282,7 +1304,16 @@ def km_property_editor(_params):
         ("buttons.start_filter", {"type": 'F', "value": 'PRESS', "ctrl": True}, None),
         ("buttons.clear_filter", {"type": 'F', "value": 'PRESS', "alt": True}, None),
         # Modifier panels
-        ("object.modifier_set_active", {"type": 'LEFTMOUSE', "value": 'PRESS'}, None),
+        # Touch: CLICK rather than PRESS. This item matches anywhere inside a
+        # modifier panel, its widgets included, and a press that some handler
+        # takes is exactly what makes the window manager drop the pending click.
+        # Every widget that defers to KM_CLICK in these regions (see
+        # but_touch_scroll_region in interface_handlers.cc) therefore never got
+        # one: the display-mode toggles only fired when two taps happened to
+        # land as a double-click, and the drop-down never opened at all. Text
+        # fields and the delete button act on the press or the release
+        # themselves, which is why only part of the panel looked broken.
+        ("object.modifier_set_active", {"type": 'LEFTMOUSE', "value": 'CLICK'}, None),
         ("object.modifier_remove", {"type": 'X', "value": 'PRESS'}, {"properties": [("report", True)]}),
         ("object.modifier_remove", {"type": 'DEL', "value": 'PRESS'}, {"properties": [("report", True)]}),
         ("object.modifier_copy", {"type": 'D', "value": 'PRESS', "shift": True}, None),
@@ -1300,7 +1331,8 @@ def km_property_editor(_params):
         # Strip modifiers
         ("sequencer.strip_modifier_duplicate", {"type": 'D', "value": 'PRESS', "shift": True}, None),
         ("sequencer.add_strip_modifier_menu", {"type": 'A', "value": 'PRESS', "shift": True}, None),
-        ("sequencer.strip_modifier_set_active", {"type": 'LEFTMOUSE', "value": 'PRESS'}, None),
+        # Touch: CLICK rather than PRESS, as for object modifiers above.
+        ("sequencer.strip_modifier_set_active", {"type": 'LEFTMOUSE', "value": 'CLICK'}, None),
         # Scene Compositor Effects
         ("scene.set_active_compositor_effect", {"type": 'LEFTMOUSE', "value": 'PRESS'}, None),
         ("scene.remove_compositor_effect", {"type": 'X', "value": 'PRESS'}, None),
