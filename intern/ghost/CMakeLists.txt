@@ -177,7 +177,10 @@ elseif(APPLE AND NOT WITH_GHOST_X11)
     )
   endif()
 
-elseif(WITH_GHOST_ANDROID)
+# Also require ANDROID: the host tools sub build inherits every WITH_ flag,
+# so without this the host compiles the Android backend and looks for the
+# NDK glue at a path that only exists when cross compiling.
+elseif(WITH_GHOST_ANDROID AND ANDROID)
   list(APPEND SRC
     intern/GHOST_AndroidMain.cc
     intern/GHOST_SystemAndroid.cc
