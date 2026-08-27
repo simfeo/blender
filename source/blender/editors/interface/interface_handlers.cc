@@ -3892,9 +3892,6 @@ static void textedit_begin(bContext *C, Button *but, HandleButtonData *data)
   }
   but->selend = len;
 
-  /* The on-screen keyboard shows what is in the field, since it may well be covering it. */
-  WM_virtual_keyboard_text_edit_begin(win, &text_edit.edit_string);
-
   /* Initialize undo history tracking. */
   text_edit.undo_stack_text = textedit_undo_stack_create();
   textedit_undo_push(text_edit.undo_stack_text, but->editstr, but->pos);
@@ -3939,12 +3936,7 @@ static void textedit_begin(bContext *C, Button *but, HandleButtonData *data)
   GHOST_ISystem *ghost_system = GHOST_ISystem::getSystem();
   ghost_system->setAutoFocus(false);
 
-  /* While Blender's own on-screen keyboard is up it is the keyboard: raising the platform one as
-   * well would cover the field twice and leave two of them typing into it. Closing it hands
-   * typing back, and the next field opened brings the platform keyboard up as before. */
-  if (!WM_virtual_keyboard_is_open(win)) {
-    ghost_system->popupOnScreenKeyboard(static_cast<GHOST_IWindow *>(win->runtime->ghostwin));
-  }
+  ghost_system->popupOnScreenKeyboard(static_cast<GHOST_IWindow *>(win->runtime->ghostwin));
 
 #ifdef WITH_INPUT_IME
   if (!is_num_but) {
@@ -4015,8 +4007,6 @@ static void textedit_end(bContext *C, Button *but, HandleButtonData *data)
   ghost_system->setAutoFocus(true);
 
   ghost_system->hideOnScreenKeyboard(static_cast<GHOST_IWindow *>(win->runtime->ghostwin));
-
-  WM_virtual_keyboard_text_edit_end(win);
 
   /* Free text undo history text blocks. */
   textedit_undo_stack_destroy(text_edit.undo_stack_text);
