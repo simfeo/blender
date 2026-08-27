@@ -100,12 +100,6 @@ struct VKExtensions {
   bool logic_ops = false;
 
   /**
-   * Does the device support VK_EXT_provoking_vertex (last-vertex convention).
-   * When false the default first-vertex convention is used for flat shading.
-   */
-  bool provoking_vertex = false;
-
-  /**
    * Does the device support VK_EXT_memory_priority
    */
   bool memory_priority = false;
