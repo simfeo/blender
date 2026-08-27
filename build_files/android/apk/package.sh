@@ -18,7 +18,7 @@ CONFIG="${BLENDER_ANDROID_CONFIG:-full}"
 # Canonical path: CMake records a resolved one, and comparing an unresolved
 # path against it made drop_stale_cache wipe the build dir on every run.
 BUILD_BASE="${BUILD_BASE:-$(cd "$REPO_ROOT/.." && pwd)/blender_build_android}"
-: "${LIBDIR:=$BUILD_BASE/lib/android_arm64}"
+: "${LIBDIR:=$REPO_ROOT/lib/android_arm64}"
 BUILD="${BUILD:-$BUILD_BASE/build_android_$CONFIG}"
 BT="$ANDROID_HOME/build-tools/35.0.1"
 ANDROID_JAR="$ANDROID_HOME/platforms/android-35/android.jar"
@@ -34,34 +34,6 @@ rm -rf "$STAGE"; mkdir -p "$JNI"
 echo "[apk] gathering native libraries"
 cp "$BUILD/lib/libblender.so" "$JNI/"
 cp "$ANDROID_SYSROOT/usr/lib/aarch64-linux-android/libc++_shared.so" "$JNI/"
-
-# libadrenotools loads its hooks by name from the native library directory, so they
-# have to ship in the APK for the Turnip driver path to work.
-# Mesa Turnip, loaded from the APK so a release build can use it too. Android only
-# extracts native libraries named lib*.so, and the soname must match the file name.
-TURNIP="$LIBDIR/turnip/lib/libvulkan_turnip.so"
-# Shipping the driver is what turns Turnip on at runtime, so only the Turnip
-# flavour of the APK may carry it.
-if [ "${BLENDER_ANDROID_TURNIP:-0}" = "1" ] && [ -f "$TURNIP" ]; then
-  cp "$TURNIP" "$JNI/"
-  patchelf --set-soname libvulkan_turnip.so "$JNI/libvulkan_turnip.so"
-
-  # The driver links two private platform libraries that an app namespace does
-  # not expose, so it cannot be dlopened without stand-ins alongside it.
-  SHIM_SRC="$SCRIPT_DIR/../turnip_shim/shim.c"
-  CLANG="$ANDROID_LLVM_BIN/aarch64-linux-android$ANDROID_API-clang"
-  for part in CUTILS:libcutils.so HARDWARE:libhardware.so; do
-    out="${part#*:}"
-    "$CLANG" -shared -fPIC -O2 -DSHIM_"${part%%:*}" -o "$JNI/$out" "$SHIM_SRC" \
-      -Wl,-soname,"$out"
-  done
-  echo "[apk] bundled Mesa Turnip driver + platform shims"
-fi
-
-if [ -d "$LIBDIR/adrenotools/hooks" ]; then
-  cp "$LIBDIR"/adrenotools/hooks/*.so "$JNI/"
-  echo "[apk] bundled adrenotools hooks (Turnip support)"
-fi
 
 readelf_needed() {
   "$ANDROID_LLVM_BIN/llvm-readelf" -d "$1" 2>/dev/null |

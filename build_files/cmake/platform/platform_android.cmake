@@ -2,8 +2,8 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-# Platform setup for Android (arm64), consuming the harvested dependency
-# prefix produced by build_files/android/deps/build.sh.
+# Platform setup for Android (arm64), consuming the prebuilt dependency
+# libraries from lib/android_arm64, as every other platform does.
 #
 # WIP: establishes LIBDIR and the per-package <Pkg>_ROOT hints, and disables
 # desktop-only features. Full configure is being brought up incrementally.
@@ -13,12 +13,11 @@ if(NOT DEFINED BUILD_BASE)
   set(BUILD_BASE "${CMAKE_SOURCE_DIR}/../blender_build_android")
 endif()
 if(NOT DEFINED LIBDIR)
-  # Harvested deps, matching the deps builder's default.
-  set(LIBDIR "${BUILD_BASE}/lib/android_arm64")
+  set(LIBDIR "${CMAKE_SOURCE_DIR}/lib/android_arm64")
 endif()
 if(NOT EXISTS "${LIBDIR}")
   message(FATAL_ERROR "Android LIBDIR not found: ${LIBDIR}\n"
-    "Build dependencies first: build_files/android/deps/build.sh")
+    "Fetch the precompiled libraries: git submodule update --init lib/android_arm64")
 endif()
 message(STATUS "Android LIBDIR = ${LIBDIR}")
 
@@ -35,33 +34,52 @@ endif()
 message(STATUS "Android config: ${BLENDER_ANDROID_CONFIG}")
 include(${CMAKE_SOURCE_DIR}/build_files/android/android_features_${BLENDER_ANDROID_CONFIG}.cmake)
 
-# pthread/rt are folded into bionic libc; empty stubs satisfy deps that still
-# emit -lpthread/-lrt (created by the deps builder in .stublibs).
+# pthread/rt are folded into bionic libc, so no such libraries exist, yet several
+# dependencies still emit -lpthread/-lrt. Empty archives satisfy the linker.
+# Generated into the build tree so this does not depend on the library prefix.
+set(_stub_dir ${CMAKE_BINARY_DIR}/stublibs)
+if(NOT EXISTS ${_stub_dir}/libpthread.a)
+  file(MAKE_DIRECTORY ${_stub_dir})
+  foreach(_stub pthread rt)
+    execute_process(
+      COMMAND ${CMAKE_AR} qc ${_stub_dir}/lib${_stub}.a
+      WORKING_DIRECTORY ${_stub_dir}
+      RESULT_VARIABLE _stub_result
+    )
+    if(NOT _stub_result EQUAL 0)
+      message(FATAL_ERROR "Could not create stub lib${_stub}.a with ${CMAKE_AR}")
+    endif()
+  endforeach()
+  unset(_stub_result)
+endif()
 foreach(_lf CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS CMAKE_MODULE_LINKER_FLAGS)
-  string(APPEND ${_lf} " -L${LIBDIR}/.stublibs")
+  string(APPEND ${_lf} " -L${_stub_dir}")
 endforeach()
 
 # NDK libc++ lacks std::atomic_ref (C++20); force-include a polyfill.
 string(APPEND CMAKE_CXX_FLAGS
   " -include ${CMAKE_SOURCE_DIR}/build_files/android/compat/atomic_ref_compat.hpp")
 
-# The NDK ships older Vulkan headers; use our up-to-date Vulkan-Headers first.
-include_directories(BEFORE SYSTEM ${LIBDIR}/vulkan/include)
-set(VULKAN_INCLUDE_DIR ${LIBDIR}/vulkan/include)
-set(VULKAN_INCLUDE_DIRS ${LIBDIR}/vulkan/include)
+# Blender needs newer Vulkan headers than the NDK ships. NDK 28 is at header
+# version 275, which predates VK_KHR_dynamic_rendering_local_read that GHOST
+# uses unconditionally. Every other platform gets these from lib/<platform>/vulkan;
+# the Android prefix has no such package yet, so fall back to a local one.
+if(EXISTS ${LIBDIR}/vulkan/include)
+  set(VULKAN_INCLUDE_DIR ${LIBDIR}/vulkan/include)
+elseif(EXISTS ${BUILD_BASE}/lib/vulkan_headers/include)
+  set(VULKAN_INCLUDE_DIR ${BUILD_BASE}/lib/vulkan_headers/include)
+else()
+  message(FATAL_ERROR
+    "No Vulkan headers new enough for Blender.\n"
+    "The NDK sysroot ships header version 275, which lacks "
+    "VK_KHR_dynamic_rendering_local_read.\n"
+    "Provide a Vulkan-Headers checkout as <LIBDIR>/vulkan/include.")
+endif()
+include_directories(BEFORE SYSTEM ${VULKAN_INCLUDE_DIR})
+set(VULKAN_INCLUDE_DIRS ${VULKAN_INCLUDE_DIR})
 find_library(VULKAN_LIBRARY vulkan REQUIRED)
 set(VULKAN_LIBRARIES ${VULKAN_LIBRARY})
 set(VULKAN_FOUND ON)
-
-# adrenotools: lets us load a replacement Vulkan driver (Mesa Turnip) without root.
-if(EXISTS ${LIBDIR}/adrenotools/lib/libadrenotools.a)
-  include_directories(SYSTEM ${LIBDIR}/adrenotools/include)
-  list(APPEND VULKAN_LIBRARIES
-    ${LIBDIR}/adrenotools/lib/libadrenotools.a
-    ${LIBDIR}/adrenotools/lib/liblinkernsbypass.a
-  )
-  add_definitions(-DWITH_ADRENOTOOLS)
-endif()
 
 # Find harvested libs by rooting into their prefixes, never host paths.
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM BOTH)
@@ -105,7 +123,13 @@ set(pystring_ROOT ${LIBDIR}/pystring)
 set(Eigen3_ROOT ${LIBDIR}/eigen)
 set(absl_ROOT ${LIBDIR}/abseil)
 set(Fribidi_ROOT ${LIBDIR}/fribidi)
-set(SSE2NEON_INCLUDE_DIR ${LIBDIR}/sse2neon/include)
+# Upstream ships the header at the package root; the old harvest put it under
+# include/. Accept either.
+if(EXISTS ${LIBDIR}/sse2neon/include/sse2neon.h)
+  set(SSE2NEON_INCLUDE_DIR ${LIBDIR}/sse2neon/include)
+else()
+  set(SSE2NEON_INCLUDE_DIR ${LIBDIR}/sse2neon)
+endif()
 set(LibFFI_ROOT ${LIBDIR}/libffi)
 set(OpenSSL_ROOT ${LIBDIR}/openssl)
 
@@ -260,4 +284,12 @@ endif()
 if(WITH_RUBBERBAND)
   set(RUBBERBAND_ROOT_DIR ${LIBDIR}/rubberband)
   find_package(Rubberband REQUIRED)
+  # The prebuilt rubberband uses the FFTW backend, which ships as its own
+  # package rather than being linked in.
+  if(EXISTS ${LIBDIR}/fftw3/lib/libfftw3.a)
+    list(APPEND RUBBERBAND_LIBRARIES
+      ${LIBDIR}/fftw3/lib/libfftw3.a
+      ${LIBDIR}/fftw3/lib/libfftw3_threads.a
+    )
+  endif()
 endif()
