@@ -2499,9 +2499,12 @@ if(CMAKE_CROSSCOMPILING)
   if("${CMAKE_HOST_SYSTEM_NAME}" STREQUAL "Darwin")
     set(HOST_LIBDIR ${CMAKE_SOURCE_DIR}/lib/macos_arm64)
   elseif("${CMAKE_HOST_SYSTEM_NAME}" STREQUAL "Linux")
-    if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
+    # The host processor, not the target: when cross compiling to Android
+    # CMAKE_SYSTEM_PROCESSOR is aarch64, which sent an x86_64 host looking for
+    # its tools in lib/linux_arm64 and left PYTHON_EXECUTABLE empty.
+    if(${CMAKE_HOST_SYSTEM_PROCESSOR} STREQUAL "aarch64")
       set(HOST_LIBDIR ${CMAKE_SOURCE_DIR}/lib/linux_arm64)
-    elseif(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
+    elseif(${CMAKE_HOST_SYSTEM_PROCESSOR} STREQUAL "x86_64")
       set(HOST_LIBDIR ${CMAKE_SOURCE_DIR}/lib/linux_x64)
     endif()
   else()
