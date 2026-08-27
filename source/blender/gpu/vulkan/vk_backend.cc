@@ -8,7 +8,10 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <mutex>
+#include <set>
 #include <sstream>
+#include <string>
 
 #ifdef WITH_ADRENOTOOLS
 #  include <adrenotools/driver.h>
@@ -735,6 +738,14 @@ void VKBackend::detect_workarounds(VKDevice &device)
     extensions.graphics_pipeline_library = false;
   }
 
+#ifdef __ANDROID__
+  /* Qualcomm's Android Vulkan driver can advertise graphics pipeline libraries, but fail while
+   * compiling/linking Blender's first UI pipelines. The failed pipelines leave the swap-chain
+   * presenting an otherwise healthy black frame. Prefer the spec-compatible monolithic pipeline
+   * path on Android until the affected driver versions can be identified reliably. */
+  extensions.graphics_pipeline_library = false;
+#endif
+
   /* Disable vertex input dynamic state for Qualcomm devices (#153414).
    *
    * TODO: We should re-validate vertex input dynamic state as there are multiple vendors with
@@ -830,12 +841,97 @@ void VKBackend::delete_resources()
   MEM_delete(compiler_);
 }
 
+/**
+ * Is this dispatch missing its compute pipeline?
+ *
+ * `vkCreateComputePipelines` can fail for a shader that is perfectly valid — Qualcomm's Adreno
+ * driver answers VK_ERROR_UNKNOWN for a handful of them (see the retries in vk_pipeline_pool.cc)
+ * — and the failure only reaches this point as a null pipeline handle.
+ *
+ * Recording it anyway is not an option: `pipeline` in vkCmdBindPipeline is a
+ * non-optional parameter, so VK_NULL_HANDLE is invalid usage. In practice the driver then faults
+ * the GPU context, the fence for that submission is never signalled, and the thread waiting on it
+ * blocks forever. On Android that is fatal in a way it is not on the desktop: the window manager
+ * kills an application that has not answered input for 10 seconds, so one refused pipeline takes
+ * the whole process down with an ANR and no crash log to explain it.
+ *
+ * Skipping the dispatch keeps the frame moving. The pass produces nothing, which is the correct
+ * meaning of a shader that could not be created, and lets the caller's fallback (CPU subdivision,
+ * for instance) or a degraded render take over instead of a hang.
+ */
+static void vk_dispatch_report_skipped(const char *name, const char *reason)
+{
+  /* Report each shader once. This is reached from the draw loop, so warning every time would
+   * repeat for every frame and bury the rest of the log. */
+  static std::mutex mutex;
+  static std::set<std::string> reported;
+  bool is_new = false;
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    is_new = reported.insert(name).second;
+  }
+  if (is_new) {
+    CLOG_WARN(&LOG,
+              "Skipping compute dispatch for `%s`: %s. Whatever this pass would have written "
+              "keeps its previous contents.",
+              name,
+              reason);
+  }
+}
+
+/**
+ * Is there no shader bound to dispatch?
+ *
+ * A shader that failed to build leaves callers holding a null pointer, and not all of them check
+ * it before asking for a dispatch. This has to be tested before the pipeline data is collected,
+ * because gathering it dereferences the bound shader and would fault first.
+ */
+static bool vk_dispatch_shader_missing(const VKContext &context)
+{
+  if (context.shader != nullptr) {
+    return false;
+  }
+  vk_dispatch_report_skipped("<no shader bound>", "no shader is bound");
+  return true;
+}
+
+/**
+ * Did the driver refuse to build the pipeline for the bound shader?
+ *
+ * `vkCreateComputePipelines` can fail for a shader that is perfectly valid — Qualcomm's Adreno
+ * driver answers VK_ERROR_UNKNOWN for a handful of them (see the retries in vk_pipeline_pool.cc)
+ * — and the failure only reaches this point as a null pipeline handle.
+ *
+ * Recording it anyway is not an option: `pipeline` in vkCmdBindPipeline is a non-optional
+ * parameter, so VK_NULL_HANDLE is invalid usage. In practice the driver then faults the GPU
+ * context, the fence for that submission is never signalled, and the thread waiting on it blocks
+ * forever. On Android that is fatal in a way it is not on the desktop: the window manager kills an
+ * application that has not answered input for 10 seconds, so one refused pipeline takes the whole
+ * process down with an ANR and no crash log to explain it.
+ */
+static bool vk_dispatch_pipeline_missing(const render_graph::VKPipelineData &pipeline_data,
+                                         const VKContext &context)
+{
+  if (pipeline_data.vk_pipeline != VK_NULL_HANDLE) {
+    return false;
+  }
+  vk_dispatch_report_skipped(unwrap(*context.shader).name_get().c_str(),
+                             "the driver did not create its pipeline");
+  return true;
+}
+
 void VKBackend::compute_dispatch(int groups_x_len, int groups_y_len, int groups_z_len)
 {
   VKContext &context = *VKContext::get();
+  if (vk_dispatch_shader_missing(context)) {
+    return;
+  }
   render_graph::VKResourceAccessInfo &resources = context.reset_and_get_access_info();
   render_graph::VKDispatchNode::CreateInfo dispatch_info(resources);
   context.update_pipeline_data(dispatch_info.dispatch_node.pipeline_data);
+  if (vk_dispatch_pipeline_missing(dispatch_info.dispatch_node.pipeline_data, context)) {
+    return;
+  }
   dispatch_info.dispatch_node.group_count_x = groups_x_len;
   dispatch_info.dispatch_node.group_count_y = groups_y_len;
   dispatch_info.dispatch_node.group_count_z = groups_z_len;
@@ -846,10 +942,18 @@ void VKBackend::compute_dispatch_indirect(StorageBuf *indirect_buf)
 {
   BLI_assert(indirect_buf);
   VKContext &context = *VKContext::get();
+  if (vk_dispatch_shader_missing(context)) {
+    return;
+  }
   VKStorageBuffer &indirect_buffer = *unwrap(indirect_buf);
   render_graph::VKResourceAccessInfo &resources = context.reset_and_get_access_info();
   render_graph::VKDispatchIndirectNode::CreateInfo dispatch_indirect_info(resources);
   context.update_pipeline_data(dispatch_indirect_info.dispatch_indirect_node.pipeline_data);
+  if (vk_dispatch_pipeline_missing(dispatch_indirect_info.dispatch_indirect_node.pipeline_data,
+                                   context))
+  {
+    return;
+  }
   dispatch_indirect_info.dispatch_indirect_node.buffer = indirect_buffer.resource();
   dispatch_indirect_info.dispatch_indirect_node.offset = 0;
   context.render_graph().add_node(dispatch_indirect_info);

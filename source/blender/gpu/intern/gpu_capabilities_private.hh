@@ -62,6 +62,11 @@ struct GPUCapabilities {
   bool use_hq_normals_workaround = false;
   bool stencil_clasify_buffer_workaround = false;
   bool texture_pool_workaround = false;
+  /* Set when the driver refused to build one of the subdivision evaluation compute
+   * pipelines. Those shaders are valid SPIR-V, but Qualcomm's Adreno compiler rejects
+   * some of them, and a substituted do-nothing pipeline leaves the evaluated surface
+   * empty. Subdivision then has to be evaluated on the CPU instead. */
+  bool subdivision_evaluation_broken = false;
 
   bool use_subprocess_shader_compilations = false;
 

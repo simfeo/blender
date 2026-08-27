@@ -640,6 +640,12 @@ bool VKShader::finalize_post(Span<PipelineState> pipeline_states)
   if (is_compute_shader_) {
     /* This is only done for the first shader compilation (not specialization).
      * Give the default constants. */
+    /* The result is deliberately not folded into `result`. A driver can refuse the pipeline for a
+     * shader whose module compiled fine (Qualcomm's Adreno does, for a handful of them), and
+     * reporting that as a failed shader hands every caller a null pointer that EEVEE and the draw
+     * manager do not expect — they crash on the first `GPU_shader_get_*` that follows. The pool
+     * substitutes a do-nothing pipeline in that case, so the shader stays usable and only its
+     * output is missing. */
     ensure_and_get_compute_pipeline(*constants);
   }
   else {
