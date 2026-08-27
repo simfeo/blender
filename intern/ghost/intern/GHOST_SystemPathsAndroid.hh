@@ -19,6 +19,7 @@ class GHOST_SystemPathsAndroid : public GHOST_SystemPaths {
   ~GHOST_SystemPathsAndroid() override;
 
   const char *getSystemDir(int version, const char *versionstr) const override;
+  const char *getSystemLibsDir(int version, const char *versionstr) const override;
   const char *getUserDir(int version, const char *versionstr) const override;
   std::optional<std::string> getUserSpecialDir(GHOST_TUserSpecialDirTypes type) const override;
   const char *getBinaryDir() const override;
@@ -31,5 +32,6 @@ class GHOST_SystemPathsAndroid : public GHOST_SystemPaths {
 
   /* Stable storage for the const char* return contract. */
   mutable std::string system_dir_;
+  mutable std::string system_libs_dir_;
   mutable std::string user_dir_;
 };

@@ -59,6 +59,30 @@ inline uint32_t GHOST_android_render_scale_divisor()
 }
 
 /**
+ * UI density used by Blender's desktop-oriented layout.
+ *
+ * Android's density is designed to turn device-independent mobile widgets into large physical
+ * touch targets. Passing the S24 Ultra's 450 DPI straight through makes Blender's already dense
+ * desktop interface about 4.7 times larger than its baseline and causes whole editors and menus
+ * to be clipped. Use a compact but still readable default and keep a system-property override for
+ * device testing: `setprop debug.blender.uidpi 160`.
+ */
+inline uint32_t GHOST_android_ui_dpi()
+{
+  static const uint32_t dpi = []() -> uint32_t {
+    char value[PROP_VALUE_MAX] = {};
+    if (__system_property_get("debug.blender.uidpi", value) > 0 && value[0] != '\0') {
+      const int v = atoi(value);
+      if (v >= 96 && v <= 320) {
+        return uint32_t(v);
+      }
+    }
+    return 160;
+  }();
+  return dpi;
+}
+
+/**
  * Map a display-space input coordinate into the (possibly downscaled) window buffer space
  * that Blender renders and hit-tests in.
  */

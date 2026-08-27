@@ -17,6 +17,7 @@
 #include "GHOST_EventCursor.hh"
 #include "GHOST_EventKey.hh"
 #include "GHOST_EventTrackpad.hh"
+#include "GHOST_EventWheel.hh"
 #include "GHOST_ModifierKeys.hh"
 #include "GHOST_WindowManager.hh"
 
@@ -40,6 +41,15 @@ static constexpr uint64_t TOUCH_LONG_PRESS_MS = 500;
 /* Movement past this (in pixels) makes the press a left-button drag. Sized for a
  * fingertip on a dense tablet panel, so resting jitter does not cancel a hold. */
 static constexpr int32_t TOUCH_SLOP_PX = 48;
+/* Movement past this (in pixels) means the finger is going somewhere, so the press must not be
+ * turned into a right click while it travels. Well below the slop above, and above the jitter of a
+ * finger that is genuinely resting. */
+static constexpr int32_t TOUCH_LONG_PRESS_MOVE_PX = 16;
+/* How far a two-finger gesture must travel, or how much the fingers must
+ * spread, before it is called a pan or a zoom. Below this nothing is emitted:
+ * the first frames of a two-finger touch always carry some of both, and acting
+ * on them is what made every attempt to scroll a panel zoom it instead. */
+static constexpr float GESTURE_DECIDE_PX = 24.0f;
 
 GHOST_SystemAndroid::GHOST_SystemAndroid()
     : app_(g_android_app),
@@ -52,6 +62,12 @@ GHOST_SystemAndroid::GHOST_SystemAndroid()
       gesture_prev_x_(0.0f),
       gesture_prev_y_(0.0f),
       gesture_prev_dist_(0.0f),
+      gesture_start_x_(0.0f),
+      gesture_start_y_(0.0f),
+      gesture_start_dist_(0.0f),
+      gesture_kind_(GestureKind::Undecided),
+      touch_pan_active_(false),
+      touch_shift_active_(false),
       touch_pending_(false),
       touch_button_down_(false),
       touch_button_(GHOST_kButtonMaskLeft),
@@ -205,7 +221,47 @@ void GHOST_SystemAndroid::handleNativeWindowInit(android_app *app)
      * a size event alone schedules no redraw. Force an update so the reborn surface
      * is actually painted (else the window stays black after app switch). */
     pushEvent(std::make_unique<GHOST_Event>(getMilliSeconds(), GHOST_kEventWindowUpdate, window_));
+    /* The focus command can arrive before Blender exists, so claim it here as well. */
+    handleWindowFocus(true);
   }
+}
+
+void GHOST_SystemAndroid::handleWindowFocus(bool gained)
+{
+  if (!window_) {
+    return;
+  }
+  /* Without this the window manager never learns the window is active, and it then treats every
+   * button event as arriving at a window that is being entered: it takes the cursor position from
+   * GHOST at that moment and writes it over the position the event carries.
+   *
+   * For a stylus that costs nothing, since its press is sent on contact and nothing has moved yet.
+   * For a finger it is fatal. A finger press is held back until the touch has travelled past the
+   * slop and is then reported where the finger landed, deliberately, because that is what decides
+   * which widget was pressed -- and this overwrote exactly that, handing the press the position
+   * the finger had already reached. Dragging an editor border was impossible as a result: by the
+   * time the press existed it was tens of pixels away from the border it was aimed at. */
+  pushEvent(std::make_unique<GHOST_Event>(
+      getMilliSeconds(),
+      gained ? GHOST_kEventWindowActivate : GHOST_kEventWindowDeactivate,
+      window_));
+}
+
+void GHOST_SystemAndroid::handleNativeWindowResize()
+{
+  if (!window_ || !app_ || !app_->window) {
+    return;
+  }
+  /* Rotation keeps the same ANativeWindow but swaps its dimensions. Going back
+   * through setNativeWindow() is what rebuilds the Vulkan surface and swapchain
+   * for the new geometry; presenting to the old one gives a stretched or
+   * black frame. getClientBounds() reads the size from the native window each
+   * time it is asked, so nothing else has to be told the new numbers. */
+  window_->setNativeWindow(app_->window);
+  pushEvent(std::make_unique<GHOST_Event>(getMilliSeconds(), GHOST_kEventWindowSize, window_));
+  /* A size event on its own only relayouts; force the repaint too, the same way
+   * the surface-reborn path does. */
+  pushEvent(std::make_unique<GHOST_Event>(getMilliSeconds(), GHOST_kEventWindowUpdate, window_));
 }
 
 void GHOST_SystemAndroid::handleNativeWindowTerm()
@@ -258,8 +314,100 @@ int32_t GHOST_SystemAndroid::handleMotionEvent(AInputEvent *event)
   const int32_t action = AMotionEvent_getAction(event) & AMOTION_EVENT_ACTION_MASK;
   const size_t count = AMotionEvent_getPointerCount(event);
 
-  /* Two fingers: pan -> scroll, distance change -> magnify. A gesture is never a
-   * click, so drop any press still waiting to be classified. */
+  const int32_t tool_type = count > 0 ? AMotionEvent_getToolType(event, 0) :
+                                        AMOTION_EVENT_TOOL_TYPE_UNKNOWN;
+
+  /* A physical/Bluetooth mouse must not go through the delayed finger-touch path: Blender relies
+   * on the middle button for viewport orbit and on the right button for context menus. */
+  if (tool_type == AMOTION_EVENT_TOOL_TYPE_MOUSE) {
+    const int32_t x = int32_t(ghost_android_scale_input(AMotionEvent_getX(event, 0)));
+    const int32_t y = int32_t(ghost_android_scale_input(AMotionEvent_getY(event, 0)));
+    cursor_x_ = x;
+    cursor_y_ = y;
+    meta_state_ = AMotionEvent_getMetaState(event);
+    pushEvent(std::make_unique<GHOST_EventCursor>(
+        getMilliSeconds(), GHOST_kEventCursorMove, window_, x, y, GHOST_TABLET_DATA_NONE));
+
+    const int32_t button_state = AMotionEvent_getButtonState(event);
+    const auto sync_button = [&](const GHOST_TButton mask, const int32_t android_mask) {
+      const bool down = (button_state & android_mask) != 0;
+      if (buttons_.get(mask) != down) {
+        buttons_.set(mask, down);
+        pushEvent(std::make_unique<GHOST_EventButton>(getMilliSeconds(),
+                                                       down ? GHOST_kEventButtonDown :
+                                                              GHOST_kEventButtonUp,
+                                                       window_,
+                                                       mask,
+                                                       GHOST_TABLET_DATA_NONE));
+      }
+    };
+    sync_button(GHOST_kButtonMaskLeft, AMOTION_EVENT_BUTTON_PRIMARY);
+    sync_button(GHOST_kButtonMaskRight, AMOTION_EVENT_BUTTON_SECONDARY);
+    sync_button(GHOST_kButtonMaskMiddle, AMOTION_EVENT_BUTTON_TERTIARY);
+    sync_button(GHOST_kButtonMaskButton4, AMOTION_EVENT_BUTTON_BACK);
+    sync_button(GHOST_kButtonMaskButton5, AMOTION_EVENT_BUTTON_FORWARD);
+
+    if (action == AMOTION_EVENT_ACTION_SCROLL) {
+      const float vertical = AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_VSCROLL, 0);
+      const float horizontal = AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_HSCROLL, 0);
+      if (vertical != 0.0f) {
+        pushEvent(std::make_unique<GHOST_EventWheel>(getMilliSeconds(),
+                                                     window_,
+                                                     GHOST_kEventWheelAxisVertical,
+                                                     vertical > 0.0f ? 1 : -1));
+      }
+      if (horizontal != 0.0f) {
+        pushEvent(std::make_unique<GHOST_EventWheel>(getMilliSeconds(),
+                                                     window_,
+                                                     GHOST_kEventWheelAxisHorizontal,
+                                                     horizontal > 0.0f ? 1 : -1));
+      }
+    }
+    return 1;
+  }
+
+  /* Three-finger drag: "Move the view" (Shift + middle mouse). Two fingers already orbit, so the
+   * third finger is what buys the viewport a dedicated pan. Finish immediately when one of the
+   * three fingers is lifted so a following two-finger gesture starts with clean state. */
+  if (count >= 3) {
+    if (!touch_pan_active_) {
+      touchCancelPending();
+    }
+    float cx = 0.0f, cy = 0.0f;
+    for (int i = 0; i < 3; i++) {
+      cx += ghost_android_scale_input(AMotionEvent_getX(event, i));
+      cy += ghost_android_scale_input(AMotionEvent_getY(event, i));
+    }
+    const int32_t x = int32_t(cx / 3.0f);
+    const int32_t y = int32_t(cy / 3.0f);
+    cursor_x_ = x;
+    cursor_y_ = y;
+    pushEvent(std::make_unique<GHOST_EventCursor>(
+        getMilliSeconds(), GHOST_kEventCursorMove, window_, x, y, GHOST_TABLET_DATA_NONE));
+
+    if (action == AMOTION_EVENT_ACTION_POINTER_UP || action == AMOTION_EVENT_ACTION_UP ||
+        action == AMOTION_EVENT_ACTION_CANCEL)
+    {
+      touchEndPan();
+    }
+    else if (!touch_pan_active_) {
+      /* Shift goes down before the button: a keymap item is matched against the modifiers the
+       * press itself carries, so pressing it afterwards would still select the orbit binding. */
+      touchSendShift(true);
+      touchSendButton(GHOST_kButtonMaskMiddle, GHOST_kEventButtonDown);
+      touch_pan_active_ = true;
+    }
+    gesture_active_ = false;
+    return 1;
+  }
+
+  touchEndPan();
+
+  /* Two fingers: either a pan or a zoom, decided once and then held for the
+   * rest of the gesture. Both used to be emitted on every frame, so the jitter
+   * between two fingers zoomed the view while they were being dragged to
+   * scroll it. A gesture is never a click, so drop any press still waiting to
+   * be classified. */
   if (count >= 2) {
     touchCancelPending();
     const float x0 = ghost_android_scale_input(AMotionEvent_getX(event, 0)),
@@ -269,7 +417,34 @@ int32_t GHOST_SystemAndroid::handleMotionEvent(AInputEvent *event)
     const float cx = (x0 + x1) * 0.5f, cy = (y0 + y1) * 0.5f;
     const float dist = std::hypot(x1 - x0, y1 - y0);
 
-    if (gesture_active_) {
+    if (!gesture_active_) {
+      gesture_active_ = true;
+      gesture_kind_ = GestureKind::Undecided;
+      gesture_start_x_ = cx;
+      gesture_start_y_ = cy;
+      gesture_start_dist_ = dist;
+      gesture_prev_x_ = cx;
+      gesture_prev_y_ = cy;
+      gesture_prev_dist_ = dist;
+      return 1;
+    }
+
+    if (gesture_kind_ == GestureKind::Undecided) {
+      /* Both readings grow together at the start of any two-finger touch, so
+       * wait until one of them is clearly ahead. Emitting both in the meantime
+       * is what made scrolling a panel zoom it as well. */
+      const float moved = std::hypot(cx - gesture_start_x_, cy - gesture_start_y_);
+      const float spread = std::fabs(dist - gesture_start_dist_);
+      if (moved < GESTURE_DECIDE_PX && spread < GESTURE_DECIDE_PX) {
+        gesture_prev_x_ = cx;
+        gesture_prev_y_ = cy;
+        gesture_prev_dist_ = dist;
+        return 1;
+      }
+      gesture_kind_ = (spread > moved) ? GestureKind::Zoom : GestureKind::Pan;
+    }
+
+    if (gesture_kind_ == GestureKind::Pan) {
       pushEvent(std::make_unique<GHOST_EventTrackpad>(getMilliSeconds(),
                                                       window_,
                                                       GHOST_kTrackpadEventScroll,
@@ -285,6 +460,8 @@ int32_t GHOST_SystemAndroid::handleMotionEvent(AInputEvent *event)
                                                       /* Direct touch is natural scrolling, as
                                                        * macOS reports it. */
                                                       true));
+    }
+    else {
       pushEvent(std::make_unique<GHOST_EventTrackpad>(getMilliSeconds(),
                                                       window_,
                                                       GHOST_kTrackpadEventMagnify,
@@ -297,7 +474,6 @@ int32_t GHOST_SystemAndroid::handleMotionEvent(AInputEvent *event)
     gesture_prev_x_ = cx;
     gesture_prev_y_ = cy;
     gesture_prev_dist_ = dist;
-    gesture_active_ = true;
     return 1;
   }
 
@@ -368,7 +544,21 @@ int32_t GHOST_SystemAndroid::handleMotionEvent(AInputEvent *event)
                              abs(y - touch_down_y_) > TOUCH_SLOP_PX))
       {
         touch_pending_ = false;
+        /* Press where the finger landed, not where it has already travelled to. The
+         * press position is what Blender measures its own drag threshold from and what
+         * decides which widget was pressed, so reporting the current point would both
+         * start the drag over and aim it at whatever has since slid under the finger.
+         * The cursor is put back afterwards, so the press is bracketed by the move it
+         * belongs to. */
+        pushEvent(std::make_unique<GHOST_EventCursor>(getMilliSeconds(),
+                                                      GHOST_kEventCursorMove,
+                                                      window_,
+                                                      touch_down_x_,
+                                                      touch_down_y_,
+                                                      tablet));
         touchSendButton(GHOST_kButtonMaskLeft, GHOST_kEventButtonDown);
+        pushEvent(std::make_unique<GHOST_EventCursor>(
+            getMilliSeconds(), GHOST_kEventCursorMove, window_, x, y, tablet));
       }
       return 1;
 
@@ -399,6 +589,40 @@ void GHOST_SystemAndroid::touchSendButton(GHOST_TButton mask, GHOST_TEventType t
       getMilliSeconds(), type, window_, mask, touch_tablet_));
 }
 
+void GHOST_SystemAndroid::touchSendShift(bool down)
+{
+  if (touch_shift_active_ == down) {
+    return;
+  }
+  touch_shift_active_ = down;
+  /* The window manager re-reads getModifierKeys() on every button event (see touch_shift_active_)
+   * and injects a matching press or release whenever it disagrees with the event state, so the
+   * synthetic key event only survives if meta_state_ tells the same story. */
+  if (down) {
+    meta_state_ |= AMETA_SHIFT_ON;
+  }
+  else {
+    meta_state_ &= ~AMETA_SHIFT_ON;
+  }
+  pushEvent(std::make_unique<GHOST_EventKey>(getMilliSeconds(),
+                                             down ? GHOST_kEventKeyDown : GHOST_kEventKeyUp,
+                                             window_,
+                                             GHOST_kKeyLeftShift,
+                                             false));
+}
+
+void GHOST_SystemAndroid::touchEndPan()
+{
+  if (!touch_pan_active_) {
+    return;
+  }
+  touch_pan_active_ = false;
+  touchSendButton(GHOST_kButtonMaskMiddle, GHOST_kEventButtonUp);
+  /* Release Shift only after the button, so the release the operator is waiting for still
+   * carries the modifier its press was matched with. */
+  touchSendShift(false);
+}
+
 void GHOST_SystemAndroid::hoverExitCheck()
 {
   /* Long enough that a touch-down always arrives first, short enough that a
@@ -419,6 +643,16 @@ void GHOST_SystemAndroid::hoverExitCheck()
 void GHOST_SystemAndroid::touchLongPressCheck()
 {
   if (!touch_pending_ || getMilliSeconds() - touch_down_time_ < TOUCH_LONG_PRESS_MS) {
+    return;
+  }
+  /* Moving, so it is a drag that has not yet travelled far enough to be called one, not a hold.
+   * Anything aimed at a small target is approached slowly -- an editor border above all -- and
+   * turning that into a right click half a second in is what made a border impossible to drag
+   * with a finger while a stylus, whose press is sent on contact, had no trouble. Leave the press
+   * pending: the slop decides, or the finger lifts and it becomes a tap. */
+  if (abs(cursor_x_ - touch_down_x_) > TOUCH_LONG_PRESS_MOVE_PX ||
+      abs(cursor_y_ - touch_down_y_) > TOUCH_LONG_PRESS_MOVE_PX)
+  {
     return;
   }
   /* Held in place long enough: emit a right-click instead. */
@@ -722,18 +956,10 @@ GHOST_TSuccess GHOST_SystemAndroid::setCursorPosition(int32_t /*x*/, int32_t /*y
 
 uint16_t GHOST_SystemAndroid::getDPIHint()
 {
-  /* Fewer pixels for the same physical screen means a proportionally lower density, else the
-   * UI would be drawn at twice its intended physical size. */
+  /* Blender's desktop workspace needs substantially more logical room than a mobile UI. Do not
+   * pass Android's 450-DPI phone density through directly; use the Android Blender profile. */
   const uint32_t divisor = GHOST_android_render_scale_divisor();
-  if (app_ && app_->config) {
-    const int32_t density = AConfiguration_getDensity(app_->config);
-    if (density > 0 && density != ACONFIGURATION_DENSITY_NONE &&
-        density != ACONFIGURATION_DENSITY_ANY)
-    {
-      return uint16_t(uint32_t(density) / divisor);
-    }
-  }
-  return uint16_t(160 / divisor);
+  return uint16_t(std::max(96u, GHOST_android_ui_dpi() / divisor));
 }
 
 /* Call a no-arg void method on the BlenderActivity instance. */

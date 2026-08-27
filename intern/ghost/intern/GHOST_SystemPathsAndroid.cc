@@ -35,6 +35,20 @@ const char *GHOST_SystemPathsAndroid::getSystemDir(int /*version*/, const char *
   return system_dir_.c_str();
 }
 
+const char *GHOST_SystemPathsAndroid::getSystemLibsDir(int /*version*/,
+                                                       const char *versionstr) const
+{
+  /* Architecture-dependent files live in the same payload as the rest: there is
+   * no `/usr/lib` split to mirror here. Without this the base class returns
+   * null, `bpy.utils.resource_path('SYSTEM_LIBS')` comes back empty, and the
+   * glTF add-on's `dll_path()` then falls through to 'LOCAL' -- which also
+   * fails, because it looks beside the binary rather than in the payload. The
+   * result is that the meshopt and Draco bridges can never be found, whatever
+   * directory they are shipped in. */
+  system_libs_dir_ = internal_data_path_ + "/blender/" + versionstr;
+  return system_libs_dir_.c_str();
+}
+
 const char *GHOST_SystemPathsAndroid::getUserDir(int /*version*/, const char *versionstr) const
 {
   user_dir_ = internal_data_path_ + "/config/" + versionstr;

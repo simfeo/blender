@@ -17,7 +17,9 @@
 #include <cstdio>
 #include <jni.h>
 #include <pthread.h>
+#include <string>
 #include <unistd.h>
+#include <vector>
 
 /* Route Blender's stdout/stderr to logcat (tag "blender") so init/errors are
  * visible; NativeActivity otherwise discards them. */
@@ -73,17 +75,92 @@ static GHOST_SystemAndroid *android_system()
   return static_cast<GHOST_SystemAndroid *>(GHOST_ISystem::getSystem());
 }
 
+/* Read optional launch arguments from <internalDataPath>/blender_args.txt.
+ * Returns an empty vector when the file is absent, which keeps the built-in defaults. */
+static std::vector<std::string> ghost_android_read_launch_args(android_app *app)
+{
+  std::vector<std::string> args;
+  if (app == nullptr || app->activity == nullptr || app->activity->internalDataPath == nullptr) {
+    return args;
+  }
+  const std::string path = std::string(app->activity->internalDataPath) + "/blender_args.txt";
+  FILE *file = fopen(path.c_str(), "r");
+  if (file == nullptr) {
+    return args;
+  }
+  char token[512];
+  while (fscanf(file, "%511s", token) == 1) {
+    args.push_back(token);
+  }
+  fclose(file);
+  __android_log_print(ANDROID_LOG_INFO,
+                      "blender",
+                      "[BlenderAndroid] %zu launch argument(s) from %s",
+                      args.size(),
+                      path.c_str());
+  return args;
+}
+
 static void on_app_cmd(android_app *app, int32_t cmd)
 {
   switch (cmd) {
+    case APP_CMD_GAINED_FOCUS:
+      if (GHOST_ISystem::getSystem()) {
+        android_system()->handleWindowFocus(true);
+      }
+      break;
+
+    case APP_CMD_LOST_FOCUS:
+      if (GHOST_ISystem::getSystem()) {
+        android_system()->handleWindowFocus(false);
+      }
+      break;
+
     case APP_CMD_INIT_WINDOW:
       if (!g_blender_launched) {
-        const char *argv[] = {"blender"};
-        blender::GHOST_android_launch(1, argv);
+        /* Launch arguments come from blender_args.txt, whitespace separated, when that file
+         * exists. A driver quirk on one device is diagnosed by toggling flags such as
+         * --debug-gpu-force-workarounds or --log while watching logcat, and having to rebuild and
+         * reinstall a 170 MB APK for each attempt makes that loop useless.
+         *
+         * Nothing is passed by default beyond --disable-crash-handler. There used to be a
+         * --debug-gpu-force-workarounds here, added while bringing the port up to get past a
+         * driver that refused compute
+         * pipelines. That turned out to be the SPIR-V version the shaders were emitted as, which
+         * is fixed at the source now, and the flag was making the viewport pay for it: taking the
+         * forced path skips feature detection entirely and leaves dynamic rendering local read
+         * off -- the one extension Blender enables specifically for Qualcomm, because reading
+         * attachments from tile memory is what a deferred renderer needs on a tiler. Measured on
+         * an S24 Ultra with a 292k vertex scene, turning it back on is worth 5-18% of the frame
+         * while orbiting.
+         *
+         * The flag is still available through blender_args.txt when a driver needs it. */
+        std::vector<std::string> file_args = ghost_android_read_launch_args(app);
+        std::vector<const char *> argv;
+        argv.push_back("blender");
+        for (const std::string &arg : file_args) {
+          argv.push_back(arg.c_str());
+        }
+        argv.push_back("--disable-crash-handler");
+        for (const char *arg : argv) {
+          __android_log_print(ANDROID_LOG_INFO, "blender", "[BlenderAndroid] argv: %s", arg);
+        }
+        blender::GHOST_android_launch(int(argv.size()), argv.data());
         g_blender_launched = true;
       }
       else if (GHOST_ISystem::getSystem()) {
         android_system()->handleNativeWindowInit(app);
+      }
+      break;
+    /* Rotation. The activity declares orientation and screenSize in
+     * configChanges, so it is not recreated: the surface is resized under it
+     * and these are the only notice we get. CONFIG_CHANGED arrives for the
+     * orientation switch itself and WINDOW_RESIZED once the surface follows;
+     * both funnel to the same place, which is idempotent. */
+    case APP_CMD_WINDOW_RESIZED:
+    case APP_CMD_CONFIG_CHANGED:
+      if (GHOST_ISystem::getSystem()) {
+        android_system()->handleNativeWindowResize();
       }
       break;
     case APP_CMD_TERM_WINDOW:
