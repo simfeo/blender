@@ -6248,6 +6248,17 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
       /* Get tablet data. */
       wm_tablet_data_from_ghost(&bd->tablet, &event.tablet);
 
+#ifdef __ANDROID__
+      /* A finger cannot hit the few pixels that resize an editor, so a press that lands close to a
+       * border is moved onto it. A stylus is left alone: it is already precise, and moving its
+       * press would take clicks it aimed at the editor. */
+      if ((type == GHOST_kEventButtonDown) && (bd->button == GHOST_kButtonMaskLeft) &&
+          (event.tablet.active == EVT_TABLET_NONE))
+      {
+        ED_screen_edge_snap_for_touch(win, event.xy);
+      }
+#endif
+
       wm_eventemulation(&event, false);
       wm_event_state_update_and_click_set(&event,
                                           event_time_ms,

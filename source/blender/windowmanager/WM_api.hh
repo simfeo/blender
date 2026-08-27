@@ -2180,6 +2180,22 @@ void *WM_draw_cb_activate(wmWindow *win,
                           void (*draw)(const wmWindow *win, void *customdata),
                           void *customdata);
 void WM_draw_cb_exit(wmWindow *win, void *handle);
+
+/* Virtual keyboard (`wm_virtual_keyboard.cc`). */
+
+/**
+ * True while the on-screen keyboard is up, in which case it is the keyboard: the platform one is
+ * left alone, since two keyboards fighting over the same field is worse than either.
+ */
+bool WM_virtual_keyboard_is_open(const wmWindow *win);
+void WM_virtual_keyboard_toggle(wmWindow *win);
+/**
+ * Tell the keyboard which native text field is being edited, so its bar can show what is in the
+ * field while the keyboard covers it. The pointer is to the field's own string, read live, and
+ * stays valid until #WM_virtual_keyboard_text_edit_end.
+ */
+void WM_virtual_keyboard_text_edit_begin(const wmWindow *win, const char *const *string);
+void WM_virtual_keyboard_text_edit_end(const wmWindow *win);
 /**
  * High level function to redraw windows.
  *

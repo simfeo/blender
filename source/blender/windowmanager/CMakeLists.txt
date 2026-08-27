@@ -52,6 +52,7 @@ set(SRC
   intern/wm_tooltip.cc
   intern/wm_uilist_type.cc
   intern/wm_utils.cc
+  intern/wm_virtual_keyboard.cc
   intern/wm_window.cc
   intern/wm_window_ime_draw.cc
   gizmo/intern/wm_gizmo.cc

@@ -274,6 +274,9 @@ static void wm_ghostwindow_destroy(wmWindowManager *wm, wmWindow *win)
 
 void wm_window_free(bContext *C, wmWindowManager *wm, wmWindow *win)
 {
+  /* The on-screen keyboard draws into this window, so it goes with it. */
+  wm_virtual_keyboard_window_close(win);
+
   /* Update context. */
   if (C) {
     WM_event_remove_handlers(C, &win->runtime->handlers);
@@ -1816,6 +1819,14 @@ static bool ghost_event_proc(const GHOST_IEvent *ghost_event, GHOST_TUserDataPtr
   }
 
   wmWindow *win = static_cast<wmWindow *>(ghost_window->getUserData());
+
+  /* The on-screen keyboard owns every pointer event that lands on it, and it has to be asked here,
+   * above the switch and therefore above every handler in Blender. A press that reaches the
+   * interface layer ends whatever text field is being edited, which is precisely what a keyboard
+   * must not do to the field it is typing into. What it queues instead is a key event. */
+  if (wm_virtual_keyboard_ghost_event(wm, win, type, data)) {
+    return true;
+  }
 
   switch (type) {
     case GHOST_kEventWindowDeactivate: {

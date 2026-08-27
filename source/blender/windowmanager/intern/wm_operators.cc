@@ -4320,6 +4320,7 @@ void wm_operatortypes_register()
   WM_operatortype_append(WM_OT_read_userpref);
   WM_operatortype_append(WM_OT_read_factory_userpref);
   WM_operatortype_append(WM_OT_window_fullscreen_toggle);
+  WM_operatortype_append(WM_OT_virtual_keyboard_toggle);
   WM_operatortype_append(WM_OT_quit_blender);
   WM_operatortype_append(WM_OT_open_mainfile);
   WM_operatortype_append(WM_OT_revert_mainfile);

@@ -109,6 +109,16 @@
 #include "UI_string_search.hh"
 
 #include "GPU_context.hh"
+
+#ifdef WITH_GHOST_ANDROID
+#  define WM_ANDROID_BOOT_LOG(stage) \
+    do { \
+      fprintf(stderr, "[BlenderAndroid] WM_init: %s\n", stage); \
+      fflush(stderr); \
+    } while (false)
+#else
+#  define WM_ANDROID_BOOT_LOG(stage) ((void)0)
+#endif
 #include "GPU_init_exit.hh"
 #include "GPU_shader.hh"
 
@@ -210,9 +220,11 @@ static void sound_jack_sync_callback(Main *bmain, int mode, double time)
 
 void WM_init(bContext *C, int argc, const char **argv)
 {
+  WM_ANDROID_BOOT_LOG("entered");
 
   if (!G.background) {
     wm_ghost_init(C); /* NOTE: it assigns C to ghost! */
+    WM_ANDROID_BOOT_LOG("native window and GPU context created");
     wm_init_cursor_data();
     BKE_sound_jack_sync_callback_set(sound_jack_sync_callback);
   }
@@ -294,7 +306,9 @@ void WM_init(bContext *C, int argc, const char **argv)
   read_homefile_params.app_template_override = WM_init_state_app_template_get();
   read_homefile_params.is_first_time = true;
 
+  WM_ANDROID_BOOT_LOG("reading startup file");
   wm_homefile_read_ex(C, &read_homefile_params, nullptr, &params_file_read_post);
+  WM_ANDROID_BOOT_LOG("startup file loaded");
 
   /* NOTE: leave `G_MAIN->filepath` set to an empty string since this
    * matches behavior after loading a new file. */
@@ -319,6 +333,7 @@ void WM_init(bContext *C, int argc, const char **argv)
       WM_exit(C, EXIT_FAILURE);
     }
 
+    WM_ANDROID_BOOT_LOG("initializing GPU UI resources");
     GPU_render_begin();
 
 #ifdef WITH_INPUT_NDOF
@@ -333,8 +348,23 @@ void WM_init(bContext *C, int argc, const char **argv)
 
     GPU_context_begin_frame(GPU_context_active_get());
     ui::init();
+#ifdef __ANDROID__
+    /* Find out now whether the GPU subdivision evaluator actually runs on this driver.
+     *
+     * Qualcomm's Adreno driver refuses the compute pipelines for several of its shaders, and
+     * that is only discovered while they are built. Left to the first draw, the subsurf modifier
+     * has already handed the surface to an evaluator that produces nothing, and the object is
+     * drawn from buffers that were never written -- it disappears, or explodes across the
+     * viewport, until something re-runs the modifier stack. Building them here, inside the same
+     * render block that just set up the interface and long before any subdivision modifier can
+     * exist, lets the modifier take the CPU path from its very first evaluation.
+     *
+     * Desktop drivers do not have this problem, so this cost is not paid there. */
+    draw::DRW_subdiv_gpu_evaluator_probe();
+#endif
     GPU_context_end_frame(GPU_context_active_get());
     GPU_render_end();
+    WM_ANDROID_BOOT_LOG("GPU UI resources ready");
   }
 
   bke::subdiv::init();
@@ -342,10 +372,13 @@ void WM_init(bContext *C, int argc, const char **argv)
   ED_spacemacros_init();
 
 #ifdef WITH_PYTHON
+  WM_ANDROID_BOOT_LOG("starting Python");
   BPY_python_start(C, argc, argv);
   BPY_python_reset(C);
+  WM_ANDROID_BOOT_LOG("Python ready");
 #else
   UNUSED_VARS(argc, argv);
+  WM_ANDROID_BOOT_LOG("Python skipped by bootstrap profile");
 #endif
 
   if (!G.background) {
@@ -384,6 +417,7 @@ void WM_init(bContext *C, int argc, const char **argv)
   WM_keyconfig_update_on_startup(static_cast<wmWindowManager *>(G_MAIN->wm.first));
 
   wm_homefile_read_post(C, params_file_read_post);
+  WM_ANDROID_BOOT_LOG("complete");
 }
 
 static bool wm_init_splash_show_on_startup_check()
