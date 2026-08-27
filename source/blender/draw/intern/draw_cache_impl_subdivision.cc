@@ -27,7 +27,9 @@
 #include "DRW_engine.hh"
 #include "DRW_render.hh"
 
+#include "DEG_depsgraph.hh"
 #include "GPU_capabilities.hh"
+#include "GPU_context.hh"
 #include "GPU_compute.hh"
 #include "GPU_index_buffer.hh"
 #include "GPU_state.hh"
@@ -1759,6 +1761,22 @@ void DRW_subdivide_loose_geom(DRWSubdivCache &subdiv_cache, const MeshBufferCach
 static LinkNode *gpu_subdiv_free_queue = nullptr;
 static Mutex gpu_subdiv_queue_mutex;
 
+/**
+ * Ask for the geometry to be evaluated again once the GPU evaluator turns out to be unusable.
+ *
+ * Which only becomes known while its shaders are built, and by then the modifier stack has
+ * already left the surface to the GPU and produced no CPU geometry. Re-tagging makes the next
+ * evaluation see GPU subdivision as unavailable and subdivide on the CPU instead. It settles
+ * after one round: the second pass never reaches this code.
+ */
+static void drw_subdiv_fallback_to_cpu_if_broken(Object &ob)
+{
+  if (!GPU_subdivision_evaluation_broken()) {
+    return;
+  }
+  DEG_id_tag_update(&ob.id, ID_RECALC_GEOMETRY);
+}
+
 void DRW_create_subdivision(Object &ob,
                             Mesh &mesh,
                             MeshBatchCache &batch_cache,
@@ -1795,7 +1813,17 @@ void DRW_create_subdivision(Object &ob,
                                             use_hide))
   {
     /* Did not run. */
+    drw_subdiv_fallback_to_cpu_if_broken(ob);
     return;
+  }
+
+  if (GPU_subdivision_evaluation_broken()) {
+    /* Building the evaluator is what revealed that this driver cannot run it, and by then the
+     * modifier stack had already left the surface to the GPU. The buffers just filled hold
+     * nothing meaningful, so ask for the geometry to be evaluated again: the modifier now sees
+     * GPU subdivision as unavailable and produces the surface on the CPU. This settles after one
+     * round, because the second pass no longer reaches this code. */
+    DEG_id_tag_update(&ob.id, ID_RECALC_GEOMETRY);
   }
 
 #ifdef TIME_SUBDIV
@@ -1803,6 +1831,26 @@ void DRW_create_subdivision(Object &ob,
   fprintf(stderr, "Time to update subdivision: %f\n", end_time - begin_time);
   fprintf(stderr, "Maximum FPS: %f\n", 1.0 / (end_time - begin_time));
 #endif
+}
+
+void DRW_subdiv_gpu_evaluator_probe()
+{
+  if (GPU_context_active_get() == nullptr) {
+    /* Nothing to build the shaders with; the decision is then made on first use as before. */
+    return;
+  }
+  /* Compiling these is what reveals the problem. A driver can accept the SPIR-V module and still
+   * refuse the compute pipeline, in which case the GPU module substitutes a do-nothing pipeline
+   * and records it as a capability. Asking here, before the first mesh is evaluated, means the
+   * subsurf modifier already knows it has to subdivide on the CPU.
+   *
+   * Discovering it later is not equivalent: the modifier would have left the surface to an
+   * evaluator that writes nothing, and the mesh would be drawn from buffers that were never
+   * filled -- the object disappears, or explodes across the viewport, until something happens to
+   * re-run the modifier stack. */
+  DRW_shader_subdiv_get(SubdivShaderType::PATCH_EVALUATION);
+  DRW_shader_subdiv_get(SubdivShaderType::BUFFER_NORMALS_ACCUMULATE);
+  DRW_shader_subdiv_get(SubdivShaderType::BUFFER_LNOR);
 }
 
 void DRW_subdiv_cache_free(bke::subdiv::Subdiv *subdiv)

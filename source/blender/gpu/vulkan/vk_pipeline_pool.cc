@@ -268,7 +268,7 @@ VkPipeline VKPipelineMap<VKComputeInfo>::create(const VKComputeInfo &compute_inf
     if (!vk_compute_pipeline_fallback_enabled()) {
       return VK_NULL_HANDLE;
     }
-    device.workarounds_get_for_write().compute_pipeline_fallback = true;
+    device.workaround_compute_pipeline_fallback_activate();
     return vk_compute_pipeline_noop(device, compute_info.vk_pipeline_layout, name);
   }
   double end_time = BLI_time_now_seconds();

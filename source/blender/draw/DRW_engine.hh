@@ -178,6 +178,12 @@ namespace draw {
 /** Free garbage collected subdivision data. */
 void DRW_cache_free_old_subdiv();
 
+/**
+ * Build the GPU subdivision evaluator's shaders once, to find out whether this driver can run
+ * them at all. Call while a GPU context is current and before any mesh is evaluated.
+ */
+void DRW_subdiv_gpu_evaluator_probe();
+
 }  // namespace draw
 
 /** Never use this. Only for closing blender. */
