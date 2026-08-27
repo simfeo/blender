@@ -738,14 +738,6 @@ void VKBackend::detect_workarounds(VKDevice &device)
     extensions.graphics_pipeline_library = false;
   }
 
-#ifdef __ANDROID__
-  /* Qualcomm's Android Vulkan driver can advertise graphics pipeline libraries, but fail while
-   * compiling/linking Blender's first UI pipelines. The failed pipelines leave the swap-chain
-   * presenting an otherwise healthy black frame. Prefer the spec-compatible monolithic pipeline
-   * path on Android until the affected driver versions can be identified reliably. */
-  extensions.graphics_pipeline_library = false;
-#endif
-
   /* Disable vertex input dynamic state for Qualcomm devices (#153414).
    *
    * TODO: We should re-validate vertex input dynamic state as there are multiple vendors with

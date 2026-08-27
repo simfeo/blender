@@ -89,9 +89,11 @@ void VKWorkarounds::log() const
   CLOG_DEBUG(&LOG,
              "Activated workarounds\n"
              " - [%c] Not 16/32 bit aligned image formats\n"
-             " - [%c] No texture pool",
+             " - [%c] No texture pool\n"
+             " - [%c] Compute pipeline fallback",
              not_aligned_pixel_formats ? 'X' : ' ',
-             GCaps.texture_pool_workaround ? 'X' : ' ');
+             GCaps.texture_pool_workaround ? 'X' : ' ',
+             compute_pipeline_fallback ? 'X' : ' ');
 }
 
 void VKDevice::reinit()

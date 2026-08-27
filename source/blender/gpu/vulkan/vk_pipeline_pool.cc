@@ -18,6 +18,11 @@
 #include "CLG_log.h"
 
 #include "GPU_capabilities.hh"
+
+#ifdef __ANDROID__
+#  include <cstdlib>
+#  include <sys/system_properties.h>
+#endif
 #include "vk_backend.hh"
 #include "vk_graphics_pipeline.hh"
 #include "vk_pipeline_pool.hh"
@@ -85,6 +90,27 @@ static const uint32_t VK_NOOP_COMPUTE_SPIRV[] = {
  * A valid pipeline that writes nothing keeps all of that intact. The pass produces no output — the
  * viewport loses that effect — but the frame completes and the application stays alive.
  */
+/**
+ * Is the substitute pipeline wanted?
+ *
+ * On by default so an untested driver heals itself. Turning it off makes a refused pipeline
+ * fail where it happens, which is what telling a driver bug from a Blender bug needs:
+ *   adb shell setprop debug.blender.compute_fallback 0
+ */
+static bool vk_compute_pipeline_fallback_enabled()
+{
+  static const bool enabled = []() {
+#ifdef __ANDROID__
+    char value[PROP_VALUE_MAX] = {};
+    if (__system_property_get("debug.blender.compute_fallback", value) > 0 && value[0] != 0) {
+      return atoi(value) != 0;
+    }
+#endif
+    return true;
+  }();
+  return enabled;
+}
+
 static VkPipeline vk_compute_pipeline_noop(VKDevice &device,
                                            VkPipelineLayout vk_pipeline_layout,
                                            StringRefNull name)
@@ -239,6 +265,10 @@ VkPipeline VKPipelineMap<VKComputeInfo>::create(const VKComputeInfo &compute_inf
         return pipeline;
       }
     }
+    if (!vk_compute_pipeline_fallback_enabled()) {
+      return VK_NULL_HANDLE;
+    }
+    device.workarounds_get_for_write().compute_pipeline_fallback = true;
     return vk_compute_pipeline_noop(device, compute_info.vk_pipeline_layout, name);
   }
   double end_time = BLI_time_now_seconds();

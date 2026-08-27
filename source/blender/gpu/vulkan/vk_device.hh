@@ -158,6 +158,20 @@ struct VKWorkarounds {
    */
   bool not_aligned_pixel_formats = false;
 
+  /**
+   * Set once a driver has refused a compute pipeline for a shader that compiled fine.
+   *
+   * Discovered by trying rather than by matching a device, so an untested driver heals itself:
+   * the refused pipeline is replaced by one that does nothing, which keeps the shader usable
+   * instead of handing callers a null pointer they do not check. Binding a null pipeline is
+   * invalid usage that faults the GPU context, and the submission fence is then never signalled,
+   * which on Android means the process is killed for not answering input.
+   *
+   * Set `debug.blender.compute_fallback` to 0 to turn the substitution off and let the failure
+   * surface, which is what diagnosing a suspect pass needs.
+   */
+  bool compute_pipeline_fallback = false;
+
   /** Log enabled workarounds. */
   void log() const;
 };
@@ -421,6 +435,17 @@ class VKDevice : public NonCopyable {
   const VKWorkarounds &workarounds_get() const
   {
     return workarounds_;
+  }
+
+  /**
+   * Record that a compute pipeline had to be replaced by one that does nothing.
+   *
+   * Unlike the other workarounds this one is not decided during initialization: it is only
+   * knowable once a driver has refused a pipeline, so the pool reports it when that happens.
+   */
+  void workaround_compute_pipeline_fallback_activate()
+  {
+    workarounds_.compute_pipeline_fallback = true;
   }
   inline const VKExtensions &extensions_get() const
   {
