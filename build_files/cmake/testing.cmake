@@ -102,7 +102,7 @@ function(blender_src_gtest_ex)
                           bf::dependencies::optional::tbb
                           bf::dependencies::optional::gmp)
 
-    if(UNIX AND NOT APPLE)
+    if(UNIX AND NOT (APPLE OR ANDROID))
       target_link_libraries(${TARGET_NAME} PRIVATE bf_intern_libc_compat)
     endif()
 
@@ -141,7 +141,7 @@ function(blender_add_ctests)
   if(APPLE)
     set(_test_release_dir ${TEST_INSTALL_DIR}/Blender.app/Contents/Resources/${BLENDER_VERSION})
   else()
-    if(WIN32 OR WITH_INSTALL_PORTABLE)
+    if(WITH_INSTALL_PORTABLE)
       set(_test_release_dir ${TEST_INSTALL_DIR}/${BLENDER_VERSION})
     else()
       set(_test_release_dir ${TEST_INSTALL_DIR}/share/blender/${BLENDER_VERSION})

@@ -105,7 +105,16 @@ set(OPENIMAGEIO_EXTRA_ARGS
   -Dfmt_ROOT=${LIBDIR}/fmt
   -Dopenjph_DIR=${LIBDIR}/openjph/lib/cmake/openjph
   -DLibheif_DIR=${LIBDIR}/libheif/lib/cmake/libheif
+  -DPython3_ROOT=${LIBDIR}/python
+  -DPython3_INCLUDE_DIR=${LIBDIR}/python/include/python${PYTHON_SHORT_VERSION}
 )
+
+if(ANDROID)
+  list(APPEND OPENIMAGEIO_EXTRA_ARGS
+    # Android CMake Toolchain option to allow undefined Python symbols during linking, to then be resolved at runtime.
+    -DANDROID_ALLOW_UNDEFINED_SYMBOLS=TRUE
+  )
+endif()
 
 if(WIN32)
   # We don't want the SOABI tags in the final filename since it gets the debug

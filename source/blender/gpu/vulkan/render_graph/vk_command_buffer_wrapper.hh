@@ -20,6 +20,7 @@ namespace gpu::render_graph {
 class VKCommandBufferInterface {
  public:
   bool use_dynamic_rendering_local_read = true;
+  bool use_multi_draw_indirect = true;
   /** When set, the device lacks VK_KHR_dynamic_rendering; use the render-pass
    * fallback (begin_render_pass/end_render_pass) instead of begin/end_rendering. */
   bool use_render_pass_fallback = false;

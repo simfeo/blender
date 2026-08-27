@@ -1,0 +1,25 @@
+// Top-level build file, only pins the Android Gradle Plugin.
+
+// NOTE: The vendored libsdl/app SDLActivity files should be synced with the upstream
+//       SDL android-project (in the SDL repo root) on SDL version upgrades.
+
+buildscript {
+    repositories {
+        mavenCentral()
+        google()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:9.2.0'
+    }
+}
+
+allprojects {
+    repositories {
+        mavenCentral()
+        google()
+    }
+}
+
+tasks.register('clean', Delete) {
+    delete rootProject.layout.buildDirectory
+}

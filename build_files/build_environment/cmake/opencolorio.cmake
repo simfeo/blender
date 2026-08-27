@@ -34,8 +34,17 @@ set(OPENCOLORIO_EXTRA_ARGS
   -DZLIB_LIBRARY=${LIBDIR}/zlib/lib/${ZLIB_LIBRARY}
   -DZLIB_INCLUDE_DIR=${LIBDIR}/zlib/include/
   -DPython_EXECUTABLE=${PYTHON_BINARY}
+  -DPython_ROOT=${LIBDIR}/python
+  -DPython_INCLUDE_DIR=${LIBDIR}/python/include/python${PYTHON_SHORT_VERSION}
   -Dpybind11_ROOT=${LIBDIR}/pybind11
 )
+
+if(ANDROID)
+  list(APPEND OPENCOLORIO_EXTRA_ARGS
+    # Android CMake Toolchain option to allow undefined Python symbols during linking, to then be resolved at runtime.
+    -DANDROID_ALLOW_UNDEFINED_SYMBOLS=TRUE
+  )
+endif()
 
 if(APPLE)
   set(OPENCOLORIO_EXTRA_ARGS

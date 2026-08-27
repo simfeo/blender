@@ -46,6 +46,7 @@
 #include "vk_texture_pool.hh"
 #include "vk_uniform_buffer.hh"
 #include "vk_vertex_buffer.hh"
+#include "vk_work_in_flight.hh"
 
 #include "vk_backend.hh"
 
@@ -187,9 +188,6 @@ static Vector<StringRefNull> missing_capabilities_get(VkPhysicalDevice vk_physic
   }
   if (features.features.imageCubeArray == VK_FALSE) {
     missing_capabilities.append("image cube array");
-  }
-  if (features.features.multiDrawIndirect == VK_FALSE) {
-    missing_capabilities.append("multi draw indirect");
   }
   if (features.features.drawIndirectFirstInstance == VK_FALSE) {
     missing_capabilities.append("draw indirect first instance");
@@ -640,9 +638,12 @@ void VKBackend::detect_workarounds(VKDevice &device)
     extensions.wide_lines = false;
     extensions.line_rasterization = false;
     extensions.extended_dynamic_state = false;
+    extensions.multi_draw_indirect = false;
+    extensions.provoking_vertex = false;
     GCaps.ray_query_support = false;
     GCaps.stencil_export_support = false;
     GCaps.texture_pool_workaround = true;
+    GCaps.vertex_pipeline_stores_and_atomics_support = false;
 
     device.workarounds_ = workarounds;
     device.extensions_ = extensions;
@@ -694,6 +695,9 @@ void VKBackend::detect_workarounds(VKDevice &device)
       VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME);
   extensions.vertex_input_dynamic_state = device.supports_extension(
       VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME);
+  extensions.multi_draw_indirect = device.physical_device_features_get().multiDrawIndirect ==
+                                   VK_TRUE;
+  extensions.provoking_vertex = device.supports_extension(VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME);
 #if 0
   extensions.host_image_copy = device.supports_extension(VK_EXT_HOST_IMAGE_COPY_EXTENSION_NAME);
 #endif
@@ -881,6 +885,11 @@ Fence *VKBackend::fence_alloc()
   return new VKFence();
 }
 
+WorkInFlight *VKBackend::work_in_flight_alloc(unsigned int max_in_flight)
+{
+  return new VKWorkInFlight(max_in_flight);
+}
+
 FrameBuffer *VKBackend::framebuffer_alloc(const char *name)
 {
   return new VKFrameBuffer(name);
@@ -998,11 +1007,15 @@ void VKBackend::capabilities_init(VKDevice &device)
   GCaps.geometry_shader_support = true;
   GCaps.stencil_export_support = device.supports_extension(
       VK_EXT_SHADER_STENCIL_EXPORT_EXTENSION_NAME);
+  GCaps.vertex_pipeline_stores_and_atomics_support =
+      device.physical_device_features_get().vertexPipelineStoresAndAtomics;
   GCaps.ray_query_support =
       device.supports_extension(VK_KHR_RAY_QUERY_EXTENSION_NAME) &&
       device.physical_device_acceleration_structure_properties_get().maxGeometryCount > 0 &&
       device.physical_device_acceleration_structure_properties_get().maxPrimitiveCount > 0 &&
       device.physical_device_acceleration_structure_properties_get().maxInstanceCount > 0;
+
+  GCaps.srgb_write_view_support = true;
 
   GCaps.max_texture_size = max_ii(limits.maxImageDimension1D, limits.maxImageDimension2D);
   GCaps.max_texture_3d_size = min_uu(limits.maxImageDimension3D, INT_MAX);

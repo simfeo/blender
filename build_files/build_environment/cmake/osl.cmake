@@ -15,13 +15,8 @@ else()
   set(OSL_CMAKE_LINKER_FLAGS "-L${LIBDIR}/xml2/lib")
   set(OSL_OPENIMAGEIO_LIBRARY "${LIBDIR}/openimageio/lib/OpenImageIO${SHAREDLIBEXT};${LIBDIR}/openexr/lib/IlmImf${OPENEXR_VERSION_POSTFIX}${SHAREDLIBEXT}")
 
-  if(APPLE)
-    # Explicitly specify Homebrew path, so we don't use the old system one.
-    if(BLENDER_PLATFORM_ARM)
-      set(OSL_FLEX_BISON -DBISON_EXECUTABLE=/opt/homebrew/opt/bison/bin/bison)
-    else()
-      set(OSL_FLEX_BISON -DBISON_EXECUTABLE=/usr/local/opt/bison/bin/bison)
-    endif()
+  if("${CMAKE_HOST_SYSTEM_NAME}" STREQUAL "Darwin")
+    set(OSL_FLEX_BISON -DBISON_EXECUTABLE=/opt/homebrew/opt/bison/bin/bison)
   else()
     set(OSL_FLEX_BISON "")
   endif()
@@ -54,14 +49,90 @@ set(OSL_EXTRA_ARGS
   -DPython_ROOT=${LIBDIR}/python
   -DPython_EXECUTABLE=${PYTHON_BINARY}
   -DPython3_EXECUTABLE=${PYTHON_BINARY}
+  -DPython3_ROOT=${LIBDIR}/python
+  -DPython3_INCLUDE_DIR=${LIBDIR}/python/include/python${PYTHON_SHORT_VERSION}
   -Dlibdeflate_DIR=${LIBDIR}/deflate/lib/cmake/libdeflate
 )
 
-if(NOT (APPLE OR BLENDER_PLATFORM_WINDOWS_ARM))
+if(NOT (APPLE OR BLENDER_PLATFORM_WINDOWS_ARM OR CMAKE_CROSSCOMPILING))
   list(APPEND OSL_EXTRA_ARGS
     -DOSL_USE_OPTIX=ON
     -DCUDA_TARGET_ARCH=sm_50
     -DCUDA_TOOLKIT_ROOT_DIR=${CUDAToolkit_ROOT}
+  )
+endif()
+
+set(OSL_CROSSCOMPILE_PATCH "true")  # Nullop when not cross-compiling.
+if(CMAKE_CROSSCOMPILING)
+  # There are muliple cross-compiling issues we need to fix:
+  # 1st: The base OSL FindLLVM.cmake heavily relies on llvm-config, which cannot be executed in a cross-compiled environment.
+  #      To workaround this, patch OSL to remove the LLVM find_package, and manually provide all variables by hand instead.
+  set(OSL_CROSSCOMPILE_PATCH
+    ${PATCH_CMD} -p 1 -d
+      ${BUILD_DIR}/osl/src/external_osl <
+      ${PATCH_DIR}/osl_crosscompile_llvm.diff
+  )
+
+  # Since LLVM and OSL are both built in the same `make deps` invocation, directly using GLOB here to obtain the LLVM static
+  # libs would yield no results, as this expression would be evaluated at configure time, when LLVM hasn't been built yet.
+  # Workaround this issue by using a CMake cache script (passed via -C) to defer the GLOB to the external_osl step.
+  set(OSL_LLVM_GLOB_SCRIPT ${BUILD_DIR}/osl/llvm_libs_glob.cmake)
+  file(CONFIGURE
+    OUTPUT ${OSL_LLVM_GLOB_SCRIPT}
+    CONTENT
+[=[
+file(GLOB _osl_llvm_libs "@LIBDIR@/llvm/lib/*.a")
+set(LLVM_LIBRARIES "${_osl_llvm_libs}" CACHE STRING "" FORCE)
+]=]
+    @ONLY
+  )
+
+  list(APPEND OSL_EXTRA_ARGS
+    -DLLVM_FOUND=YES
+    -DLLVM_VERSION=${LLVM_VERSION}  # Set in versions.cmake
+    -DLLVM_INCLUDES=${LIBDIR}/llvm/include
+    -DLLVM_LIB_DIR=${LIBDIR}/llvm/lib
+    -DLLVM_TARGETS=${LLVM_TARGETS}  # Set in llvm.cmake
+    -C ${OSL_LLVM_GLOB_SCRIPT}
+
+    # Interesting hack: We provide the LIBDIR crosscompiled LLVM static libs, but the HOST_LIBDIR LLVM_DIRECTORY for
+    #                   the clang++ executable. Magically, this works.
+    -DLLVM_DIRECTORY=${HOST_LIBDIR}/llvm
+  )
+  if(ANDROID)
+    # Android specific LLVM build flags.
+    string(REPLACE "-none-" "-" _android_triple ${ANDROID_LLVM_TRIPLE})
+    list(APPEND OSL_EXTRA_ARGS
+      -DLLVM_COMPILE_FLAGS=--target=${_android_triple}^^--sysroot=${CMAKE_SYSROOT}^^-stdlib=libc++
+    )
+    unset(_android_triple)
+  endif()
+
+  # 2nd: OSL compiles two executables which it uses at build-time: oslc (external, shipped) and genluts (internal).
+  #      As these executables cannot be launched on our host architecture, we instead fetch them from the host deps
+  #      build, and patch OSL to use the provided executables accordingly.
+  set(OSL_CROSSCOMPILE_PATCH
+    ${OSL_CROSSCOMPILE_PATCH} &&
+    ${PATCH_CMD} -p 1 -d
+      ${BUILD_DIR}/osl/src/external_osl <
+      ${PATCH_DIR}/osl_crosscompile_host_genluts.diff &&
+    ${PATCH_CMD} -p 1 -d
+      ${BUILD_DIR}/osl/src/external_osl <
+      ${PATCH_DIR}/osl_crosscompile_host_oslc.diff
+  )
+
+  set(OSL_GENLUTS_PATH ${HOST_DEPS_BUILD_DIR}/build/osl/src/external_osl-build/bin/genluts)
+  set(OSL_OSLC_PATH ${HOST_LIBDIR}/osl/bin/oslc)
+  if(NOT EXISTS ${OSL_GENLUTS_PATH})
+    message(FATAL_ERROR "OSL: Couldn't find required genluts executable in host deps build at path: ${OSL_GENLUTS_PATH}")
+  endif()
+  if(NOT EXISTS ${OSL_OSLC_PATH})
+    message(FATAL_ERROR "OSL: Couldn't find required oslc executable in host deps build at path: ${OSL_OSLC_PATH}")
+  endif()
+
+  list(APPEND OSL_EXTRA_ARGS
+    -DGENLUTS_EXECUTABLE=${OSL_GENLUTS_PATH}
+    -DOSLC_EXECUTABLE=${OSL_OSLC_PATH}
   )
 endif()
 
@@ -82,7 +153,8 @@ ExternalProject_Add(external_osl
       ${PATCH_DIR}/osl_ptx_version.diff &&
     ${PATCH_CMD} -p 1 -d
       ${BUILD_DIR}/osl/src/external_osl <
-      ${PATCH_DIR}/osl_relative_inc_cmake.diff
+      ${PATCH_DIR}/osl_relative_inc_cmake.diff &&
+    ${OSL_CROSSCOMPILE_PATCH}
 
   CMAKE_ARGS
     -DCMAKE_INSTALL_PREFIX=${LIBDIR}/osl

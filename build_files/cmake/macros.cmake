@@ -653,7 +653,7 @@ function(get_compiler_simd_flags
     endif()
   elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|ARM64|arm64" OR CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
     if((CMAKE_C_COMPILER_ID STREQUAL "GNU") OR (CMAKE_C_COMPILER_ID MATCHES "Clang"))
-      if(UNIX AND NOT APPLE)
+      if(UNIX AND NOT (APPLE OR ANDROID))
         # Target ARMv8.2-A with dot product and half float.
         set(${_simd_flags} "-march=armv8.2-a+dotprod+fp16+lse" PARENT_SCOPE)
       else()
@@ -1105,8 +1105,8 @@ function(data_to_c
 
   add_custom_command(
     OUTPUT ${file_to}
-    COMMAND "$<TARGET_FILE:datatoc>" ${file_from} ${file_to} ${symbol_name_override}
-    DEPENDS ${file_from} datatoc)
+    COMMAND ${DATATOC_EXECUTABLE} ${file_from} ${file_to} ${symbol_name_override}
+    DEPENDS ${file_from} ${DATATOC_DEPENDENCY})
 
   set_source_files_properties(${file_to} PROPERTIES GENERATED TRUE)
 endfunction()
@@ -1129,8 +1129,8 @@ function(data_to_c_simple
 
   add_custom_command(
     OUTPUT  ${_file_to}
-    COMMAND "$<TARGET_FILE:datatoc>" ${_file_from} ${_file_to}
-    DEPENDS ${_file_from} datatoc)
+    COMMAND ${DATATOC_EXECUTABLE} ${_file_from} ${_file_to}
+    DEPENDS ${_file_from} ${DATATOC_DEPENDENCY})
 
   set_source_files_properties(${_file_to} PROPERTIES GENERATED TRUE)
 endfunction()
@@ -1166,13 +1166,13 @@ function(glsl_to_c
   add_custom_command(
     OUTPUT  ${_file_tmp} ${_file_meta} ${_file_info} ${_file_dep}
     DEPFILE ${_file_dep}
-    COMMAND "$<TARGET_FILE:shader_tool>" ${_file_from} ${_file_tmp} ${_file_meta} ${_file_info} ${_file_dep} ${_inc_list}
-    DEPENDS ${_file_from} shader_tool)
+    COMMAND ${SHADER_TOOL_EXECUTABLE} ${_file_from} ${_file_tmp} ${_file_meta} ${_file_info} ${_file_dep} ${_inc_list}
+    DEPENDS ${_file_from} ${SHADER_TOOL_DEPENDENCY})
 
   add_custom_command(
     OUTPUT  ${_file_to}
-    COMMAND "$<TARGET_FILE:datatoc>" ${_file_tmp} ${_file_to}
-    DEPENDS ${_file_tmp} datatoc)
+    COMMAND ${DATATOC_EXECUTABLE} ${_file_tmp} ${_file_to}
+    DEPENDS ${_file_tmp} ${DATATOC_DEPENDENCY})
 
   set_source_files_properties(${_file_tmp} PROPERTIES GENERATED TRUE)
   set_source_files_properties(${_file_to}  PROPERTIES GENERATED TRUE)
@@ -1204,9 +1204,9 @@ function(msgfmt_simple
     make_directory ${_file_to_path}
 
     COMMAND ${CMAKE_COMMAND} -E
-    env ${PLATFORM_ENV_BUILD} "$<TARGET_FILE:msgfmt>" ${_file_from} ${_file_to}
+    env ${PLATFORM_ENV_BUILD} ${MSGFMT_EXECUTABLE} ${_file_from} ${_file_to}
 
-    DEPENDS msgfmt ${_file_from})
+    DEPENDS ${MSGFMT_DEPENDENCY} ${_file_from})
 
   set_source_files_properties(${_file_to} PROPERTIES GENERATED TRUE)
 endfunction()
@@ -1353,7 +1353,12 @@ function(find_python_module_file
   endif()
 
   path_strip_trailing_slash(_python_root "${PYTHON_LIBPATH}")
-  set(_python_base "${_python_root}/python${PYTHON_VERSION}")
+  if(WIN32)
+    # MS-Windows has no `python${PYTHON_VERSION}` directory, `site-packages` is directly in `lib`.
+    set(_python_base "${_python_root}")
+  else()
+    set(_python_base "${_python_root}/python${PYTHON_VERSION}")
+  endif()
   # This always moves up one level (even if there is a trailing slash).
   get_filename_component(_python_root "${_python_root}" DIRECTORY)
   path_ensure_trailing_slash(_python_root "${_python_root}")

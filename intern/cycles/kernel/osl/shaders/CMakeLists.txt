@@ -34,6 +34,7 @@ set(SRC_OSL
   node_gabor_texture.osl
   node_gamma.osl
   node_geometry.osl
+  node_get_vector_component.osl
   node_glass_bsdf.osl
   node_glossy_bsdf.osl
   node_gradient_texture.osl
@@ -172,6 +173,11 @@ set(SRC_OSL_HEADERS
 set(SRC_OSO
 
 )
+
+if(CMAKE_CROSSCOMPILING)
+  # Override the OSL compiler for cross-compilation, fetching it from the host pre-compiled library directory.
+  set(OSL_COMPILER ${HOST_LIBDIR}/osl/bin/oslc)
+endif()
 
 # TODO, add a module to compile OSL
 foreach(_file ${SRC_OSL})

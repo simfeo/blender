@@ -12,12 +12,14 @@ endif()
 if(WIN32)
   # We need to keep BOOST_DEBUG_PYTHON for the vendored copy of boost inside USD.
   add_definitions(-DBOOST_DEBUG_PYTHON)
+  # Silence warnings from HD_DECLARE_DATASOURCE macro defined in USD headers.
+  add_definitions(-D_SILENCE_CXX20_OLD_SHARED_PTR_ATOMIC_SUPPORT_DEPRECATION_WARNING)
 endif()
 
 # Pre-compiled Linux libraries are made with GCC, and USD uses some extensions
 # which lead to an incompatible ABI for Clang. Using those extensions with
-# Clang as well works around the issue.
-# Android uses libc++ (no __gnu_cxx); this Linux/GCC-ABI workaround doesn't apply.
+# Clang as well works around the issue. Skip this workaround on Android whose
+# libs are compiled with the NDK's Clang.
 if(UNIX AND NOT APPLE AND NOT ANDROID)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang")
     if(DEFINED LIBDIR)

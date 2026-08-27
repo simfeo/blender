@@ -272,7 +272,7 @@ static bool ensure_mmap_initialized()
   }
   return true;
 }
-#else  /* !WIN32 */
+#else /* !WIN32 */
 static void print_error(const char *message)
 {
   char buffer[256];
@@ -333,8 +333,11 @@ static bool ensure_mmap_initialized()
 
   std::unique_lock lock(mmap_mutex);
   if (!initialized) {
-    /* Zero-init: bionic's struct sigaction has a different first member. */
+#  ifdef __ANDROID__
     struct sigaction newact = {}, oldact = {};
+#  else
+    struct sigaction newact = {{nullptr}}, oldact = {{nullptr}};
+#  endif
 
     newact.sa_sigaction = sigbus_handler;
     newact.sa_flags = SA_SIGINFO;

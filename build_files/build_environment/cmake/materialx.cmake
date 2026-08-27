@@ -15,6 +15,8 @@ set(MATERIALX_EXTRA_ARGS
   -DCMAKE_POLICY_DEFAULT_CMP0074=NEW
   -Dpybind11_ROOT=${LIBDIR}/pybind11
   -DPython_EXECUTABLE=${PYTHON_BINARY}
+  -DPython_ROOT=${LIBDIR}/python
+  -DPython_INCLUDE_DIR=${LIBDIR}/python/include/python${PYTHON_SHORT_VERSION}
 )
 
 if(WIN32)
@@ -29,6 +31,18 @@ endif()
 if(UNIX AND NOT APPLE)
   list(APPEND MATERIALX_EXTRA_ARGS
     -DCMAKE_SHARED_LINKER_FLAGS=-Wl,--version-script="${CMAKE_SOURCE_DIR}/linux/materialx_symbols_unix.map"
+  )
+endif()
+
+if(ANDROID)
+  list(APPEND MATERIALX_EXTRA_ARGS
+    # Disable the MaterialXRenderGlsl module due to it requiring OpenGL/X11 on UNIX. It's controlled by GEN_GLSL,
+    # which gets forced to ON if GEN_MSL is ON (even if unused), set both to OFF in this sense.
+    -DMATERIALX_BUILD_GEN_MSL=OFF
+    -DMATERIALX_BUILD_GEN_GLSL=OFF
+
+    # Python bindings: Explicitly link against the shared Python lib.
+    -DPYTHON_LIBRARY=${LIBDIR}/python/lib/libpython${PYTHON_SHORT_VERSION}${SHAREDLIBEXT}
   )
 endif()
 

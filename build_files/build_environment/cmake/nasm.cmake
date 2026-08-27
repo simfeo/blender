@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
+set(NASM_EXTRA_ARGS "")
+
 ExternalProject_Add(external_nasm
   URL file://${PACKAGE_DIR}/${NASM_FILE}
   DOWNLOAD_DIR ${DOWNLOAD_DIR}
@@ -15,7 +17,7 @@ ExternalProject_Add(external_nasm
   CONFIGURE_COMMAND ${CONFIGURE_ENV} &&
     cd ${BUILD_DIR}/nasm/src/external_nasm/ &&
     ./autogen.sh &&
-    ${CONFIGURE_COMMAND} --prefix=${LIBDIR}/nasm
+    ${CONFIGURE_COMMAND} --prefix=${LIBDIR}/nasm ${NASM_EXTRA_ARGS}
 
   BUILD_COMMAND ${CONFIGURE_ENV} &&
     cd ${BUILD_DIR}/nasm/src/external_nasm/ &&

@@ -41,12 +41,21 @@ set(LLVM_EXTRA_ARGS
   -DLLVM_ENABLE_ZSTD=OFF
   -DLLVM_ENABLE_ZLIB=OFF
   -DLLVM_ENABLE_PROJECTS=clang${LLVM_EXTRA_PROJECTS}
-  -DPython3_ROOT_DIR=${LIBDIR}/python/
+  -DPython3_ROOT_DIR=${HOST_LIBDIR}/python/
   -DPython3_EXECUTABLE=${PYTHON_BINARY}
   # Enforce C++17 as C++20 cause compilation errors on recent GCC versions, fixed in LLVM 22.1.0 (GH PR #169772), remove on upgrade.
   -DCMAKE_CXX_STANDARD=17
   ${LLVM_XML2_ARGS}
 )
+
+if(CMAKE_CROSSCOMPILING)
+  # Disable building tools during cross-compilation, as these would be instead obtained from the host deps build, and
+  # also cause linking issues on Android.
+  set(LLVM_EXTRA_ARGS
+    ${LLVM_EXTRA_ARGS}
+    -DLLVM_BUILD_TOOLS=OFF
+  )
+endif()
 
 set(LLVM_PATCH
   ${PATCH_CMD} -p 1 -d

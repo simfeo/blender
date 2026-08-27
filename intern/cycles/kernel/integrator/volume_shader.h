@@ -434,7 +434,7 @@ ccl_device_inline void volume_shader_motion_blur(KernelGlobals kg,
 
 /* Volume Evaluation */
 
-template<const bool shadow, const uint node_feature_mask, typename ConstIntegratorGenericState>
+template<const bool shadow, const uint64_t node_feature_mask, typename ConstIntegratorGenericState>
 ccl_device_inline bool volume_shader_eval_entry(KernelGlobals kg,
                                                 ConstIntegratorGenericState state,
                                                 ccl_private ShaderData *ccl_restrict sd,
@@ -516,7 +516,7 @@ ccl_device_inline void volume_shader_eval(KernelGlobals kg,
   sd->num_closure = 0;
   sd->num_closure_left = max_closures;
   sd->shader_flag = 0;
-  sd->runtime_flag = SR_IS_VOLUME_SHADER_EVAL | (sd->runtime_flag & SR_CACHE_MISS);
+  sd->runtime_flag = SR_IS_VOLUME_SHADER_EVAL | (sd->runtime_flag & ~SR_CLOSURE_FLAG);
   sd->object_flag = 0;
 
   for (int i = 0;; i++) {

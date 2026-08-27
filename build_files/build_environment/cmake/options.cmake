@@ -34,6 +34,19 @@ else()
   set(MESON_BUILD_TYPE -Dbuildtype=release)
 endif()
 
+# A Meson cross-file may be defined for cross-compiled platforms (such as Android).
+set(MESON_CROSSFILE_ARG "")
+
+# HOST_LIBDIR is used to execute host tools while cross-compiling. Equivalent to LIBDIR for normal builds.
+set(HOST_LIBDIR ${LIBDIR})
+if(CMAKE_CROSSCOMPILING)
+  if(BUILD_MODE STREQUAL "Debug")
+    set(HOST_LIBDIR ${HOST_DEPS_BUILD_DIR}/Debug)
+  else()
+    set(HOST_LIBDIR ${HOST_DEPS_BUILD_DIR}/Release)
+  endif()
+endif()
+
 set(DOWNLOAD_DIR "${CMAKE_CURRENT_BINARY_DIR}/downloads" CACHE STRING "Path for downloaded files")
 
 set(PACKAGE_DIR "${CMAKE_CURRENT_BINARY_DIR}/packages" CACHE PATH "default path for downloaded packages")
@@ -46,6 +59,7 @@ set(PATCH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/patches)
 set(BUILD_DIR ${CMAKE_CURRENT_BINARY_DIR}/build)
 
 message(STATUS "LIBDIR = ${LIBDIR}")
+message(STATUS "HOST_LIBDIR = ${HOST_LIBDIR}")
 message(STATUS "DOWNLOAD_DIR = ${DOWNLOAD_DIR}")
 message(STATUS "PACKAGE_DIR = ${PACKAGE_DIR}")
 message(STATUS "PATCH_DIR = ${PATCH_DIR}")
@@ -60,7 +74,7 @@ if(WIN32)
   set(LIBEXT ".lib")
   set(SHAREDLIBEXT ".lib")
   set(LIBPREFIX "")
-  set(MESON ${LIBDIR}/python/Scripts/meson)
+  set(MESON ${HOST_LIBDIR}/python/Scripts/meson)
   # For OIIO and OSL
   set(COMMON_DEFINES /DPSAPI_VERSION=2 /DTINYFORMAT_ALLOW_WCHAR_STRINGS)
 
@@ -211,7 +225,7 @@ else()
   set(PATCH_CMD patch)
   set(LIBEXT ".a")
   set(LIBPREFIX "lib")
-  set(MESON ${LIBDIR}/python/bin/meson)
+  set(MESON ${HOST_LIBDIR}/python/bin/meson)
   if(APPLE)
     set(SHAREDLIBEXT ".dylib")
 
@@ -249,9 +263,39 @@ else()
     set(PLATFORM_CMAKE_FLAGS -DCMAKE_INSTALL_LIBDIR=lib)
 
     # Target ARMv8.2-A with dot product and half float.
-    if(BLENDER_PLATFORM_ARM)
+    if(BLENDER_PLATFORM_ARM AND NOT ANDROID)
+      # NOTE: Could *perhaps* enable on Android, needs support investigation, also disabled for main Blender builds for now.
       set(PLATFORM_CFLAGS "${PLATFORM_CFLAGS} -march=armv8.2-a+dotprod+fp16+lse")
       set(PLATFORM_CXXFLAGS "${PLATFORM_CXXFLAGS} -fPIC -march=armv8.2-a+dotprod+fp16+lse")
+    endif()
+
+    if(ANDROID)
+      # Forward Android CMake toolchain file and settings.
+      # NOTE: Using our own Android toolchain wrapper (in build_files/cmake/platform/platform_android_toolchain.cmake),
+      #       forwarding every `ANDROID_*` variable isn't required anymore as the wrapper sets them. Still keep this
+      #       logic around for correctness.
+      set(PLATFORM_CMAKE_FLAGS
+        ${PLATFORM_CMAKE_FLAGS}
+        -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
+        -DANDROID_ABI=${ANDROID_ABI}
+        -DANDROID_PLATFORM=${ANDROID_PLATFORM}
+        -DANDROID_STL=${ANDROID_STL}
+        # The Android CMake toolchain sets the CMAKE_FIND_ROOT_PATH to the NDK root and the ROOT_PATH_MODE_PACKAGE
+        # to ONLY, set it to LIBDIR (then prepended before the NDK by the toolchain) to allow built dependencies that
+        # use find_package() to find each others.
+        -DCMAKE_FIND_ROOT_PATH=${LIBDIR}
+      )
+
+      # Set Autoconf Android host target triplet.
+      # Autoconf terminology: build: system on which we build, host: target system we build to.
+      set(PLATFORM_BUILD_TARGET --host=${ANDROID_LLVM_TRIPLE})
+
+      # The Android CMake toolchain unconditionally enables debugging symbols by adding -g to the base CMAKE_C/CXX_FLAGS,
+      # presumably to ensure builds always get correct stacktrace for development, as APK bundling later strips them.
+      # Counter this behavior by appending -g0 to the platform flags, which flows to the build type specific flags,
+      # last flag wins in this case. Without this projects like LLVM can grow to a 50GB+ build.
+      set(PLATFORM_CFLAGS "${PLATFORM_CFLAGS} -g0")
+      set(PLATFORM_CXXFLAGS "${PLATFORM_CXXFLAGS} -g0")
     endif()
   endif()
 
@@ -275,12 +319,50 @@ else()
   set(BLENDER_CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g -DNDEBUG ${PLATFORM_CXXFLAGS}")
 
   set(CONFIGURE_ENV
-    export MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET} &&
-    export MACOSX_SDK_VERSION=${CMAKE_OSX_DEPLOYMENT_TARGET} &&
     export CFLAGS=${PLATFORM_CFLAGS} &&
     export CXXFLAGS=${PLATFORM_CXXFLAGS} &&
     export LDFLAGS=${PLATFORM_LDFLAGS}
   )
+
+  if(APPLE)
+    set(CONFIGURE_ENV
+      ${CONFIGURE_ENV}
+      export MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET} &&
+      export MACOSX_SDK_VERSION=${CMAKE_OSX_DEPLOYMENT_TARGET}
+    )
+  endif()
+
+  if(ANDROID)
+    # Certain autoconf projects ./configure don't support passing a compiler + a `--target` argument as CC/CXX, work
+    # around this by using the clang target-prefixed entry-point scripts shipped with the Android NDK.
+    string(REPLACE "-none-" "-" _android_triple ${ANDROID_LLVM_TRIPLE})
+    set(ANDROID_TOOLCHAIN_PREFIX ${ANDROID_TOOLCHAIN_ROOT}/bin/${_android_triple}-)
+    unset(_android_triple)
+
+    set(ANDROID_CC ${ANDROID_TOOLCHAIN_PREFIX}clang)
+    set(ANDROID_CXX ${ANDROID_TOOLCHAIN_PREFIX}clang++)
+
+    # Set configure toolchain env with obtained compilers and CMake variables set by the Android CMake toolchain file.
+    set(CONFIGURE_ENV
+      ${CONFIGURE_ENV}
+      export CC=${ANDROID_CC} &&
+      export CXX=${ANDROID_CXX} &&
+      export AS=${ANDROID_CC} &&
+      export AR=${CMAKE_AR} &&
+      export LD=${CMAKE_C_COMPILER_LINKER} &&
+      export RANLIB=${CMAKE_RANLIB} &&
+      export STRIP=${CMAKE_STRIP}
+    )
+
+    # For Meson projects, a similar cross-compilation environment is defined via a cross-file.
+    configure_file(
+      ${CMAKE_SOURCE_DIR}/cmake/android_meson_crossfile.txt.in
+      ${BUILD_DIR}/android_meson_crossfile.txt
+      @ONLY
+    )
+    set(MESON_CROSSFILE_ARG --cross-file ${BUILD_DIR}/android_meson_crossfile.txt)
+  endif()
+
   set(CONFIGURE_ENV_NO_PERL ${CONFIGURE_ENV})
   set(CONFIGURE_COMMAND ./configure ${PLATFORM_BUILD_TARGET})
   set(CONFIGURE_COMMAND_NO_TARGET ./configure)

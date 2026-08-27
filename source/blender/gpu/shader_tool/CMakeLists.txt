@@ -48,7 +48,11 @@ if(WITH_GPU_SHADER_ASSERT)
   add_definitions(-DWITH_GPU_SHADER_ASSERT)
 endif()
 
-if(NOT WITH_CROSSCOMPILED_TOOLS)
+# When cross-compiling the executable is separately compiled for the host architecture
+# in a sub-build defined in host_tools.cmake. As this is a build-time code-gen tool
+# that must run on the host build machine, the executable is then provided by the
+# SHADER_TOOL_EXECUTABLE variable.
+if(NOT CMAKE_CROSSCOMPILING)
   add_executable(shader_tool shader_tool.cc ${SRC})
   optimize_debug_target(shader_tool)
 endif()

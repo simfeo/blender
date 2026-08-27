@@ -189,7 +189,7 @@ Build \"BlendThumb.dll\" helper for Windows explorer integration to support extr
 thumbnails from `.blend` files."
     ON
   )
-elseif(UNIX AND NOT APPLE)
+elseif(UNIX AND NOT (APPLE OR ANDROID))
   option(WITH_BLENDER_THUMBNAILER "\
 Build stand-alone \"blender-thumbnailer\" command-line thumbnail extraction utility, \
 intended for use by file-managers to extract PNG images from `.blend` files."
@@ -201,6 +201,8 @@ Build \"blender-thumbnailer.appex\" extension for Finder/ QuickLook thumbnail \
 support for blend files."
     ON
   )
+else()
+  set(WITH_BLENDER_THUMBNAILER OFF)
 endif()
 
 option(WITH_INTERNATIONAL "Enable I18N (International fonts and text)" ON)
@@ -297,11 +299,15 @@ Enable Legacy IK solver (only disable for development)"
 option(WITH_FFTW3 "Enable FFTW3 support (Used for smoke, ocean sim, glare, and audio effects)" ON)
 option(WITH_PUGIXML "Enable PugiXML support (Used for OpenImageIO, Grease Pencil SVG export)" ON)
 option(WITH_BULLET "Enable Bullet (Physics Engine)" ON)
-option(WITH_SYSTEM_BULLET "\
-Use the system's Bullet library (currently unsupported due to missing features in upstream)"
-  OFF
-)
-mark_as_advanced(WITH_SYSTEM_BULLET)
+if(NOT CMAKE_CROSSCOMPILING)
+  option(WITH_SYSTEM_BULLET "\
+  Use the system's Bullet library (currently unsupported due to missing features in upstream)"
+    OFF
+  )
+  mark_as_advanced(WITH_SYSTEM_BULLET)
+else()
+  set(WITH_SYSTEM_BULLET OFF)
+endif()
 
 option(WITH_XR_OPENXR "Enable VR features through the OpenXR specification" ON)
 
@@ -330,11 +336,16 @@ option(WITH_HARU "Enable features relying on Libharu (Grease Pencil PDF export)"
 option(WITH_GHOST_DEBUG "Enable debugging output for the GHOST library" OFF)
 mark_as_advanced(WITH_GHOST_DEBUG)
 
-option(WITH_GHOST_SDL "\
+if(ANDROID)
+  # Currently SDL is the only supported GHOST backend for Android, unconditionally enable.
+  set(WITH_GHOST_SDL ON)
+else()
+  option(WITH_GHOST_SDL "\
 Enable building Blender against SDL for windowing rather than the native APIs"
-  OFF
-)
-mark_as_advanced(WITH_GHOST_SDL)
+    OFF
+  )
+  mark_as_advanced(WITH_GHOST_SDL)
+endif()
 
 # Android windowing backend (NativeActivity + Vulkan). Auto-on when the NDK
 # toolchain sets ANDROID. See build_files/android/README.md.
@@ -343,7 +354,7 @@ if(ANDROID)
   mark_as_advanced(WITH_GHOST_ANDROID)
 endif()
 
-if(UNIX AND NOT (APPLE OR HAIKU))
+if(UNIX AND NOT (APPLE OR HAIKU OR ANDROID))
   option(WITH_GHOST_X11 "Enable building Blender against X11 for windowing" ON)
   mark_as_advanced(WITH_GHOST_X11)
 
@@ -363,6 +374,12 @@ this can be used to differentiate Blender instances by version or branch for exa
     )
     mark_as_advanced(WITH_GHOST_WAYLAND_APP_ID)
   endif()
+else()
+  set(WITH_GHOST_X11 OFF)
+  set(WITH_GHOST_WAYLAND OFF)
+  set(WITH_GHOST_WAYLAND_DYNLOAD OFF)
+  set(WITH_GHOST_WAYLAND_APP_ID "")
+  set(WITH_GHOST_CSD OFF)
 endif()
 
 # Only used for WAYLAND, avoid having to check for WAYLAND everywhere by setting as disabled.
@@ -381,25 +398,32 @@ mark_as_advanced(WITH_HEADLESS)
 option(WITH_QUADRIFLOW "Build with QuadriFlow remesher support" ON)
 
 option(WITH_AUDASPACE "Build with Audaspace (base Blender audio library)" ON)
-option(WITH_SYSTEM_AUDASPACE "Build with external Audaspace library installed on the system" OFF)
+mark_as_advanced(WITH_AUDASPACE)
+
 option(WITH_RUBBERBAND "\
 Build with Rubber Band for audio time-stretching and pitch-scaling (used by Audaspace)"
   ON
 )
-mark_as_advanced(WITH_AUDASPACE)
-mark_as_advanced(WITH_SYSTEM_AUDASPACE)
 mark_as_advanced(WITH_RUBBERBAND)
-
-set_and_warn_dependency(WITH_AUDASPACE WITH_SYSTEM_AUDASPACE OFF)
 set_and_warn_dependency(WITH_AUDASPACE WITH_RUBBERBAND OFF)
-set_and_warn_incompatible(WITH_SYSTEM_AUDASPACE WITH_RUBBERBAND OFF)
+
+if((UNIX AND NOT APPLE) AND NOT CMAKE_CROSSCOMPILING)
+  option(WITH_SYSTEM_AUDASPACE "Build with external Audaspace library installed on the system" OFF)
+  mark_as_advanced(WITH_SYSTEM_AUDASPACE)
+
+  set_and_warn_dependency(WITH_AUDASPACE WITH_SYSTEM_AUDASPACE OFF)
+  set_and_warn_incompatible(WITH_SYSTEM_AUDASPACE WITH_RUBBERBAND OFF)
+else()
+  set(WITH_SYSTEM_AUDASPACE OFF)
+endif()
+
 
 if(WITH_GHOST_X11)
   option(WITH_X11_XINPUT "Enable X11 Xinput (tablet support and Unicode input)" ON)
   option(WITH_X11_XFIXES "Enable X11 XWayland cursor warping workaround" ON)
 endif()
 
-if(UNIX AND NOT APPLE)
+if((UNIX AND NOT APPLE) AND NOT CMAKE_CROSSCOMPILING)
   option(WITH_SYSTEM_FREETYPE "Use the FreeType library provided by the operating system" OFF)
 else()
   set(WITH_SYSTEM_FREETYPE OFF)
@@ -444,8 +468,13 @@ option(WITH_USD "Enable Universal Scene Description (USD) Support" ON)
 # MaterialX
 option(WITH_MATERIALX "Enable MaterialX Support" ON)
 
-# Hydra render engine
-option(WITH_HYDRA "Enable Hydra render engine" ON)
+# Hydra render engine.
+# Not supported on Android due to the lack of USD graphics backend (see build_environment/cmake/usd.cmake).
+if(NOT ANDROID)
+  option(WITH_HYDRA "Enable Hydra render engine" ON)
+else()
+  set(WITH_HYDRA OFF)
+endif()
 
 # Storm tests (via USD or Hydra)
 option(WITH_STORM_TESTS_VULKAN "\
@@ -475,7 +504,7 @@ else()
 endif()
 if(NOT WIN32)
   set(_option_default ON)
-  if(APPLE)
+  if(APPLE OR ANDROID)
     set(_option_default OFF)
   endif()
   option(WITH_JACK "Enable JACK Support (http://www.jackaudio.org)" ${_option_default})
@@ -484,14 +513,16 @@ if(NOT WIN32)
 else()
   set(WITH_JACK OFF)
 endif()
-if(UNIX AND NOT APPLE)
+if(UNIX AND NOT (APPLE OR ANDROID))
   option(WITH_PULSEAUDIO "Enable PulseAudio for audio support on Linux" ON)
   option(WITH_PULSEAUDIO_DYNLOAD "Enable runtime dynamic PulseAudio libraries loading" OFF)
   option(WITH_PIPEWIRE "Enable PipeWire for audio support on Linux" ON)
   option(WITH_PIPEWIRE_DYNLOAD "Enable runtime dynamic PipeWire libraries loading" OFF)
 else()
   set(WITH_PULSEAUDIO OFF)
+  set(WITH_PULSEAUDIO_DYNLOAD OFF)
   set(WITH_PIPEWIRE OFF)
+  set(WITH_PIPEWIRE_DYNLOAD OFF)
 endif()
 if(WIN32)
   option(WITH_WASAPI "Enable Windows Audio Sessions API for audio support on Windows" ON)
@@ -518,7 +549,7 @@ mark_as_advanced(WITH_SYSTEM_GLOG)
 option(WITH_FREESTYLE "Enable Freestyle (advanced edges rendering)" ON)
 
 # Libraries.
-if(UNIX AND NOT APPLE)
+if((UNIX AND NOT APPLE) AND NOT CMAKE_CROSSCOMPILING)
   # Optionally build without pre-compiled libraries.
   # NOTE: this could be supported on all platforms however in practice UNIX is the only platform
   # that has good support for detecting installed libraries.
@@ -535,6 +566,10 @@ Try to link with static libraries, as much as possible, \
 to make Blender more portable across distributions"
     OFF
   )
+else()
+  # Used if UNIX AND CMAKE_CROSSCOMPILING, always use pre-compiled libs in this case.
+  set(WITH_LIBS_PRECOMPILED ON)
+  set(WITH_STATIC_LIBS OFF)
 endif()
 
 # Misc
@@ -543,14 +578,22 @@ if(WIN32 OR APPLE OR ((UNIX AND (NOT HAIKU)) AND WITH_GHOST_WAYLAND))
 else()
   set(WITH_INPUT_IME OFF)
 endif()
-option(WITH_INPUT_NDOF "Enable NDOF input devices (SpaceNavigator and friends)" ON)
-# On Windows and for the Blender application on macOS, portable install
+
+if(NOT ANDROID)
+  option(WITH_INPUT_NDOF "Enable NDOF input devices (SpaceNavigator and friends)" ON)
+else()
+  set(WITH_INPUT_NDOF OFF)
+endif()
+
+# On Windows, Android and for the Blender application on macOS, portable install
 # is the only supported installation type, so there is no option.
-if(UNIX AND (NOT APPLE OR WITH_PYTHON_MODULE))
+if(UNIX AND (NOT (APPLE OR ANDROID) OR WITH_PYTHON_MODULE))
   option(WITH_INSTALL_PORTABLE "\
 Install redistributable runtime, otherwise install into CMAKE_INSTALL_PREFIX"
     ON
   )
+else()
+  set(WITH_INSTALL_PORTABLE ON)
 endif()
 
 option(WITH_PYTHON_INSTALL "Copy system Python into the Blender install directory" ON)
@@ -578,7 +621,7 @@ endif()
 if(WITH_PYTHON_INSTALL)
   option(WITH_PYTHON_INSTALL_NUMPY "Copy system NumPy into the Blender install directory" ON)
 
-  if(UNIX AND NOT APPLE)
+  if((UNIX AND NOT APPLE) AND NOT CMAKE_CROSSCOMPILING)
     option(WITH_PYTHON_INSTALL_REQUESTS "\
 Copy system requests into the Blender install directory"
       ON
@@ -589,21 +632,26 @@ Path to python site-packages or dist-packages containing 'requests' module"
     mark_as_advanced(PYTHON_REQUESTS_PATH)
   endif()
 
-  option(WITH_PYTHON_INSTALL_ZSTANDARD "Copy Zstandard into the Blender install directory" ON)
-  set(PYTHON_ZSTANDARD_PATH "" CACHE PATH "\
-Path to python site-packages or dist-packages containing 'zstandard' module"
-  )
-  mark_as_advanced(PYTHON_ZSTANDARD_PATH)
+  if((UNIX AND NOT APPLE) AND NOT CMAKE_CROSSCOMPILING)
+    option(WITH_PYTHON_INSTALL_ZSTANDARD "Copy Zstandard into the Blender install directory" ON)
+    set(PYTHON_ZSTANDARD_PATH "" CACHE PATH "\
+  Path to python site-packages or dist-packages containing 'zstandard' module"
+    )
+    mark_as_advanced(PYTHON_ZSTANDARD_PATH)
+  endif()
 endif()
 
 option(WITH_COMPILER_SIMD "Add the recommended Blender default SIMD flags to the compiler's C_FLAGS/CXX_FLAGS" ON)
 mark_as_advanced(WITH_COMPILER_SIMD)
 
+
+option(WITH_EMBREE "Build Cycles with Embree support, and use Embree BVH in Blender" ON)
+
+
 # Cycles
 option(WITH_CYCLES "Enable Cycles Render Engine" ON)
 option(WITH_CYCLES_OSL "Build Cycles with OpenShadingLanguage support" ON)
 option(WITH_CYCLES_PATH_GUIDING "Build Cycles with path guiding support" ON)
-option(WITH_CYCLES_EMBREE "Build Cycles with Embree support" ON)
 option(WITH_CYCLES_DEBUG "Build Cycles with options useful for debugging (e.g., MIS)" OFF)
 
 option(WITH_CYCLES_STANDALONE "Build Cycles standalone application" OFF)
@@ -764,7 +812,7 @@ Enable multi-threading. TBB is also required for features such as Cycles, OpenVD
 # TBB malloc is only supported:
 # - On MS-Windows.
 # - On Unix/Linux.
-if((WIN32 AND NOT CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64") OR (UNIX AND NOT APPLE))
+if((WIN32 AND NOT CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64") OR (UNIX AND NOT (APPLE OR ANDROID)))
   option(WITH_TBB_MALLOC_PROXY "Enable the TBB malloc replacement" ON)
 endif()
 
@@ -812,7 +860,7 @@ option(WITH_UI_TESTS "\
 Enable user-interface tests (Experimental)"
   OFF
 )
-if(UNIX AND NOT (APPLE OR HAIKU))
+if(UNIX AND NOT (APPLE OR HAIKU OR ANDROID))
   # Headless is preferable as opening windows on the developers computer
   # prevents the system being used while tests run. It's also unreliable,
   # where tiling compositors ignore the window size causing some tests to fail.
@@ -894,7 +942,7 @@ mark_as_advanced(TEST_SYSTEM_PYTHON_EXE)
 
 
 # Documentation
-if(UNIX AND NOT APPLE)
+if(UNIX AND NOT (APPLE OR ANDROID))
   option(WITH_DOC_MANPAGE "Create a manual page (Unix manpage)" OFF)
 endif()
 
@@ -932,7 +980,7 @@ mark_as_advanced(WITH_TRACY)
 
 
 # OpenGL
-if(NOT APPLE)
+if(NOT (APPLE OR ANDROID))
   option(WITH_OPENGL_BACKEND "Enable OpenGL support as graphics backend" ON)
   mark_as_advanced(WITH_OPENGL_BACKEND)
 else()
@@ -971,7 +1019,7 @@ Ensure string operations on fixed size buffers \
 mark_as_advanced(WITH_STRSIZE_DEBUG)
 
 # Compiler tool-chain.
-if(UNIX AND NOT APPLE)
+if((UNIX AND NOT APPLE) AND NOT CMAKE_CROSSCOMPILING)
   if((CMAKE_C_COMPILER_ID STREQUAL "GNU") OR (CMAKE_C_COMPILER_ID MATCHES "Clang"))
     option(WITH_LINKER_LLD "Use ld.lld linker which is usually faster than ld.bfd" ON)
     mark_as_advanced(WITH_LINKER_LLD)
@@ -1346,10 +1394,13 @@ endif()
 
 # don't store paths to libs for portable distribution
 if(WITH_INSTALL_PORTABLE)
-  set(CMAKE_SKIP_BUILD_RPATH TRUE)
+  # TODO: match the CMake option, this check is historic.
+  if(UNIX AND (NOT APPLE OR WITH_PYTHON_MODULE))
+    set(CMAKE_SKIP_BUILD_RPATH TRUE)
+  endif()
 endif()
 
-if(UNIX AND NOT (APPLE OR HAIKU))
+if(UNIX AND NOT (APPLE OR HAIKU OR ANDROID))
   set_and_warn_incompatible(WITH_HEADLESS WITH_GHOST_WAYLAND OFF)
   set_and_warn_incompatible(WITH_HEADLESS WITH_GHOST_X11 OFF)
 endif()
@@ -2288,13 +2339,13 @@ if(WITH_PYTHON)
     endif()
   endif()
 
-  if(WIN32 OR APPLE)
+  if(WIN32 OR APPLE OR CMAKE_CROSSCOMPILING)
     # Always copy from precompiled libs.
   elseif(WITH_PYTHON_INSTALL_REQUESTS)
     find_python_package(requests "")
   endif()
 
-  if(WIN32 OR APPLE)
+  if(WIN32 OR APPLE OR CMAKE_CROSSCOMPILING)
     # Always copy from precompiled libs.
   elseif(WITH_PYTHON_INSTALL_ZSTANDARD)
     find_python_package(zstandard "")
@@ -2433,6 +2484,57 @@ endif()
 include(build_files/cmake/testing.cmake)
 
 # -----------------------------------------------------------------------------
+# Host-Architecture Code Generation Tools (cross-compilation support)
+
+include(build_files/cmake/host_tools.cmake)
+
+# ----------------------------------------------------------------------------
+# Platform independent cross-compilation environment setup
+
+set(HOST_LIBDIR ${LIBDIR})
+
+if(CMAKE_CROSSCOMPILING)
+  # When cross-compiling, certain tools (like Python) need to be accessed from
+  # the *host* pre-compiled libraries to then be executed.
+  if("${CMAKE_HOST_SYSTEM_NAME}" STREQUAL "Darwin")
+    set(HOST_LIBDIR ${CMAKE_SOURCE_DIR}/lib/macos_arm64)
+  elseif("${CMAKE_HOST_SYSTEM_NAME}" STREQUAL "Linux")
+    if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
+      set(HOST_LIBDIR ${CMAKE_SOURCE_DIR}/lib/linux_arm64)
+    elseif(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
+      set(HOST_LIBDIR ${CMAKE_SOURCE_DIR}/lib/linux_x64)
+    endif()
+  else()
+    message(FATAL_ERROR "Unsupported cross-compilation host.")
+  endif()
+
+
+  # When cross-compiling, override PLATFORM_ENV_BUILD for host tools (either compiled
+  # in host_tools.cmake or fetched from ${HOST_LIBDIR}) ran during compilation to use
+  # the host platform's own libraries. Glob all available libraries in this case as we
+  # cannot rely on the target specific libraries from PLATFORM_BUNDLED_LIBRARY_DIRS.
+  file(GLOB _host_library_dirs "${HOST_LIBDIR}/*/lib")
+  list(JOIN _host_library_dirs ":" _host_library_paths)
+
+  if("${CMAKE_HOST_SYSTEM_NAME}" STREQUAL "Darwin")
+    set(PLATFORM_ENV_BUILD
+      "DYLD_LIBRARY_PATH=\"${_host_library_paths}:$$DYLD_LIBRARY_PATH\""
+    )
+  else()
+    set(PLATFORM_ENV_BUILD
+      "LD_LIBRARY_PATH=\"${_host_library_paths}:$$LD_LIBRARY_PATH\""
+    )
+  endif()
+
+  unset(_host_library_dirs)
+  unset(_host_library_paths)
+
+  # Override the Python executable for cross-compilation, fetching it from the host pre-compiled library directory.
+  file(GLOB PYTHON_EXECUTABLE "${HOST_LIBDIR}/python/bin/python3.[0-9]*")
+endif()
+
+
+# -----------------------------------------------------------------------------
 # Add Sub-Directories
 
 if(WITH_BLENDER)
@@ -2558,7 +2660,7 @@ if(FIRST_RUN)
   info_cfg_text("GHOST Options:")
   info_cfg_option(WITH_GHOST_DEBUG)
   info_cfg_option(WITH_GHOST_SDL)
-  if(UNIX AND NOT APPLE)
+  if(UNIX AND NOT (APPLE OR HAIKU OR ANDROID))
     info_cfg_option(WITH_GHOST_X11)
     info_cfg_option(WITH_GHOST_WAYLAND)
     if(WITH_GHOST_X11)
@@ -2614,7 +2716,7 @@ if(FIRST_RUN)
   if(WITH_CYCLES)
     info_cfg_text("Rendering (Cycles):")
     info_cfg_option(WITH_CYCLES_OSL)
-    info_cfg_option(WITH_CYCLES_EMBREE)
+    info_cfg_option(WITH_EMBREE)
     info_cfg_option(WITH_CYCLES_PATH_GUIDING)
     if(NOT APPLE)
       info_cfg_option(WITH_CYCLES_DEVICE_OPTIX)

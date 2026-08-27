@@ -37,6 +37,9 @@ Other Convenience Targets
                     The existence of locally build dependencies overrides the pre-built dependencies from subversion.
                     These must be manually removed from 'lib/' to go back to using the pre-compiled libraries.
 
+Cross-Compilation Targets
+   * android:       Build for Android via cross-compilation, applies to regular Blender builds and `deps` dependency builds.
+
 Project Files
    Generate project files for development environments.
 
@@ -142,6 +145,7 @@ Environment Variables
    * PYTHON:                Use this for the Python command (used for checking tools).
    * NPROCS:                Number of processes to use building (auto-detect when omitted).
    * AUTOPEP8:              Command used for Python code-formatting (used for the format target).
+   * ANDROID_NDK_ROOT:		NDK root directory for Android builds, auto-detected if not provided.
 
 Documentation Targets
    Not associated with building Blender.
@@ -179,49 +183,76 @@ $(error On Windows, use "cmd //c make.bat" instead of "make")
 endif
 
 # System Vars
-OS:=$(shell uname -s)
-OS_NCASE:=$(shell uname -s | tr '[A-Z]' '[a-z]')
-CPU:=$(shell uname -m)
+HOST_OS:=$(shell uname -s)
+HOST_OS_NCASE:=$(shell uname -s | tr '[A-Z]' '[a-z]')
+HOST_CPU:=$(shell uname -m)
 
-# Use our OS and CPU architecture naming conventions.
-ifeq ($(CPU),x86_64)
-	CPU:=x64
-endif
-ifeq ($(CPU),aarch64)
-	CPU:=arm64
-endif
-ifeq ($(OS_NCASE),darwin)
-	OS_LIBDIR:=macos
-else
-	OS_LIBDIR:=$(OS_NCASE)
-endif
-
+TARGET_OS:=$(HOST_OS)
+TARGET_OS_NCASE:=$(HOST_OS_NCASE)
+TARGET_CPU:=$(HOST_CPU)
 
 # Source and Build DIR's
 BLENDER_DIR:=$(shell pwd -P)
 BUILD_TYPE:=Release
 BLENDER_IS_PYTHON_MODULE:=
 
+# Android cross-compilation.
+ifneq "$(findstring android, $(MAKECMDGOALS))" ""
+	TARGET_OS:=Android
+	TARGET_OS_NCASE:=android
+	TARGET_CPU:=arm64
+
+	ANDROID_TOOLCHAIN_FILE:=$(BLENDER_DIR)/build_files/cmake/platform/platform_android_toolchain.cmake
+
+	CMAKE_CROSSCOMPILE_CONFIG_ARGS:=-DCMAKE_TOOLCHAIN_FILE=$(ANDROID_TOOLCHAIN_FILE)
+
+	ifdef ANDROID_NDK_ROOT
+		CMAKE_CROSSCOMPILE_CONFIG_ARGS:=$(CMAKE_CROSSCOMPILE_CONFIG_ARGS) \
+										-DANDROID_NDK_ROOT=$(ANDROID_NDK_ROOT)
+	endif
+endif
+
+# Use our OS and CPU architecture naming conventions.
+ifeq ($(HOST_CPU),x86_64)
+	HOST_CPU:=x64
+endif
+ifeq ($(TARGET_CPU),x86_64)
+	TARGET_CPU:=x64
+endif
+ifeq ($(HOST_CPU),aarch64)
+	HOST_CPU:=arm64
+endif
+ifeq ($(TARGET_CPU),aarch64)
+	TARGET_CPU:=arm64
+endif
+
+ifeq ($(TARGET_OS_NCASE),darwin)
+	OS_LIBDIR:=macos
+else
+	OS_LIBDIR:=$(TARGET_OS_NCASE)
+endif
+
+
 # CMake arguments, assigned to local variable to make it mutable.
 CMAKE_CONFIG_ARGS := $(BUILD_CMAKE_ARGS)
 
 ifndef BUILD_DIR
-	BUILD_DIR:=$(shell dirname "$(BLENDER_DIR)")/build_$(OS_NCASE)
+	BUILD_DIR:=$(shell dirname "$(BLENDER_DIR)")/build_$(TARGET_OS_NCASE)
 endif
 
 # Dependencies DIR's
 DEPS_SOURCE_DIR:=$(BLENDER_DIR)/build_files/build_environment
 
 ifndef DEPS_BUILD_DIR
-	DEPS_BUILD_DIR:=$(BUILD_DIR)/deps_$(CPU)
+	DEPS_BUILD_DIR:=$(BUILD_DIR)/deps_$(TARGET_CPU)
 endif
 
 ifndef DEPS_INSTALL_DIR
-	DEPS_INSTALL_DIR:=$(BLENDER_DIR)/lib/$(OS_LIBDIR)_$(CPU)
+	DEPS_INSTALL_DIR:=$(BLENDER_DIR)/lib/$(OS_LIBDIR)_$(TARGET_CPU)
 endif
 
 # Set the LIBDIR, an empty string when not found.
-LIBDIR:=$(wildcard $(BLENDER_DIR)/lib/${OS_LIBDIR}_${CPU})
+LIBDIR:=$(wildcard $(BLENDER_DIR)/lib/${OS_LIBDIR}_${TARGET_CPU})
 ifeq (, $(LIBDIR))
 	LIBDIR:=$(wildcard $(BLENDER_DIR)/lib/${OS_LIBDIR})
 endif
@@ -320,6 +351,7 @@ ifneq "$(filter ccache, $(MAKECMDGOALS))" ""
 	CMAKE_CONFIG_ARGS:=-DWITH_COMPILER_CCACHE=YES $(CMAKE_CONFIG_ARGS)
 endif
 
+
 # -----------------------------------------------------------------------------
 # Build tool
 #
@@ -342,13 +374,14 @@ else
 	endif
 endif
 
+
 # -----------------------------------------------------------------------------
 # Blender binary path
 #
 
 # Allow passing in own BLENDER_BIN so developers who don't
 # use the default build path can still use utility helpers.
-ifeq ($(OS), Darwin)
+ifeq ($(TARGET_OS), Darwin)
 	BLENDER_BIN?="$(BUILD_DIR)/bin/Blender.app/Contents/MacOS/Blender"
 	BLENDER_BIN_DIR?="$(BUILD_DIR)/bin/Blender.app/Contents/MacOS/Blender"
 else
@@ -363,13 +396,13 @@ endif
 
 ifndef NPROCS
 	NPROCS:=1
-	ifeq ($(OS), Linux)
+	ifeq ($(HOST_OS), Linux)
 		NPROCS:=$(shell nproc)
 	endif
-	ifeq ($(OS), NetBSD)
+	ifeq ($(HOST_OS), NetBSD)
 		NPROCS:=$(shell getconf NPROCESSORS_ONLN)
 	endif
-	ifneq (,$(filter $(OS),Darwin FreeBSD))
+	ifneq (,$(filter $(HOST_OS),Darwin FreeBSD))
 		NPROCS:=$(shell sysctl -n hw.ncpu)
 	endif
 endif
@@ -380,6 +413,7 @@ endif
 #
 
 CMAKE_CONFIG = cmake $(CMAKE_CONFIG_ARGS) \
+					 $(CMAKE_CROSSCOMPILE_CONFIG_ARGS) \
                      -S"$(BLENDER_DIR)" \
                      -B"$(BUILD_DIR)" \
                      -DCMAKE_BUILD_TYPE_INIT:STRING=$(BUILD_TYPE)
@@ -445,13 +479,20 @@ ifneq "$(filter clean, $(MAKECMDGOALS))" ""
 	DEPS_TARGET = clean
 endif
 
+# Path to host deps build directory, needed to execute native tools during cross-compilation.
+HOST_DEPS_BUILD_DIR:=$(shell dirname "$(BLENDER_DIR)")/build_$(HOST_OS_NCASE)/deps_$(HOST_CPU)
+
+CMAKE_DEPS_CROSSCOMPILE_CONFIG_ARGS:=$(CMAKE_CROSSCOMPILE_CONFIG_ARGS) \
+									 -DHOST_DEPS_BUILD_DIR=$(HOST_DEPS_BUILD_DIR)
+
 # Set the SOURCE_DATE_EPOCH to make builds reproducible (locks timestamps to the specified date).
 deps: export SOURCE_DATE_EPOCH = 1745584760
 deps: .FORCE
 	@echo
 	@echo Configuring dependencies in \"$(DEPS_BUILD_DIR)\", install to \"$(DEPS_INSTALL_DIR)\"
 
-	@cmake -S"$(DEPS_SOURCE_DIR)" \
+	@cmake $(CMAKE_DEPS_CROSSCOMPILE_CONFIG_ARGS) \
+	       -S"$(DEPS_SOURCE_DIR)" \
 	       -B"$(DEPS_BUILD_DIR)" \
 	       -DHARVEST_TARGET=$(DEPS_INSTALL_DIR)
 
@@ -461,6 +502,13 @@ deps: .FORCE
 	@echo
 	@echo Dependencies successfully built and installed to $(DEPS_INSTALL_DIR).
 	@echo
+
+
+# -----------------------------------------------------------------------------
+# Cross-compilation targets
+
+android: .FORCE
+	@echo "Building for Android from host $(HOST_OS)."
 
 
 # -----------------------------------------------------------------------------

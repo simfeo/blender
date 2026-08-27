@@ -124,7 +124,9 @@ else()
   else()
     set(PYTHON_CONFIGURE_ENV ${CONFIGURE_ENV})
   endif()
-  set(PYTHON_BINARY ${LIBDIR}/python/bin/python${PYTHON_SHORT_VERSION})
+
+  # HOST_LIBDIR Python, to be executed on the host machine during cross-compilation.
+  set(PYTHON_BINARY ${HOST_LIBDIR}/python/bin/python${PYTHON_SHORT_VERSION})
 
   set(PYTHON_CFLAGS "${PLATFORM_CFLAGS} ")
   # We need to add the zlib static lib path here as even if python itself links the static zlib correctly,
@@ -138,6 +140,47 @@ else()
     # Don't build or ship the python test suite
     --disable-test-modules
   )
+
+  # Unlike other autoconf project, Python *requires* both --build and --host to be *explicitely* set. Even if, from
+  # the log, it can already infer the --build triplet by itself. Ask clang for the triplet to mimic the implicit
+  # autoconf behavior.
+  execute_process(
+    COMMAND /usr/bin/clang -dumpmachine
+    OUTPUT_VARIABLE BUILD_LLVM_TRIPLE
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+
+  if(ANDROID)
+    set(PYTHON_CONFIGURE_EXTRA_ARGS
+      ${PYTHON_CONFIGURE_EXTRA_ARGS}
+      --build=${BUILD_LLVM_TRIPLE}
+      --host=${ANDROID_LLVM_TRIPLE}
+      --with-build-python=${PYTHON_BINARY}
+      # Build `libpython` as a shared library, for extension modules to properly load as Android doesn't resolve
+      # their dangling symbols against a statically linked interpreter (even if RTLD_GLOBAL is used).
+      # See the Linkage section of PEP 738 (Android platform support) for more details.
+      --enable-shared
+    )
+
+    # Fix the `Libs:` line of the generate Python shared library pkg-config, without which Python's configure
+    # substitutes `@LIBPYTHON@` with the raw Makefile value (`$(BLDLIBRARY)`) which ends ups a broken linker argument
+    # for packages that depend on pkg-config, such as numpy's meson build. Fixed by substituing the expanded flag
+    # in the same way that `python-embed.pc.in` does it. TODO: Submit upstream.
+    set(PYTHON_PATCH
+      ${PATCH_CMD} -p 1 -d
+        ${BUILD_DIR}/python/src/external_python
+        -i ${PATCH_DIR}/python_android_pkgconfig.diff
+    )
+  else()
+    # This is a particularly evil cross-compilation patch applied to the *HOST* Python for crossenv to properly emulate
+    # an Android Python environment for cross-compilation. This patch effectively removes dlopen-related logic from
+    # sys.platform == "android" specific paths to allow pip to succesfully run when cross-compiling modules for Android.
+    set(PYTHON_PATCH
+      ${PATCH_CMD} -p 1 -d
+        ${BUILD_DIR}/python/src/external_python
+        -i ${PATCH_DIR}/python_android_host_crossenv.diff
+    )
+  endif()
 
   set(PYTHON_CONFIGURE_PKG_CONFIG_PATH "\
 ${LIBDIR}/ffi/lib/pkgconfig:${LIBDIR}/sqlite/lib/pkgconfig:${LIBDIR}/ssl/lib/pkgconfig:\

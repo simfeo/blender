@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-set(SQLITE_CONFIGURE_ENV echo .)
+set(SQLITE_CONFIGURE_ENV ${CONFIGURE_ENV})
 set(SQLITE_CONFIGURATION_ARGS "")
 
 if(WIN32)

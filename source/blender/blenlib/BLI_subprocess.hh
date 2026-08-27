@@ -15,8 +15,7 @@
  * Its use should always be inside `#if BLI_SUBPROCESS_SUPPORT` preprocessor directives.
  */
 
-/* Android's bionic has no shm_open / POSIX shared memory. */
-#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
+#if (defined(_WIN32) || defined(__linux__)) && !defined(__ANDROID__)
 #  define BLI_SUBPROCESS_SUPPORT 1
 #else
 #  define BLI_SUBPROCESS_SUPPORT 0

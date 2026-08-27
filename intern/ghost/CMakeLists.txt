@@ -141,14 +141,19 @@ if(WITH_HEADLESS)
   add_definitions(-DWITH_HEADLESS)
 elseif(WITH_GHOST_SDL)
   list(APPEND SRC
-    intern/GHOST_ContextSDL.cc
     intern/GHOST_SystemSDL.cc
     intern/GHOST_WindowSDL.cc
 
-    intern/GHOST_ContextSDL.hh
     intern/GHOST_SystemSDL.hh
     intern/GHOST_WindowSDL.hh
   )
+  # SDL/OpenGL uses ContextSDL, while SDL/Vulkan uses the common ContextVK.
+  if(WITH_OPENGL_BACKEND)
+    list(APPEND SRC
+      intern/GHOST_ContextSDL.cc
+      intern/GHOST_ContextSDL.hh
+    )
+  endif()
   add_definitions(-DWITH_GHOST_SDL)
 
   list(APPEND LIB
@@ -499,7 +504,7 @@ elseif(WIN32)
   endif()
 endif()
 
-if(UNIX AND NOT APPLE)
+if(UNIX AND NOT (APPLE OR ANDROID))
   if(WITH_OPENGL_BACKEND)
     list(APPEND SRC
       intern/GHOST_ContextEGL.cc
@@ -650,6 +655,8 @@ if(WITH_XR_OPENXR)
     list(APPEND LIB
       shlwapi
     )
+  elseif(ANDROID)
+    list(APPEND XR_PLATFORM_DEFINES -DXR_USE_PLATFORM_ANDROID)
   elseif(UNIX AND NOT APPLE)
     list(APPEND XR_PLATFORM_DEFINES -DXR_OS_LINUX)
     if(WITH_GHOST_WAYLAND)

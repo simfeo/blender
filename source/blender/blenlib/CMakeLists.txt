@@ -216,6 +216,7 @@ set(SRC
   BLI_dial_2d.hh
   BLI_disjoint_set.hh
   BLI_dot_export.hh
+  BLI_dot_export_fwd.hh
   BLI_dot_export_attribute_enums.hh
   BLI_dynamic_stack_buffer.hh
   BLI_dynstr.hh
@@ -477,7 +478,7 @@ if(APPLE)
   )
 endif()
 
-if(UNIX AND NOT APPLE)
+if(UNIX AND NOT (APPLE OR ANDROID))
   list(APPEND LIB
     bf_intern_libc_compat
   )
