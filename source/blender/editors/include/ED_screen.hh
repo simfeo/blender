@@ -336,6 +336,13 @@ void ED_screens_init(bContext *C, Main *bmain, wmWindowManager *wm);
  * Only for edge lines between areas.
  */
 void ED_screen_draw_edges(wmWindow *win);
+/**
+ * Move a press that landed near an editor border onto it, for input that cannot be precise.
+ *
+ * Returns true when  xy was moved. Only presses in the main region of an editor are considered,
+ * so the widget strips that sit against a border keep every press aimed at them.
+ */
+bool ED_screen_edge_snap_for_touch(wmWindow *win, int xy[2]);
 
 /**
  * Make this screen usable.

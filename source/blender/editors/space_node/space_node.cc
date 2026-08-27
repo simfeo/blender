@@ -996,6 +996,19 @@ static void node_main_region_init(wmWindowManager *wm, ARegion *region)
   keymap = WM_keymap_ensure(wm->runtime->defaultconf, "Node Editor", SPACE_NODE, RGN_TYPE_WINDOW);
   WM_event_add_keymap_handler_v2d_mask(&region->runtime->handlers, keymap);
 
+  /* ed_default_handlers() runs before this callback and appends its keymaps, and handlers are
+   * tried in list order, so the generic View2D keymap would otherwise outrank the two above.
+   * That matters here because View2D binds a left click-drag to panning, for scrolling menus
+   * and panels with one finger on a touch screen -- which in this editor would shadow box
+   * select, link dragging and moving a node, all of which are bound to the same event.
+   *
+   * Re-adding moves it to the end of the list. Nothing else is affected: the node keymaps bind
+   * no wheel, trackpad or unmodified middle-mouse event, so every other View2D binding is still
+   * reached, and on a build where the left drag is unbound this is a no-op. */
+  keymap = WM_keymap_ensure(wm->runtime->defaultconf, "View2D", SPACE_EMPTY, RGN_TYPE_WINDOW);
+  WM_event_remove_keymap_handler(&region->runtime->handlers, keymap);
+  WM_event_add_keymap_handler(&region->runtime->handlers, keymap);
+
   /* add drop boxes */
   lb = WM_dropboxmap_find("Node Editor", SPACE_NODE, RGN_TYPE_WINDOW);
 

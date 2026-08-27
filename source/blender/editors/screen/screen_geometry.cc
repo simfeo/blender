@@ -105,6 +105,53 @@ ScrEdge *screen_geom_area_map_find_active_scredge(
   return nullptr;
 }
 
+bool ED_screen_edge_snap_for_touch(wmWindow *win, int xy[2])
+{
+  if (U.app_flag & USER_APP_LOCK_EDGE_RESIZE) {
+    return false;
+  }
+  const bScreen *screen = WM_window_get_active_screen(win);
+  if (screen == nullptr) {
+    return false;
+  }
+
+  /* A fingertip lands a couple of millimetres from where it was aimed, and the strip that resizes
+   * an editor is a few pixels wide: the press misses it, lands inside the editor instead, and is
+   * taken by whatever that editor does with a press long before the screen keymap could offer to
+   * move the border. Measured on the device, the whole target is 26 pixels across, which a stylus
+   * hits every time and a finger essentially never does.
+   *
+   * So a press that lands near a border is moved onto it. Nothing downstream knows the difference:
+   * the border belongs to no region, so the press reaches the screen keymap and starts the move
+   * exactly as a precise one would. */
+  const int radius = int(12.0f * UI_SCALE_FAC);
+
+  /* Only from the open side of an editor. Inside a header, a tool bar or a nav bar the press
+   * belongs to the widget under it, and those strips sit right against the border. */
+  if (ScrArea *area = BKE_screen_find_area_xy(screen, SPACE_TYPE_ANY, xy)) {
+    const ARegion *region = BKE_area_find_region_xy(area, RGN_TYPE_ANY, xy);
+    if (region != nullptr && region->regiontype != RGN_TYPE_WINDOW) {
+      return false;
+    }
+  }
+
+  rcti screen_rect;
+  WM_window_screen_rect_calc(win, &screen_rect);
+  ScrEdge *se = screen_geom_area_map_find_active_scredge(
+      AREAMAP_FROM_SCREEN(screen), &screen_rect, xy[0], xy[1], radius);
+  if (se == nullptr) {
+    return false;
+  }
+
+  if (screen_geom_edge_is_horizontal(se)) {
+    xy[1] = se->v1->vec.y;
+  }
+  else {
+    xy[0] = se->v1->vec.x;
+  }
+  return true;
+}
+
 ScrEdge *screen_geom_find_active_scredge(const wmWindow *win,
                                          const bScreen *screen,
                                          const int mx,

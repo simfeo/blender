@@ -1888,7 +1888,14 @@ ScrArea *ED_screen_temp_space_open(
 {
 #ifdef __ANDROID__
   /* Android hands out a single native window and its Vulkan surface is exclusive,
-   * so a second window can never present. Always use a maximized area instead. */
+   * so a second window can never present. The preference now defaults to a
+   * maximized area there (USER_TEMP_SPACE_DISPLAY_DEFAULT), which is what makes
+   * this the right thing to show rather than a silent override.
+   *
+   * It stays as a backstop for a preferences file that already stores "New
+   * Window", because the alternative locks the user out: opening the
+   * preferences would do nothing at all, and the preferences are the only place
+   * the setting can be changed back. */
   display_type = USER_TEMP_SPACE_DISPLAY_FULLSCREEN;
 #endif
 
