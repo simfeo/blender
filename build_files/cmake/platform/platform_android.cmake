@@ -21,6 +21,19 @@ if(NOT EXISTS "${LIBDIR}")
 endif()
 message(STATUS "Android LIBDIR = ${LIBDIR}")
 
+# Cross compiling leaves the test setup without an interpreter it can run: the
+# Blender built here is an aarch64 binary. The root CMakeLists declares this as
+# an empty cache entry before this file is included, so test it for a value
+# rather than for being defined.
+if(NOT TEST_PYTHON_EXE)
+  find_program(_android_host_python NAMES python3 python NO_CMAKE_FIND_ROOT_PATH)
+  if(_android_host_python)
+    set(TEST_PYTHON_EXE "${_android_host_python}" CACHE PATH "" FORCE)
+    message(STATUS "Android: tests will use host python ${TEST_PYTHON_EXE}")
+  endif()
+  unset(_android_host_python CACHE)
+endif()
+
 # Feature set: -DBLENDER_ANDROID_CONFIG=lite|full (or env), default full. Must be
 # set early (CROSSCOMPILE_TOOLDIR and find_package guards depend on it). Matches
 # the host codegen-tools build's feature flags exactly.
