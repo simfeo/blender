@@ -11,6 +11,10 @@ class STATUSBAR_HT_header(Header):
     def draw(self, _context):
         layout = self.layout
 
+        # Touch: the on-screen keyboard lives at the far left of the status bar, which is always
+        # on screen and within thumb reach whatever workspace is open.
+        layout.operator("wm.virtual_keyboard_toggle", text="KEYBOARD", icon='KEY_MENU')
+
         # input status
         layout.template_input_status()
 
