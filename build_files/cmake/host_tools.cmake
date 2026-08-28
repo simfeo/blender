@@ -19,6 +19,12 @@ if(CMAKE_CROSSCOMPILING)
   set(HOST_TOOLS_BUILD_DIR ${CMAKE_BINARY_DIR}/host_tools)
   set(HOST_TOOLS_BIN_DIR ${HOST_TOOLS_BUILD_DIR}/bin)
 
+  # The sub-build gets no toolchain file, so it falls back to the default cc, which
+  # on distributions shipping an older system compiler is below the minimum Blender
+  # accepts. Let it be pointed at a supported one without touching the target build.
+  set(HOST_C_COMPILER "" CACHE STRING "C compiler for the host code generation tools")
+  set(HOST_CXX_COMPILER "" CACHE STRING "C++ compiler for the host code generation tools")
+
   # Forward every WITH_* cache variable so the host build's preprocessor
   # state matches the target build's.
   get_cmake_property(_host_tools_all_cache_vars CACHE_VARIABLES)
@@ -29,6 +35,13 @@ if(CMAKE_CROSSCOMPILING)
     endif()
   endforeach()
   unset(_host_tools_all_cache_vars)
+
+  if(HOST_C_COMPILER)
+    list(APPEND _host_tools_forwarded_args "-DCMAKE_C_COMPILER=${HOST_C_COMPILER}")
+  endif()
+  if(HOST_CXX_COMPILER)
+    list(APPEND _host_tools_forwarded_args "-DCMAKE_CXX_COMPILER=${HOST_CXX_COMPILER}")
+  endif()
 
   set(_host_tools_targets
     --target makesdna
