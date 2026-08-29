@@ -294,8 +294,49 @@ if(WITH_LLVM)
 endif()
 
 if(WITH_CODEC_FFMPEG)
+  # The prebuilt ffmpeg is static, so the codecs it was built against have to be named
+  # and linked as well, in this order. Without them the link fails on symbols such as
+  # aom_init, referenced from libavcodec. platform_unix.cmake does the same.
+  set(FFMPEG_FIND_COMPONENTS
+    avformat avdevice avfilter avcodec avutil swresample swscale
+    sndfile
+    FLAC
+    mp3lame
+    opus
+    theora theoradec theoraenc
+    vorbis vorbisenc vorbisfile ogg
+    vpx
+    x264
+  )
+  if(EXISTS ${LIBDIR}/ffmpeg/lib/libx265.a)
+    list(APPEND FFMPEG_FIND_COMPONENTS x265)
+  endif()
+  if(EXISTS ${LIBDIR}/ffmpeg/lib/libaom.a)
+    list(APPEND FFMPEG_FIND_COMPONENTS aom)
+  endif()
+
   find_package(FFmpeg)
+
+  if(FFMPEG_FOUND)
+    # NDK libraries libavdevice needs.
+    list(APPEND PLATFORM_LINKLIBS -landroid -lcamera2ndk -lmediandk)
+  endif()
 endif()
+
+# ----------------------------------------------------------------------------
+# Symbol hiding
+#
+# Blender is a shared library here, so a symbol it defines is preemptible unless
+# something says otherwise. ffmpeg's and x265's aarch64 assembly reaches its own
+# data tables with absolute page relative relocations, which the linker rejects
+# for a preemptible symbol: "relocation R_AARCH64_ADR_PREL_PG_HI21 cannot be used
+# against symbol ff_tx_tab_32_float". The version script hides those symbols, so
+# they bind locally and the relocations become legal.
+#
+# platform_unix.cmake sets this for every other Unix; Android needs it more,
+# because there it is what makes the video codecs link at all.
+set(PLATFORM_SYMBOLS_MAP ${CMAKE_SOURCE_DIR}/source/creator/symbols_unix.map)
+set(PLATFORM_LINKFLAGS_SYMBOL_HIDING "-Wl,--version-script='${PLATFORM_SYMBOLS_MAP}'")
 
 if(WITH_RUBBERBAND)
   set(RUBBERBAND_ROOT_DIR ${LIBDIR}/rubberband)
