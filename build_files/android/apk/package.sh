@@ -324,15 +324,41 @@ cp "$STAGE/base.apk" "$OUT"
 ( cd "$STAGE" && zip -qr "$OUT" lib )
 
 echo "[apk] signing"
-KS="$BUILD_BASE/android-debug.keystore"  # persistent: stable signature across runs
-if [ ! -f "$KS" ]; then
-  "$JAVA_HOME/bin/keytool" -genkeypair -keystore "$KS" -storepass android \
-    -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
-    -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1
-fi
 "$BT/zipalign" -f -p 4 "$OUT" "$STAGE/blender-aligned.apk"
 mv "$STAGE/blender-aligned.apk" "$OUT"
-"$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --key-pass pass:android "$OUT"
+
+# A real key is used when BLENDER_ANDROID_KEYSTORE names one. Android identifies
+# an app by its signature, so an update only installs over an existing install
+# when both were signed with the same key: anything meant for other people has
+# to use the same keystore every time.
+#
+# The password is never taken as an argument here. apksigner prompts for it, or
+# reads it from a named environment variable when BLENDER_ANDROID_KEYSTORE_PASS
+# is set to one, so it stays out of the command line and the shell history.
+if [ -n "${BLENDER_ANDROID_KEYSTORE:-}" ]; then
+  [ -f "$BLENDER_ANDROID_KEYSTORE" ] || {
+    echo "[apk] ERROR: keystore not found: $BLENDER_ANDROID_KEYSTORE" >&2; exit 1; }
+  set -- sign --ks "$BLENDER_ANDROID_KEYSTORE"
+  [ -n "${BLENDER_ANDROID_KEY_ALIAS:-}" ] && set -- "$@" --ks-key-alias "$BLENDER_ANDROID_KEY_ALIAS"
+  if [ -n "${BLENDER_ANDROID_KEYSTORE_PASS:-}" ]; then
+    set -- "$@" --ks-pass "env:$BLENDER_ANDROID_KEYSTORE_PASS"
+  fi
+  echo "[apk] signing with $BLENDER_ANDROID_KEYSTORE"
+  "$BT/apksigner" "$@" "$OUT"
+else
+  # Development fallback. Generated once and kept, so the signature at least
+  # stays stable between local runs; it is not for anything distributed.
+  KS="$BUILD_BASE/android-debug.keystore"
+  if [ ! -f "$KS" ]; then
+    "$JAVA_HOME/bin/keytool" -genkeypair -keystore "$KS" -storepass android \
+      -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+      -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1
+  fi
+  echo "[apk] signing with the local debug key (not for distribution)"
+  "$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --key-pass pass:android "$OUT"
+fi
+
+"$BT/apksigner" verify --print-certs "$OUT" | sed -n '1,4p' | sed 's/^/[apk] /'
 
 echo "[apk] done -> $OUT"
 ls -lh "$OUT"
