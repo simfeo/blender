@@ -57,6 +57,7 @@ public class BlenderActivity extends NativeActivity {
   protected void onCreate(Bundle state) {
     /* Runtime files must exist before native Blender init reads them. */
     extractRuntimeIfNeeded();
+    linkPythonInterpreter();
     super.onCreate(state);
     setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
     enterImmersive();
@@ -109,6 +110,27 @@ public class BlenderActivity extends NativeActivity {
      * or a system dialog); re-apply it. */
     if (hasFocus) {
       enterImmersive();
+    }
+  }
+
+  /* Blender resolves the interpreter next to the runtime, but an executable
+   * cannot live there: the data directory is mounted noexec from API 29 on.
+   * Link to the copy the package manager extracted into the native library
+   * directory, which stays executable. Redone on every launch because that
+   * path changes when the app is updated. */
+  private void linkPythonInterpreter() {
+    File real = new File(getApplicationInfo().nativeLibraryDir, "libpython3_13_bin.so");
+    if (!real.isFile()) {
+      return;
+    }
+    File dest = new File(getFilesDir(), "blender/" + VERSION + "/python/bin/python3.13");
+    try {
+      dest.getParentFile().mkdirs();
+      dest.delete();
+      android.system.Os.symlink(real.getAbsolutePath(), dest.getAbsolutePath());
+    }
+    catch (Exception ex) {
+      /* Only the online extension system needs it; Blender still starts. */
     }
   }
 
