@@ -14,10 +14,16 @@ Target: Android 12+ (minSdk 31), built against Android 14 (targetSdk 34).
 Two feature sets, selected with `-DBLENDER_ANDROID_CONFIG=full|lite` (default
 `full`):
 
-- **full** - everything: Cycles (+embree), USD, MaterialX, OpenVDB, Alembic,
-  LLVM, ffmpeg video codecs. For modern Qualcomm/Exynos flagships.
-- **lite** - those heavy features off; core modelling/sculpt/Python only. For
-  weaker devices and a much smaller APK.
+- **full** - everything: Cycles with Embree and denoising, USD, MaterialX,
+  OpenVDB, Alembic, LLVM, ffmpeg, fluid and ocean simulation, motion tracking,
+  the exact and manifold boolean solvers, Draco and PDF export.
+- **lite** - modelling, sculpting, animation, EEVEE, Workbench, Python and the
+  add-ons. Everything in the list above is off.
+
+Note that the heavy features live in `android_features_full.cmake`, so a
+feature added there does not reach lite. The two share the runtime payload
+(scripts, assets, translations, Python), so lite is lighter in features rather
+than dramatically smaller.
 
 The feature toggles live in `build_files/android/android_features_{common,full,
 lite}.cmake`. The host codegen tools must be built with the **same** config as

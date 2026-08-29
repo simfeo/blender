@@ -41,9 +41,15 @@ platform glue in `build_files/cmake/platform/platform_android.cmake`.
 
 ## Device compatibility
 
-Two feature sets exist because mobile GPUs vary enormously. `full` targets
-flagship hardware; `lite` turns the heavy features off for weaker devices and a
-much smaller APK.
+Two feature sets exist because mobile hardware varies enormously. `full`
+targets flagship devices. `lite` keeps modelling, sculpting, animation, EEVEE
+and Workbench, Python and the add-ons, and drops Cycles and its denoising,
+video, USD, Alembic, OpenVDB, MaterialX, LLVM, fluid and ocean simulation,
+motion tracking, the exact and manifold boolean solvers, Draco glTF and PDF
+export.
+
+The two share a runtime payload, so lite is lighter in features rather than
+dramatically smaller on disk.
 
 Beyond that, several limits are applied on Android specifically:
 
