@@ -66,6 +66,8 @@ cmake -S . -B "$BUILD" -G Ninja \
   -DHOST_C_COMPILER="$ANDROID_HOST_CC" -DHOST_CXX_COMPILER="$ANDROID_HOST_CXX" \
   -DBLENDER_ANDROID_CONFIG="$CONFIG"
 ninja -C "$BUILD" blender
+# Built separately: nothing links them, the glTF add-on dlopens them.
+ninja -C "$BUILD" bf_intern_meshopt_bridge bf_intern_draco_bridge
 
 echo "=== [$CONFIG] package APK ==="
 BLENDER_ANDROID_CONFIG="$CONFIG" BUILD="$BUILD" bash "$SCRIPT_DIR/apk/package.sh"

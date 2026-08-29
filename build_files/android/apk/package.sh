@@ -35,6 +35,27 @@ echo "[apk] gathering native libraries"
 cp "$BUILD/lib/libblender.so" "$JNI/"
 cp "$ANDROID_SYSROOT/usr/lib/aarch64-linux-android/libc++_shared.so" "$JNI/"
 
+# The Python interpreter, shipped so sys.executable is real. Blender's extension
+# system runs its CLI as a subprocess, so browsing or installing an online
+# extension needs an interpreter it can actually execute.
+#
+# It has to live here rather than in the runtime payload: the payload is
+# unpacked into the app's data directory, which is mounted noexec from API 29
+# on, while this directory is extracted by the package manager and stays
+# executable. The lib*.so name is what makes the installer extract it at all;
+# it is an ELF executable, not a library, and nothing dlopens it.
+PY_BIN="$LIBDIR/python/bin/python3.13"
+if [ -f "$PY_BIN" ]; then
+  cp "$PY_BIN" "$JNI/libpython3_13_bin.so"
+  chmod 755 "$JNI/libpython3_13_bin.so"
+  # A plain exec'd child does not inherit the app's library namespace, so the
+  # interpreter has to find libpython3.13.so itself. $ORIGIN is this directory.
+  patchelf --set-rpath '$ORIGIN' "$JNI/libpython3_13_bin.so"
+  echo "[apk] bundled the Python interpreter for sys.executable"
+else
+  echo "[apk] WARNING: $PY_BIN missing; online extensions will not work" >&2
+fi
+
 readelf_needed() {
   "$ANDROID_LLVM_BIN/llvm-readelf" -d "$1" 2>/dev/null |
     sed -nE 's/.*\(NEEDED\).*\[(.*)\]/\1/p'
@@ -51,6 +72,58 @@ PAYLOAD="$STAGE/payload"
 mkdir -p "$ASSETS" "$PAYLOAD/python/lib"
 cp -R "$REPO_ROOT/release/datafiles" "$PAYLOAD/datafiles"
 cp -R "$REPO_ROOT/scripts" "$PAYLOAD/scripts"
+
+# The essentials asset library. Since 4.3 a brush is an asset rather than code,
+# so without this there is not one brush in sculpt, texture paint, vertex paint,
+# weight paint, grease pencil or curves, the asset browser reports no catalogs,
+# and the bundled compositor, geometry and shader node groups do not exist.
+# Blender looks for it at BLENDER_SYSTEM_DATAFILES/assets.
+cp -R "$REPO_ROOT/assets" "$PAYLOAD/datafiles/assets"
+echo "[apk] bundled the essentials asset library (brushes, node groups)"
+
+# Interface translations. WITH_INTERNATIONAL is on, so Blender uses these when
+# present and otherwise leaves the Language menu empty. Only the compiled
+# catalogues ship: the .po sources are 81MB and have no business in an APK.
+# msgfmt is Blender's own, already built with the host code generators.
+MSGFMT="$BUILD_BASE/build_host_tools_$CONFIG/bin/msgfmt"
+if [ -x "$MSGFMT" ] && [ -d "$REPO_ROOT/locale/po" ]; then
+  LOCALE_DIR="$PAYLOAD/datafiles/locale"
+  mkdir -p "$LOCALE_DIR"
+  cp "$REPO_ROOT/locale/languages" "$LOCALE_DIR/"
+  locale_count=0
+  for po in "$REPO_ROOT"/locale/po/*.po; do
+    lang="$(basename "$po" .po)"
+    mkdir -p "$LOCALE_DIR/$lang/LC_MESSAGES"
+    "$MSGFMT" "$po" "$LOCALE_DIR/$lang/LC_MESSAGES/blender.mo"
+    locale_count=$((locale_count + 1))
+  done
+  echo "[apk] bundled $locale_count interface translations"
+else
+  echo "[apk] WARNING: no msgfmt or locale/po; the interface will be English only" >&2
+fi
+
+# USD finds its file-format plugins through the plugInfo.json files here, so
+# without them the importers and exporters are built but never register.
+if [ -d "$LIBDIR/usd/plugin/usd" ]; then
+  mkdir -p "$PAYLOAD/datafiles/usd"
+  cp -R "$LIBDIR/usd/plugin/usd/." "$PAYLOAD/datafiles/usd/"
+  echo "[apk] bundled USD plugin resources"
+fi
+
+# The glTF add-on dlopens these for compressed meshes, from
+# resource_path('SYSTEM_LIBS')/scripts/addons_core/io_scene_gltf2. Plain glTF
+# works without them; only Draco and meshopt compression need the bridge.
+for bridge in meshopt draco; do
+  so="$BUILD/lib/libbf_intern_${bridge}_bridge.so"
+  if [ -f "$so" ]; then
+    dest="$PAYLOAD/scripts/addons_core/io_scene_gltf2/libbf_intern_${bridge}_bridge.so"
+    cp "$so" "$dest"
+    # Draco is linked statically and arrives around 25MB, nearly all of it
+    # debug information no on-device workflow can use.
+    "$ANDROID_LLVM_BIN/llvm-strip" --strip-unneeded "$dest"
+    echo "[apk] bundled the glTF $bridge bridge ($(du -h "$dest" | cut -f1))"
+  fi
+done
 
 # Cycles registers itself from Python, and that half lives outside scripts/ --
 # CMake only puts it in place during install, which this packaging path skips.
