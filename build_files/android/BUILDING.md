@@ -1,6 +1,7 @@
 # Building Blender for Android from scratch
 
-End-to-end guide to reproduce the Android arm64 build on an Apple-Silicon Mac.
+End-to-end guide to reproduce the Android arm64 build. Developed on Linux
+(including WSL) and on an Apple-Silicon Mac.
 Target: Android 12+ (minSdk 31), built against Android 14 (targetSdk 34).
 
 > Everything installs into a sibling of the repo:
@@ -49,8 +50,10 @@ show what it does under the hood.
 Blender's own requirement applies to the host compiler used for the code
 generators in step 3: **GCC 14 or newer, or Clang 17 or newer**. `env.sh` picks
 the first of `gcc-15`, `gcc-14`, `clang-18`, `clang-17` it finds and falls back
-to the system default, so nothing needs to become the system compiler. Ubuntu
-22.04 ships GCC 11, too old:
+to the system default, so nothing needs to become the system compiler. It is
+passed both to the standalone code generator build and to the `host_tools`
+sub-build that runs inside the target build, which has no toolchain file of
+its own. Ubuntu 22.04 ships GCC 11, too old:
 
 ```bash
 sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
@@ -104,7 +107,8 @@ git config credential.helper '!f() { echo username=; echo password=; }; f'
 ```
 
 
-`lib/macos_arm64` is needed for the **native host tools** build (step 3).
+The matching host prefix is needed for the **native host tools** build (step 3):
+`lib/linux_x64` on Linux, `lib/macos_arm64` on a Mac.
 
 ---
 
@@ -124,11 +128,13 @@ what `lib/linux_x64` does.
 
 ### Requirements that come with the prebuilt set
 
-**NDK r30 beta1 is required, not merely preferred.** Around thirty of the
-archives, including all of shaderc, SPIRV-Tools, LLVM, abseil and draco,
-reference `std::__ndk1::__hash_memory`, a libc++ internal that NDK 28 does not
-provide. An older NDK compiles everything and then fails at the final link with
-undefined symbols. Install it and point the build at it:
+**NDK r30 beta1 is required, not merely preferred.** The archives are built
+with clang 21 and reference `std::__ndk1::__hash_memory`, a libc++ internal
+that NDK 28 does not provide. Whether that surfaces as a link error or as a
+`dlopen` failure on the device depends on which library pulls it in, so an
+older NDK can produce an APK that installs and then dies at startup.
+
+`env.sh` defaults to it. Override only to test another:
 
 ```bash
 export ANDROID_NDK_VERSION=30.0.14904198-beta1
@@ -142,11 +148,26 @@ visible with `llvm-readelf --notes` on any of their shared objects.
 predates `VK_KHR_dynamic_rendering_local_read` that GHOST uses unconditionally.
 Provide a newer Vulkan-Headers checkout; `platform_android.cmake` looks for it
 as `<LIBDIR>/vulkan/include` and then in `<BUILD_BASE>/lib/vulkan_headers`.
+The version to match is `VULKAN_VERSION` in
+`build_files/build_environment/cmake/versions.cmake`:
 
-**ffmpeg is currently disabled.** The prebuilt `libavutil.a` and `libx265.a`
-are not built with `-fPIC`, so they cannot be linked into `libblender.so`,
-which an APK needs. Every other archive in the set links fine. Re-enable
-`WITH_CODEC_FFMPEG` in `android_features_full.cmake` once they are rebuilt.
+```bash
+VER=1.4.341
+curl -fL -o /tmp/vh.tar.gz \
+  https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v$VER.tar.gz
+tar -xzf /tmp/vh.tar.gz -C /tmp
+mkdir -p ../blender_build_android/lib/vulkan_headers
+cp -R /tmp/Vulkan-Headers-$VER/include \
+  ../blender_build_android/lib/vulkan_headers/include
+```
+
+**Symbol hiding is what makes the static codecs link.** The prefix is static,
+so `platform_android.cmake` names every codec ffmpeg was built against and
+applies `source/creator/symbols_unix.map` as a version script, the same as
+every other Unix. Without it the link fails on symbols such as `aom_init`.
+Anything the platform resolves by name has to stay listed there:
+`ANativeActivity_onCreate` is looked up with `dlsym` and the app cannot start
+without it.
 
 **CMake 3.26 or newer is required.** MaterialX refuses to configure with
 anything older, and 3.x and 4.x disagree about whether `Python3_LIBRARY` reaches
@@ -154,35 +175,8 @@ the link line, which surfaces as undefined CPython symbols when USD links. The
 recipes name that library explicitly, so either version now works. Ubuntu 22.04
 ships 3.22, too old: use the Kitware packages or the upstream binary tarball.
 
-Order matters (leaf → up). A full run, roughly:
-
-```
-zlib zstd deflate imath fmt tbb openexr png pugixml jpeg brotli freetype
-harfbuzz webp tiff openjpeg expat yamlcpp blosc pystring minizipng opencolorio
-opensubdiv robinmap openimageio embree alembic materialx potrace sqlite
-libffi openssl lzma bzip2 python openvdb ogg vorbis theora opus lame aom
-x265 vpx x264 ffmpeg xml2 eigen sse2neon fribidi abseil vulkan_headers
-meshoptimizer shaderc numpy usd llvm rubberband
-```
-
-Each installs to `../blender_build_android/lib/android_arm64/<name>`; verify with:
-
-```bash
-$ANDROID_LLVM_BIN/llvm-objdump -f ../blender_build_android/lib/android_arm64/<name>/lib/lib*.so | grep aarch64
-```
-
-Notes / gotchas (all handled by build.sh):
-- **Python** is a two-stage build (native host 3.13, then NDK cross). lzma and
-  bzip2 must exist first or the interpreter ships without `_lzma` and `_bz2`,
-  and nothing says so until Blender runs on the device. They are listed ahead
-  of it above; the earlier order relied on rebuilding Python afterwards.
-- **numpy** is cross-built with a meson cross-file + `_PYTHON_SYSCONFIGDATA_NAME`
-  pointing at the target sysconfig. It needs a host python 3.13 matching the
-  target version: Homebrew provides one on macOS, and on a distribution that
-  ships something older it has to be built (see Prerequisites).
-- **LLVM** builds host tablegen first, then cross.
-- **USD** is built twice: once to bootstrap, then with Python support for the
-  Blender `usd_hook`.
+There is nothing to build here. The hand-rolled dependency builder this port
+used previously has been retired in favour of the prebuilt set.
 
 ---
 
@@ -224,11 +218,24 @@ build_files/android/apk/package.sh
 This gathers `libblender.so` + all transitive `.so` deps (stripped), bundles the
 runtime payload (Python stdlib + numpy, `scripts/`, `datafiles/`) as
 `blender_runtime.zip`, compiles `BlenderActivity`, and assembles a debug-signed
-APK at `../blender_build_android/android_apk_stage_<cfg>/blender-<cfg>.apk`, sideloadable. Sizes:
-**lite ≈ 115 MB**, **full ≈ 166 MB** (129 native libs vs 105).
+APK at `../blender_build_android/android_apk_stage_<cfg>/blender-<cfg>.apk`,
+sideloadable.
+A `full` APK is around 236 MB with 146 native libraries; `lite` is far smaller.
 
 On first launch `BlenderActivity` extracts the runtime to
 `<filesDir>/blender/5.3/`, which is what `GHOST_SystemPathsAndroid` reports.
+
+### Bundled extensions
+
+Extensions are not part of the Blender source tree, and there is no practical
+way to fetch them on the device yet. Anything placed in
+`build_files/android/apk/extensions`, as a published `.zip` or an unpacked
+directory, is copied into the payload and picked up by Blender's built-in
+System repository with no preference changes. Override the source directory
+with `BLENDER_ANDROID_EXTENSIONS_DIR`.
+
+Everything bundled ships inside a GPL binary, so `package.sh` prints each
+extension's declared license as it packs it.
 
 ---
 
@@ -339,8 +346,9 @@ build_files/android/build.py --clear-caches
   packaging and re-signs, rather than staging it first.
 - **Android requires unversioned sonames.** `package.sh` runs `patchelf` over
   the gathered libraries; a dependency arriving as `libfoo.so.1` will not load.
-- **`android:debuggable` is `true`** in the manifest. Needed to attach
-  validation layers, but wrong for a build handed to other people.
+- **The manifest is not debuggable.** A distributed APK is therefore never
+  debuggable by accident. Pass `--debuggable` to `build.py`, or set
+  `BLENDER_ANDROID_DEBUGGABLE`, to attach a debugger or validation layers.
 
 ---
 

@@ -11,6 +11,11 @@ global:
   /* Needed for Python modules to work. */
   Py*;
   _Py*;
+  /* Android's NativeActivity resolves this by name with dlsym, so hiding it
+   * leaves the app unable to start. Supplied by the NDK glue and kept by the
+   * -u link option in source/creator/CMakeLists.txt. Wildcard so the other
+   * platforms, where it does not exist, still link. */
+  ANativeActivity_onCreate*;
   /* Needed for sanitizers. Based on:
    * llvm/compiler-rt/lib/sanitizer_common/scripts/gen_dynamic_list.py. */
   __asan*;
