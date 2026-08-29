@@ -14,7 +14,7 @@ Blender
 > **This is an unofficial fork: Blender ported to Android (arm64, Vulkan).**
 >
 > - Ready-made APKs: [Releases](https://github.com/simfeo/blender/releases)
-> - Building from source: [build_files/android/BUILDING.md](build_files/android/BUILDING.md)
+> - Building from source: [build_files/android/BUILDING.md](../build_files/android/BUILDING.md)
 > - Tested on a Samsung Galaxy Tab S7 FE (Adreno 642L, Vulkan 1.1) and a
 >   Galaxy S22 Ultra SM-S908B (Xclipse 920, Vulkan 1.3).
 >
