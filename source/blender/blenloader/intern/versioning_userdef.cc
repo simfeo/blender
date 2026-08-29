@@ -1794,6 +1794,25 @@ void blo_do_versions_userdef(UserDef *userdef)
   }
 #endif
 
+#ifdef __ANDROID__
+  if (!USER_VERSION_ATLEAST(503, 17)) {
+    /* The stylus pressure calibration reached the defaults but not the preferences
+     * people already had, and on this hardware the factory threshold is not merely
+     * unhelpful -- it is unreachable. Android normalises pressure against the range the
+     * digitiser declares, and an S Pen pressed as hard as is reasonable on glass tops
+     * out around 0.77, so 100% could never be produced. A finger carries no tablet data
+     * and counts as a constant 1.0, so every pen stroke came out weaker than a finger
+     * one no matter how hard it was pressed.
+     *
+     * Only values still sitting at the old factory defaults are moved, so a setting
+     * someone chose is never overwritten. See DNA_userdef_types.h for where the
+     * replacements came from. */
+    if (userdef->pressure_threshold_max == 1.0f) {
+      userdef->pressure_threshold_max = USER_PRESSURE_THRESHOLD_MAX_DEFAULT;
+    }
+  }
+#endif
+
   /**
    * Always bump subversion in BKE_blender_version.h when adding versioning
    * code here, and wrap it inside a USER_VERSION_ATLEAST check.

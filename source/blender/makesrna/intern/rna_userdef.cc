@@ -6771,6 +6771,11 @@ static void rna_def_userdef_input(BlenderRNA *brna)
   prop = RNA_def_property(srna, "pressure_threshold_max", PROP_FLOAT, PROP_FACTOR);
   RNA_def_property_range(prop, 0.0f, 1.0f);
   RNA_def_property_ui_range(prop, 0.0f, 1.0f, 0.01f, 3);
+  /* Stated here rather than picked up from the DNA default, which this file runs too early to
+   * see the Android value of: makesrna is a host tool, so the header it read was compiled
+   * without __ANDROID__ and offered 1.0. That number is what "Reset to Default Value" gave
+   * back, disagreeing with the preference a fresh install actually starts on. */
+  RNA_def_property_float_default(prop, USER_PRESSURE_THRESHOLD_MAX_ANDROID);
   RNA_def_property_ui_text(
       prop, "Max Threshold", "Raw input pressure value that is interpreted as 100% by Blender");
 
