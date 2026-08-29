@@ -576,6 +576,16 @@ enum eUserpref_TempSpaceDisplayType : char {
  * back 1.0. See rna_userdef.cc. */
 #define USER_PRESSURE_THRESHOLD_MAX_ANDROID 0.5f
 
+/* The online essentials library downloads through Blender's HTTP layer, which
+ * runs its transfers in a separate process. Android has no multiprocessing:
+ * bionic provides no sem_open, so CPython does not build the module. Starting
+ * with the library enabled only produces an error on every launch. */
+#ifdef __ANDROID__
+#  define USER_ASSET_FLAG_DEFAULT eUserPref_AssetFlag(0)
+#else
+#  define USER_ASSET_FLAG_DEFAULT USER_ASSETS_USE_ONLINE_ESSENTIALS
+#endif
+
 #ifdef __ANDROID__
 #  define USER_RENDER_DISPLAY_DEFAULT USER_RENDER_DISPLAY_SCREEN
 #  define USER_TEMP_SPACE_DISPLAY_DEFAULT USER_TEMP_SPACE_DISPLAY_FULLSCREEN
@@ -1140,7 +1150,7 @@ struct UserDef {
 
   /** Index of the asset library being edited in the Preferences UI. */
   short active_asset_library = 0;
-  eUserPref_AssetFlag asset_flag = USER_ASSETS_USE_ONLINE_ESSENTIALS;
+  eUserPref_AssetFlag asset_flag = USER_ASSET_FLAG_DEFAULT;
 
   char _pad14[1] = {};
 

@@ -453,7 +453,16 @@ def remote_asset_library_sync(
         print("  skipping {!r}, online access is not allowed,".format(asset_library_url))
         return
 
-    from _bpy_internal.assets.remote_library import listing_downloader
+    try:
+        from _bpy_internal.assets.remote_library import listing_downloader
+    except ImportError as ex:
+        # The downloader runs its transfers in a separate process, and Android
+        # has no multiprocessing: bionic provides no sem_open, so CPython does
+        # not build the module. Reaching this from register() used to abort the
+        # add-on entirely, which took the extension repositories down with it.
+        print("  skipping {!r}, remote asset libraries are unavailable: {!s}".format(
+            asset_library_url, ex))
+        return
 
     # Check if the download should happen at all.
     if only_if_older_than_sec and listing_downloader.is_more_recent_than(

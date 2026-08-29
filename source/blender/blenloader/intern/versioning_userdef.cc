@@ -1782,7 +1782,7 @@ void blo_do_versions_userdef(UserDef *userdef)
   }
 
   if (!USER_VERSION_ATLEAST(503, 2)) {
-    userdef->asset_flag |= USER_ASSETS_USE_ONLINE_ESSENTIALS;
+    userdef->asset_flag |= USER_ASSET_FLAG_DEFAULT;
   }
 
   /* Make Vulkan default on Linux/Windows x64. Keep existing option for Apple and Windows on ARM.*/
