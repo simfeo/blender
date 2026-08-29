@@ -12,6 +12,8 @@ import android.content.res.AssetManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.system.Os;
+import android.util.Log;
 import android.os.Environment;
 import android.provider.Settings;
 import android.text.InputType;
@@ -47,6 +49,10 @@ public class BlenderActivity extends NativeActivity {
   /* Must match GHOST_SystemPathsAndroid: <filesDir>/blender/<version>. */
   private static final String VERSION = "5.3";
   private static final String RUNTIME_ZIP = "blender_runtime.zip";
+  private static final String PYTHON_VERSION = "3.13";
+  private static final String PYTHON_FULL_VERSION = "3.13.13";
+  private static final String PYTHON_BIN_LIB = "libpython3_13_bin.so";
+  private static final String TAG = "Blender";
 
   private InputView inputView;
 
@@ -57,7 +63,7 @@ public class BlenderActivity extends NativeActivity {
   protected void onCreate(Bundle state) {
     /* Runtime files must exist before native Blender init reads them. */
     extractRuntimeIfNeeded();
-    linkPythonInterpreter();
+    setUpPythonInterpreter();
     super.onCreate(state);
     setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
     enterImmersive();
@@ -113,33 +119,150 @@ public class BlenderActivity extends NativeActivity {
     }
   }
 
-  /* Blender resolves the interpreter next to the runtime, but an executable
-   * cannot live there: the data directory is mounted noexec from API 29 on.
-   * Link to the copy the package manager extracted into the native library
-   * directory, which stays executable. Redone on every launch because that
-   * path changes when the app is updated. */
-  private void linkPythonInterpreter() {
-    File real = new File(getApplicationInfo().nativeLibraryDir, "libpython3_13_bin.so");
-    if (!real.isFile()) {
+  /* Blender runs the extension command line tool as a subprocess, so
+   * sys.executable has to be real. The interpreter ships in the native library
+   * directory because the runtime payload lands in the app's data directory,
+   * which is mounted noexec from API 29 on, and Blender looks for it under
+   * <python>/bin, so the two are linked here.
+   *
+   * Redone on every launch: nativeLibraryDir carries a hash that changes when
+   * the app is updated, which would leave the link dangling. */
+  private void setUpPythonInterpreter() {
+    File pythonHome = new File(getFilesDir(), "blender/" + VERSION + "/python");
+    if (!pythonHome.isDirectory()) {
       return;
     }
-    File dest = new File(getFilesDir(), "blender/" + VERSION + "/python/bin/python3.13");
     try {
-      dest.getParentFile().mkdirs();
-      dest.delete();
-      android.system.Os.symlink(real.getAbsolutePath(), dest.getAbsolutePath());
+      File interpreter = new File(getApplicationInfo().nativeLibraryDir, PYTHON_BIN_LIB);
+      if (!interpreter.isFile()) {
+        return;
+      }
+      File binDir = new File(pythonHome, "bin");
+      binDir.mkdirs();
+      File link = new File(binDir, "python" + PYTHON_VERSION);
+      /* delete() rather than exists(): a dangling symlink reads as absent but
+       * still makes symlink() fail with EEXIST. */
+      link.delete();
+      Os.symlink(interpreter.getAbsolutePath(), link.getAbsolutePath());
+
+      /* A child process gets none of Blender's Python configuration, so it
+       * would compute its prefix from the interpreter's own location, the
+       * library directory, which holds no standard library. Blender's embedded
+       * interpreter is unaffected: it runs an isolated config that ignores
+       * PYTHONHOME and sets its home explicitly. */
+      Os.setenv("PYTHONHOME", pythonHome.getAbsolutePath(), true);
+
+      /* PYTHONHOME alone is not enough. The extension system passes
+       * bpy.app.python_args, which is ("-I",), so the child starts isolated:
+       * that implies -E and therefore ignores PYTHONHOME. It then resolves the
+       * symlink back to the library directory and dies with "Failed to import
+       * encodings module" before running a line.
+       *
+       * pyvenv.cfg is the way out. CPython reads it beside the executable or
+       * one level up and -E does not suppress it, which is exactly how a
+       * virtualenv's symlinked interpreter finds its base. The path is only
+       * known at runtime, so it is written here rather than shipped. */
+      writeText(new File(pythonHome, "pyvenv.cfg"),
+          "home = " + binDir.getAbsolutePath() + "\n"
+              + "include-system-site-packages = true\n"
+              + "version = " + PYTHON_FULL_VERSION + "\n");
+
+      /* A child is a plain exec outside the app's linker namespace, so it
+       * resolves "libcrypto.so" against the system paths and finds Android's
+       * BoringSSL, which does not export what the bundled _ssl module needs.
+       * Naming the library directory first puts the real OpenSSL ahead of it.
+       * The app's own libraries are already loaded by this point, so this only
+       * affects the extension system's subprocesses. */
+      Os.setenv("LD_LIBRARY_PATH", getApplicationInfo().nativeLibraryDir, true);
+
+      /* Blender sets this itself only for a portable install, which an APK is
+       * not, so OpenSSL would look for certificates in the path it was
+       * configured with on the build machine. */
+      File certs = new File(pythonHome,
+          "lib/python" + PYTHON_VERSION + "/site-packages/certifi/cacert.pem");
+      if (certs.isFile()) {
+        Os.setenv("SSL_CERT_FILE", certs.getAbsolutePath(), true);
+      }
     }
     catch (Exception ex) {
-      /* Only the online extension system needs it; Blender still starts. */
+      /* Not fatal: everything except online extensions works without it. */
+      Log.w(TAG, "python interpreter setup failed", ex);
+    }
+  }
+
+  private static String readText(File f) {
+    InputStream in = null;
+    try {
+      in = new java.io.FileInputStream(f);
+      byte[] buffer = new byte[64];
+      int n = in.read(buffer);
+      return n > 0 ? new String(buffer, 0, n, "UTF-8").trim() : "";
+    }
+    catch (Exception ex) {
+      return "";
+    }
+    finally {
+      if (in != null) {
+        try {
+          in.close();
+        }
+        catch (Exception ignored) {
+        }
+      }
+    }
+  }
+
+  private static void deleteTree(File f) {
+    File[] children = f.listFiles();
+    if (children != null) {
+      for (File child : children) {
+        deleteTree(child);
+      }
+    }
+    f.delete();
+  }
+
+  private static void writeText(File f, String text) {
+    OutputStream out = null;
+    try {
+      out = new FileOutputStream(f);
+      out.write(text.getBytes("UTF-8"));
+    }
+    catch (Exception ex) {
+      Log.w(TAG, "could not write " + f, ex);
+    }
+    finally {
+      if (out != null) {
+        try {
+          out.close();
+        }
+        catch (Exception ignored) {
+        }
+      }
     }
   }
 
   private void extractRuntimeIfNeeded() {
     File root = new File(getFilesDir(), "blender/" + VERSION);
     File marker = new File(root, ".installed-" + VERSION);
-    if (marker.exists()) {
+
+    /* Keyed on the install time rather than the version: the payload changes
+     * with every build during development, and a marker that only records the
+     * version leaves the previous runtime in place, so a reinstalled APK runs
+     * yesterday's scripts against today's binary. */
+    long stamp;
+    try {
+      stamp = getPackageManager().getPackageInfo(getPackageName(), 0).lastUpdateTime;
+    }
+    catch (Exception ex) {
+      stamp = 0;
+    }
+    String want = Long.toString(stamp);
+
+    if (marker.isFile() && want.equals(readText(marker))) {
       return;
     }
+    deleteTree(root);
     root.mkdirs();
     try (InputStream is = getAssets().open(RUNTIME_ZIP, AssetManager.ACCESS_STREAMING);
          ZipInputStream zis = new ZipInputStream(is)) {
@@ -162,7 +285,7 @@ public class BlenderActivity extends NativeActivity {
           }
         }
       }
-      marker.createNewFile();
+      writeText(marker, want);
     }
     catch (Exception ex) {
       throw new RuntimeException("Failed to extract Blender runtime", ex);

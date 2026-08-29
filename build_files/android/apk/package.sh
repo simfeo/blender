@@ -168,6 +168,50 @@ if [ -d "$EXT_SRC" ]; then
     echo "[apk] bundled extension: $name (${lic:-license unknown})"
   done
 fi
+# Blender only defines PYTHON_SSL_CERT_FILE for a portable install, which this
+# build is not, so nothing sets SSL_CERT_FILE and OpenSSL looks in the path it
+# was configured with on the build machine. BlenderActivity exports the variable
+# instead, but that alone is not enough: measured on device, the bundle is
+# reported by ssl.get_default_verify_paths() and the file is present, yet
+# set_default_verify_paths() leaves an empty trust store and every request fails
+# with "unable to get local issuer certificate". Loading the same file
+# explicitly yields the full store, so override the default here. site.py
+# imports this at interpreter start, which covers Blender's own interpreter and
+# the children the extension system spawns.
+SITE="$PAYLOAD/python/lib/python3.13/site-packages"
+if [ -d "$SITE/certifi" ]; then
+  cat > "$SITE/sitecustomize.py" <<'SITECUSTOMIZE'
+# SPDX-FileCopyrightText: 2026 Blender Authors
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""Make the bundled CA bundle the default TLS trust store."""
+
+import os
+
+_cert = os.environ.get("SSL_CERT_FILE")
+if _cert and os.path.isfile(_cert):
+    try:
+        import ssl as _ssl
+
+        _load_default_certs_orig = _ssl.SSLContext.load_default_certs
+
+        def _load_default_certs(self, purpose=_ssl.Purpose.SERVER_AUTH):
+            try:
+                self.load_verify_locations(cafile=_cert)
+            except Exception:
+                # Keep the stock behaviour rather than leaving an empty store.
+                _load_default_certs_orig(self, purpose)
+
+        _ssl.SSLContext.load_default_certs = _load_default_certs
+    except Exception:
+        # A Python without _ssl still has to start; TLS simply stays unavailable.
+        pass
+SITECUSTOMIZE
+  echo "[apk] wrote sitecustomize.py (default TLS trust store)"
+else
+  echo "[apk] WARNING: no certifi in the payload; HTTPS will not verify" >&2
+fi
+
 find "$PAYLOAD" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 
 echo "[apk] gathering native libraries (unversioned)"
