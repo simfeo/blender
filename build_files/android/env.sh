@@ -23,7 +23,10 @@ case "$(uname -s)" in
 esac
 export ANDROID_HOST_TAG
 export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_HOME_DEFAULT}"
-export ANDROID_NDK_VERSION="${ANDROID_NDK_VERSION:-28.2.13676358}"
+# Matched to whatever built lib/android_arm64: those libraries are clang 21,
+# and libc++ symbols they reference (__hash_memory) do not exist in the r28
+# runtime, so the app dies in dlopen before reaching any Blender code.
+export ANDROID_NDK_VERSION="${ANDROID_NDK_VERSION:-30.0.14904198-beta1}"
 export ANDROID_NDK_ROOT="${ANDROID_NDK_ROOT:-$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION}"
 export ANDROID_NDK_HOME="$ANDROID_NDK_ROOT"
 
