@@ -22,7 +22,8 @@
         android:hasCode="true"
         android:allowBackup="true"
         android:extractNativeLibs="true"
-        android:largeHeap="true">
+        android:largeHeap="true"
+        android:theme="@style/Theme.Blender">
 
         <!-- BlenderActivity extends NativeActivity; loads libblender.so and
              bridges soft-keyboard IME text to native. Landscape only. -->

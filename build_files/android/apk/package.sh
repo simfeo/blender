@@ -179,6 +179,28 @@ fi
 # imports this at interpreter start, which covers Blender's own interpreter and
 # the children the extension system spawns.
 SITE="$PAYLOAD/python/lib/python3.13/site-packages"
+
+# pip, which a desktop Blender ships in its Python. Add-ons rely on being able
+# to install their own dependencies with it. Pure Python, so the host
+# interpreter can put it straight into the target tree; the version is the one
+# Blender pins. Cached, because packaging should not need the network twice.
+PIP_VERSION="$(sed -nE 's/^set\(PYTHON_PIP_VERSION ([0-9.]+)\).*/\1/p' \
+  "$REPO_ROOT/build_files/build_environment/cmake/versions.cmake")"
+PIP_CACHE="$BUILD_BASE/pip-$PIP_VERSION"
+if [ -n "$PIP_VERSION" ]; then
+  if [ ! -d "$PIP_CACHE/pip" ]; then
+    mkdir -p "$PIP_CACHE"
+    python3 -m pip install -q --no-deps --no-compile --upgrade \
+      --target "$PIP_CACHE" "pip==$PIP_VERSION" || true
+  fi
+  if [ -f "$PIP_CACHE/pip/__main__.py" ]; then
+    cp -R "$PIP_CACHE/pip" "$SITE/pip"
+    cp -R "$PIP_CACHE"/pip-*.dist-info "$SITE/" 2>/dev/null || true
+    echo "[apk] bundled pip $PIP_VERSION"
+  else
+    echo "[apk] WARNING: pip $PIP_VERSION unavailable; add-ons cannot install dependencies" >&2
+  fi
+fi
 if [ -d "$SITE/certifi" ]; then
   cat > "$SITE/sitecustomize.py" <<'SITECUSTOMIZE'
 # SPDX-FileCopyrightText: 2026 Blender Authors
@@ -287,9 +309,12 @@ if [ -n "${BLENDER_ANDROID_DEBUGGABLE:-}" ]; then
   AAPT_DEBUG="--debug-mode"
   echo "[apk] debuggable build"
 fi
+# Passed positionally rather than with -R: that flag means overlay, and an
+# overlay may only replace resources that already exist, so anything new (the
+# splash theme) is rejected.
 "$BT/aapt2" link -o "$STAGE/base.apk" -I "$ANDROID_JAR" $AAPT_DEBUG \
   --manifest "$SCRIPT_DIR/app/src/main/AndroidManifest.xml" \
-  -R "$STAGE/rescompiled/res.zip" \
+  "$STAGE/rescompiled/res.zip" \
   -A "$ASSETS" -0 zip \
   --min-sdk-version "$ANDROID_API" --target-sdk-version "$ANDROID_TARGET_API"
 

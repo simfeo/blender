@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 Blender Authors
+     SPDX-License-Identifier: GPL-2.0-or-later -->
+<resources>
+
+    <!-- Blender's own interface grey, used for the whole launch window so the
+         system splash, the window behind it and the icon share one
+         background. -->
+    <color name="blender_background">#232323</color>
+
+    <!--
+      Without a theme the app inherits the platform default, whose window is
+      white: the launch splash then shows the icon's dark square floating on a
+      white page. That window stays up for the whole first-launch extraction,
+      which is over a hundred megabytes.
+
+      The three splash attributes are API 31 and this build's minSdk is 31, so
+      they always apply. The icon here is the logo alone, because the splash
+      paints the background itself and a drawable carrying a second one appears
+      as a lighter rectangle inside it.
+    -->
+    <style name="Theme.Blender" parent="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
+        <item name="android:windowBackground">@color/blender_background</item>
+        <item name="android:windowSplashScreenBackground">@color/blender_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/blender_background</item>
+    </style>
+
+</resources>
