@@ -145,6 +145,14 @@ else()
 endif()
 set(LibFFI_ROOT ${LIBDIR}/libffi)
 set(OpenSSL_ROOT ${LIBDIR}/openssl)
+set(OpenImageDenoise_ROOT ${LIBDIR}/openimagedenoise)
+set(draco_ROOT ${LIBDIR}/draco)
+set(GMP_ROOT_DIR ${LIBDIR}/gmp)
+set(manifold_ROOT ${LIBDIR}/manifold)
+set(Ceres_ROOT ${LIBDIR}/ceres)
+set(HARU_ROOT_DIR ${LIBDIR}/haru)
+set(FFTW3_ROOT_DIR ${LIBDIR}/fftw3)
+set(openpgl_ROOT ${LIBDIR}/openpgl)
 
 # Vulkan surface from the NDK sysroot.
 set(WITH_VULKAN_BACKEND ON)
@@ -348,5 +356,70 @@ if(WITH_RUBBERBAND)
       ${LIBDIR}/fftw3/lib/libfftw3.a
       ${LIBDIR}/fftw3/lib/libfftw3_threads.a
     )
+  endif()
+endif()
+
+if(WITH_GMP)
+  find_package_wrapper(GMP)
+  set_and_warn_library_found("GMP" GMP_FOUND WITH_GMP)
+endif()
+
+if(WITH_DRACO)
+  # Draco ships a CMake config package; the glTF add-on's bridge links the
+  # draco::draco target from it.
+  find_package_wrapper(draco)
+  if(TARGET draco::draco)
+    set(DRACO_FOUND TRUE)
+  endif()
+  set_and_warn_library_found("Draco" DRACO_FOUND WITH_DRACO)
+endif()
+
+if(WITH_OPENIMAGEDENOISE)
+  # Blender's FindOpenImageDenoise looks for a single shared library, but the
+  # Android build is static and split across core/device/common/weights
+  # archives whose link order matters. OIDN ships a CMake package that already
+  # encodes that graph (and pulls in TBB), so use it and hand the result to the
+  # variables the rest of the build reads.
+  find_package(OpenImageDenoise CONFIG REQUIRED)
+  set(OPENIMAGEDENOISE_INCLUDE_DIRS ${LIBDIR}/openimagedenoise/include)
+  set(OPENIMAGEDENOISE_LIBRARIES OpenImageDenoise)
+  set(OPENIMAGEDENOISE_FOUND ON)
+endif()
+
+if(WITH_MANIFOLD)
+  find_package(manifold)
+  if(TARGET manifold::manifold)
+    set(MANIFOLD_FOUND TRUE)
+  endif()
+  set_and_warn_library_found("MANIFOLD" MANIFOLD_FOUND WITH_MANIFOLD)
+  mark_as_advanced(manifold_DIR)
+endif()
+
+if(WITH_LIBMV)
+  find_package_wrapper(Ceres REQUIRED)
+  mark_as_advanced(Ceres_DIR)
+  # Dep of Ceres.
+  mark_as_advanced(absl_DIR)
+endif()
+
+if(WITH_HARU)
+  find_package_wrapper(Haru)
+  set_and_warn_library_found("Haru" HARU_FOUND WITH_HARU)
+endif()
+
+if(WITH_FFTW3)
+  find_package_wrapper(Fftw3)
+  set_and_warn_library_found("fftw3" FFTW3_FOUND WITH_FFTW3)
+endif()
+
+if(WITH_CYCLES AND WITH_CYCLES_PATH_GUIDING)
+  find_package_wrapper(openpgl)
+  mark_as_advanced(openpgl_DIR)
+  if(openpgl_FOUND)
+    get_target_property(OPENPGL_LIBRARIES openpgl::openpgl LOCATION)
+    get_target_property(OPENPGL_INCLUDE_DIR openpgl::openpgl INTERFACE_INCLUDE_DIRECTORIES)
+  else()
+    set(WITH_CYCLES_PATH_GUIDING OFF)
+    message(STATUS "OpenPGL not found, disabling WITH_CYCLES_PATH_GUIDING")
   endif()
 endif()
