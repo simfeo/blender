@@ -66,8 +66,13 @@ cmake -S . -B "$BUILD" -G Ninja \
   -DHOST_C_COMPILER="$ANDROID_HOST_CC" -DHOST_CXX_COMPILER="$ANDROID_HOST_CXX" \
   -DBLENDER_ANDROID_CONFIG="$CONFIG"
 ninja -C "$BUILD" blender
-# Built separately: nothing links them, the glTF add-on dlopens them.
-ninja -C "$BUILD" bf_intern_meshopt_bridge bf_intern_draco_bridge
+# Built separately: nothing links them, the glTF add-on dlopens them. Only the
+# configs that enable the codecs define these targets, so ask ninja first.
+for _bridge in bf_intern_meshopt_bridge bf_intern_draco_bridge; do
+  if ninja -C "$BUILD" -n "$_bridge" >/dev/null 2>&1; then
+    ninja -C "$BUILD" "$_bridge"
+  fi
+done
 
 echo "=== [$CONFIG] package APK ==="
 BLENDER_ANDROID_CONFIG="$CONFIG" BUILD="$BUILD" bash "$SCRIPT_DIR/apk/package.sh"

@@ -293,7 +293,10 @@ if(WITH_VULKAN_BACKEND)
   find_package_wrapper(ShaderC REQUIRED)
 endif()
 
-if(WITH_CYCLES_EMBREE)
+# WITH_EMBREE, not WITH_CYCLES_EMBREE: blenkernel uses Embree for mesh ray
+# casts independently of Cycles, so a build with Cycles off still needs the
+# headers. Every other platform gates it this way.
+if(WITH_EMBREE)
   find_package(Embree 4.0.0 REQUIRED)
 endif()
 
