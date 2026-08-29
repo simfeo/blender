@@ -60,6 +60,41 @@ if grep -q "set(WITH_CYCLES ON" "$REPO_ROOT/build_files/android/android_features
   echo "[apk] bundled the Cycles add-on"
 fi
 cp -R "$LIBDIR/python/lib/python3.13" "$PAYLOAD/python/lib/python3.13"
+
+# Extensions are not part of the source tree; a desktop install ships the empty
+# extensions/system directory and the user fetches the rest from
+# extensions.blender.org. Android has no practical way to do that on device, so
+# anything dropped in EXT_SRC is baked in instead. Blender's built-in "System"
+# repository picks these up with no preference changes.
+EXT_SRC="${BLENDER_ANDROID_EXTENSIONS_DIR:-$SCRIPT_DIR/extensions}"
+EXT_DST="$PAYLOAD/extensions/system"
+mkdir -p "$EXT_DST"
+if [ -d "$EXT_SRC" ]; then
+  for ext in "$EXT_SRC"/*; do
+    [ -e "$ext" ] || continue
+    name="$(basename "$ext")"
+    case "$ext" in
+      *.zip)
+        name="${name%.zip}"
+        # A published extension zips its manifest at the archive root, so it
+        # unpacks straight into the destination directory.
+        mkdir -p "$EXT_DST/$name"
+        unzip -qo "$ext" -d "$EXT_DST/$name"
+        ;;
+      *)
+        [ -d "$ext" ] || continue
+        cp -R "$ext" "$EXT_DST/$name"
+        ;;
+    esac
+    if [ ! -f "$EXT_DST/$name/blender_manifest.toml" ]; then
+      echo "[apk] WARNING: $name has no blender_manifest.toml, Blender will ignore it"
+    fi
+    # Everything bundled ships inside a GPL binary, so a non-GPL-compatible
+    # extension has to be caught here rather than at release time.
+    lic="$(sed -nE 's/^license *= *\["([^"]+)".*/\1/p' "$EXT_DST/$name/blender_manifest.toml" 2>/dev/null)"
+    echo "[apk] bundled extension: $name (${lic:-license unknown})"
+  done
+fi
 find "$PAYLOAD" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 
 echo "[apk] gathering native libraries (unversioned)"
