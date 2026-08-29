@@ -58,9 +58,12 @@ if [ ! -x "$HOST/bin/makesdna" ]; then
 fi
 
 echo "=== [$CONFIG] configure + build libblender.so ==="
+# The nested host_tools sub-build gets no toolchain file and would otherwise
+# fall back to the system default cc, which is below the minimum Blender takes.
 cmake -S . -B "$BUILD" -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$ANDROID_TOOLCHAIN_FILE" \
   -DANDROID_ABI="$ANDROID_ABI" -DANDROID_PLATFORM="android-$ANDROID_API" \
+  -DHOST_C_COMPILER="$ANDROID_HOST_CC" -DHOST_CXX_COMPILER="$ANDROID_HOST_CXX" \
   -DBLENDER_ANDROID_CONFIG="$CONFIG"
 ninja -C "$BUILD" blender
 
