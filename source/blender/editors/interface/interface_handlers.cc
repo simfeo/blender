@@ -12654,6 +12654,15 @@ static int handle_menus_recursive(bContext *C,
   int retval = WM_UI_HANDLER_CONTINUE;
   bool do_towards_reinit = false;
 
+  if ((event->flag & WM_EVENT_TOUCH_ONE_FINGER) &&
+      ELEM(event->type, MOUSEPAN, MOUSEROTATE))
+  {
+    /* A one-finger touch drag emits both mouse motion and a trackpad-style event. Menus use the
+     * mouse stream to follow the finger. Handling both events would wrongly flicker selection
+     * between the finger and gesture-origin positions. */
+    return WM_UI_HANDLER_BREAK;
+  }
+
   /* check if we have a submenu, and handle events for it first */
   Button *but = region_find_active_but(menu->region);
   HandleButtonData *data = (but) ? but->active : nullptr;
