@@ -86,6 +86,36 @@ class GHOST_SystemSDL : public GHOST_System {
 
   void processEvent(SDL_Event *sdl_event);
 
+#ifdef __ANDROID__
+  void processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt);
+
+  struct TouchPoint {
+    SDL_TouchID touch_id;
+    SDL_FingerID finger_id;
+    float x;
+    float y;
+  };
+
+  enum class TouchGestureMode {
+    None,
+    TapPending,
+    OneFingerDrag,
+    TwoFingerPan,
+    Suppressed,
+  };
+
+  std::vector<TouchPoint> active_touches_;
+  TouchGestureMode touch_gesture_mode_ = TouchGestureMode::None;
+  SDL_WindowID primary_touch_window_id_ = 0;
+  float touch_start_x_ = 0.0f;
+  float touch_start_y_ = 0.0f;
+  float touch_previous_x_ = 0.0f;
+  float touch_previous_y_ = 0.0f;
+  float touch_previous_distance_ = 0.0f;
+  int32_t touch_cursor_x_ = 0;
+  int32_t touch_cursor_y_ = 0;
+#endif
+
   /** The vector of windows that need to be updated. */
   std::vector<GHOST_WindowSDL *> dirty_windows_;
 };

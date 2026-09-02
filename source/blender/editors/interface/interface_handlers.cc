@@ -12680,7 +12680,9 @@ static int handle_menus_recursive(bContext *C,
           C, event, submenu, level + 1, is_parent_inside || inside, is_menu, false);
     }
   }
-  else if (!but && event->val == KM_PRESS && event->type == LEFTMOUSE) {
+  else if (!but && event->val == KM_PRESS && event->type == LEFTMOUSE &&
+           (event->flag & WM_EVENT_TOUCH_ONE_FINGER) == 0)
+  {
     for (Block &block : menu->region->runtime->uiblocks) {
       if (block.panel) {
         int mx = event->xy[0];

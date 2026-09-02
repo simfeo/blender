@@ -3294,6 +3294,9 @@ static eHandlerActionFlag wm_handlers_do_gizmo_handler(bContext *C,
    * Get the highlight again in case the user dragged off the gizmo. */
   const bool is_event_drag = (event->val == KM_PRESS_DRAG);
   const bool is_event_modifier = ISKEYMODIFIER(event->type);
+  const bool is_touch_view3d_drag = (event->flag & WM_EVENT_TOUCH_VIEW3D) != 0;
+  const bool is_touch_view3d_press = is_touch_view3d_drag && event->type == LEFTMOUSE &&
+                                     event->val == KM_PRESS;
   /* Only keep the highlight if the gizmo becomes modal as result of event handling.
    * Without this check, even un-handled drag events will set the highlight if the drag
    * was initiated over a gizmo. */
@@ -3347,10 +3350,11 @@ static eHandlerActionFlag wm_handlers_do_gizmo_handler(bContext *C,
 
   /* Handle gizmo highlighting. */
   if ((prev.gz_modal == nullptr) &&
-      ((event->type == MOUSEMOVE) || is_event_modifier || is_event_drag))
+      ((event->type == MOUSEMOVE) || is_event_modifier || is_event_drag ||
+       is_touch_view3d_press))
   {
     handle_highlight = true;
-    if (is_event_modifier || is_event_drag) {
+    if (is_event_modifier || is_event_drag || is_touch_view3d_press) {
       handle_keymap = true;
     }
   }
@@ -3393,6 +3397,9 @@ static eHandlerActionFlag wm_handlers_do_gizmo_handler(bContext *C,
 
     wm_gizmomap_highlight_handled(gzmap);
   }
+
+  const bool touch_gizmo_hit = is_touch_view3d_press && gz != nullptr &&
+                               (gz->flag & WM_GIZMO_HIDDEN_KEYMAP) == 0;
 
   /* Don't use from now on. */
   bool is_event_handle_all = gz && (gz->flag & WM_GIZMO_EVENT_HANDLE_ALL);
@@ -3471,6 +3478,23 @@ static eHandlerActionFlag wm_handlers_do_gizmo_handler(bContext *C,
     if (action == WM_HANDLER_CONTINUE) {
       action |= WM_HANDLER_BREAK | WM_HANDLER_MODAL;
     }
+  }
+
+  if (touch_gizmo_hit) {
+    /* Some gizmos defer invoking their operator until the generated #KM_PRESS_DRAG event. Reserve
+     * the touch gesture as soon as the press hit-test succeeds so its following mouse motion is
+     * not discarded as an uncaptured orbit gesture before that event can be generated. */
+    CTX_wm_window(C)->runtime->touch_drag_gizmo_active = true;
+  }
+
+  /* The mouse-style half of a View3D touch drag exists only so gizmos can claim it. Keep an
+   * unclaimed press or motion out of selection and tool key-maps; its paired trackpad event owns
+   * empty-space viewport navigation. */
+  if (is_touch_view3d_drag &&
+      (ISMOUSE_MOTION(event->type) || ISMOUSE_BUTTON(event->type)) &&
+      (action & WM_HANDLER_BREAK) == 0)
+  {
+    action |= WM_HANDLER_BREAK | WM_HANDLER_MODAL;
   }
 
   /* Restore the area. */
@@ -4271,6 +4295,20 @@ void wm_event_do_handlers(bContext *C)
 
       eHandlerActionFlag action = WM_HANDLER_CONTINUE;
 
+      const bool is_touch_view3d_drag = (event->flag & WM_EVENT_TOUCH_VIEW3D) != 0;
+      if (is_touch_view3d_drag && ISMOUSE_MOTION(event->type) &&
+          !win.runtime->touch_drag_gizmo_active &&
+          win.event_queue_consecutive_gesture_type == MOUSEROTATE)
+      {
+        /* Keep the initial mouse move so gizmos can establish hover and capture the following
+         * press. Once the paired trackpad orbit chain has started without a gizmo capture, later
+         * mouse moves are redundant. Filter them before both consecutive-gesture bookkeeping and
+         * gizmo GPU hit-testing, without replacing the last handled orbit event. */
+        BLI_remlink(&win.runtime->event_queue, event);
+        wm_event_free(event);
+        continue;
+      }
+
       /* Force handling drag if a key is pressed even if the drag threshold has not been met.
        * Needed so tablet actions (which typically use a larger threshold) can click-drag
        * then press keys - activating the drag action early.
@@ -4327,6 +4365,30 @@ void wm_event_do_handlers(bContext *C)
 
       CTX_wm_window_set(C, &win);
 
+      if (event->flag & WM_EVENT_TOUCH_LEAVE) {
+        /* A touchscreen has no resting hover position. Clear both an already visible tooltip and
+         * pending button tooltip/highlight state, then consume the off-window cursor motion so it
+         * cannot affect another UI element or a running modal operation. */
+        WM_tooltip_clear(C, &win);
+        ui::UI_screen_free_active_but_highlight(C, screen);
+        win.runtime->touch_drag_gizmo_active = false;
+        BLI_remlink(&win.runtime->event_queue, event);
+        wm_event_free_last_handled(&win, event);
+        continue;
+      }
+
+      if (is_touch_view3d_drag && event->type == LEFTMOUSE && event->val == KM_PRESS) {
+        win.runtime->touch_drag_gizmo_active = false;
+      }
+      if (is_touch_view3d_drag && win.runtime->touch_drag_gizmo_active &&
+          ELEM(event->type, MOUSEROTATE, MOUSEPAN))
+      {
+        /* The matching mouse-motion stream drives the active gizmo. Do not also orbit the view. */
+        BLI_remlink(&win.runtime->event_queue, event);
+        wm_event_free_last_handled(&win, event);
+        continue;
+      }
+
 #ifdef WITH_XR_OPENXR
       if (event->type == EVT_XR_ACTION) {
         wm_event_handle_xrevent(wm, &win, event, C);
@@ -4366,6 +4428,15 @@ void wm_event_do_handlers(bContext *C)
         wm_event_free_and_remove_from_queue_if_valid(event);
         GPU_render_end();
         return;
+      }
+
+      if (is_touch_view3d_drag &&
+          (ISMOUSE_MOTION(event->type) || ISMOUSE_BUTTON(event->type)) &&
+          (CTX_wm_region(C) == nullptr || CTX_wm_region(C)->runtime->gizmo_map == nullptr))
+      {
+        /* With no gizmo map to claim the mouse-style half of this gesture, keep it away from
+         * ordinary View3D mouse key-maps. The trackpad half will perform viewport navigation. */
+        action |= WM_HANDLER_BREAK;
       }
 
       /* Check for a tool-tip. */
@@ -4471,6 +4542,10 @@ void wm_event_do_handlers(bContext *C)
 
       if (event_queue_check_drag_prev && (win.event_queue_check_drag == false)) {
         wm_region_tag_draw_on_gizmo_delay_refresh_for_tweak(&win);
+      }
+
+      if (is_touch_view3d_drag && event->type == LEFTMOUSE && event->val == KM_RELEASE) {
+        win.runtime->touch_drag_gizmo_active = false;
       }
 
       /* Update previous mouse position for following events to use. */
@@ -6049,6 +6124,35 @@ static bool wm_event_is_ignorable_key_press(const wmWindow *win, const wmEvent &
   return wm_event_is_same_key_press(last_event, event);
 }
 
+static bool wm_touch_drag_start_is_view3d(wmWindow *win,
+                                          const int32_t ghost_x,
+                                          const int32_t ghost_y)
+{
+  int xy[2] = {ghost_x, ghost_y};
+  wm_cursor_position_from_ghost_screen_coords(win, &xy[0], &xy[1]);
+
+  const bScreen *screen = WM_window_get_active_screen(win);
+  if (screen == nullptr) {
+    return false;
+  }
+  ScrArea *area = BKE_screen_find_area_xy(screen, SPACE_TYPE_ANY, xy);
+  if (area == nullptr || area->spacetype != SPACE_VIEW3D) {
+    return false;
+  }
+
+  /* Screen edges belong to neighboring areas as well. Keep a touch-sized margin on the normal
+   * mouse-drag path so area resize/join action-zones are never interpreted as viewport orbit. */
+  const int edge_margin = int(4.0f * UI_SCALE_FAC);
+  if (xy[0] <= area->totrct.xmin + edge_margin || xy[0] >= area->totrct.xmax - edge_margin ||
+      xy[1] <= area->totrct.ymin + edge_margin || xy[1] >= area->totrct.ymax - edge_margin)
+  {
+    return false;
+  }
+
+  const ARegion *region = BKE_area_find_region_xy(area, RGN_TYPE_ANY, xy);
+  return region != nullptr && region->regiontype == RGN_TYPE_WINDOW;
+}
+
 void wm_event_add_ghostevent(wmWindowManager *wm,
                              wmWindow *win,
                              const int type,
@@ -6125,6 +6229,20 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
     case GHOST_kEventCursorMove: {
       const GHOST_TEventCursorData *cd = static_cast<const GHOST_TEventCursorData *>(customdata);
 
+      if (cd->is_touch_drag) {
+        const bool start_in_view3d = win->runtime->touch_drag_active ?
+                                         win->runtime->touch_drag_start_in_view3d :
+                                         wm_touch_drag_start_is_view3d(
+                                             win, cd->touch_start_x, cd->touch_start_y);
+        if (start_in_view3d) {
+          event.flag |= WM_EVENT_TOUCH_VIEW3D;
+        }
+        event.flag |= WM_EVENT_TOUCH_ONE_FINGER;
+      }
+      if (cd->is_touch_leave) {
+        event.flag |= WM_EVENT_TOUCH_LEAVE;
+      }
+
       copy_v2_v2_int(event.xy, &cd->x);
       wm_cursor_position_from_ghost_screen_coords(win, &event.xy[0], &event.xy[1]);
 
@@ -6142,7 +6260,8 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
 
       /* Also add to other window if event is there, this makes overdraws disappear nicely. */
       /* It remaps mouse-coord to other window in event. */
-      wmWindow *win_other = wm_event_cursor_other_windows(wm, win, &event);
+      wmWindow *win_other = cd->is_touch_leave ? nullptr :
+                                                   wm_event_cursor_other_windows(wm, win, &event);
       if (win_other) {
         wmEvent event_other = *win_other->runtime->eventstate;
 
@@ -6171,6 +6290,19 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
       const GHOST_TEventTrackpadData *pd = static_cast<const GHOST_TEventTrackpadData *>(
           customdata);
 
+      const bool is_one_finger_touch_pan = pd->subtype == GHOST_kTrackpadEventScroll &&
+                                           pd->numFingers == 1;
+      const bool touch_start_in_view3d =
+          is_one_finger_touch_pan &&
+          (win->runtime->touch_drag_active ?
+               win->runtime->touch_drag_start_in_view3d :
+               wm_touch_drag_start_is_view3d(win, pd->x, pd->y));
+      if (pd->subtype == GHOST_kTrackpadEventMagnify && pd->numFingers == 2 &&
+          !wm_touch_drag_start_is_view3d(win, pd->x, pd->y))
+      {
+        break;
+      }
+
       int delta[2] = {pd->deltaX, -pd->deltaY};
       switch (pd->subtype) {
         case GHOST_kTrackpadEventMagnify:
@@ -6186,18 +6318,43 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
           break;
         case GHOST_kTrackpadEventScroll:
         default:
-          event.type = MOUSEPAN;
+          if (touch_start_in_view3d) {
+            /* View rotation consumes trackpad deltas in the opposite direction to a direct
+             * pointer drag. */
+            event.type = MOUSEROTATE;
+            delta[0] = -delta[0];
+            delta[1] = -delta[1];
+          }
+          else {
+            event.type = MOUSEPAN;
+          }
           break;
       }
 
       copy_v2_v2_int(event.xy, &pd->x);
       wm_cursor_position_from_ghost_screen_coords(win, &event.xy[0], &event.xy[1]);
-      copy_v2_v2_int(event_state->xy, event.xy);
+      /* A one-finger touch pan is deliberately positioned at its gesture origin so it keeps
+       * routing to the editor where scrolling began. Its paired cursor event still follows the
+       * finger, however, and owns the logical pointer position. Do not rewind that position to
+       * the origin after every pan event, as UI redraws would alternate hover between both
+       * coordinates (especially visible while horizontally scrolling thin headers). */
+      if (!is_one_finger_touch_pan) {
+        copy_v2_v2_int(event_state->xy, event.xy);
+      }
       event.val = KM_NOTHING;
 
       /* The direction is inverted from the device due to system preferences. */
       if (pd->isDirectionInverted) {
         event.flag |= WM_EVENT_SCROLL_INVERT;
+      }
+      if (pd->numFingers == 1) {
+        event.flag |= WM_EVENT_TOUCH_ONE_FINGER;
+        if (touch_start_in_view3d) {
+          event.flag |= WM_EVENT_TOUCH_VIEW3D;
+        }
+      }
+      else if (pd->numFingers == 2) {
+        event.flag |= WM_EVENT_MULTITOUCH_TWO_FINGERS;
       }
 
 #if !defined(WIN32) && !defined(__APPLE__)
@@ -6224,6 +6381,23 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
     case GHOST_kEventButtonDown:
     case GHOST_kEventButtonUp: {
       const GHOST_TEventButtonData *bd = static_cast<const GHOST_TEventButtonData *>(customdata);
+
+      if (bd->is_touch_drag) {
+        event.flag |= WM_EVENT_TOUCH_ONE_FINGER;
+        if (type == GHOST_kEventButtonDown) {
+          win->runtime->touch_drag_start_in_view3d = wm_touch_drag_start_is_view3d(
+              win, bd->touch_start_x, bd->touch_start_y);
+          win->runtime->touch_drag_active = true;
+        }
+
+        const bool start_in_view3d = win->runtime->touch_drag_start_in_view3d;
+        if (type == GHOST_kEventButtonUp) {
+          win->runtime->touch_drag_active = false;
+        }
+        if (start_in_view3d) {
+          event.flag |= WM_EVENT_TOUCH_VIEW3D;
+        }
+      }
 
       /* Get value and type from GHOST.
        *

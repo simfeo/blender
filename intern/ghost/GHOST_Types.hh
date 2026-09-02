@@ -642,6 +642,13 @@ struct GHOST_TEventCursorData {
   int32_t y;
   /** Associated tablet data. */
   GHOST_TabletData tablet;
+  /** This cursor motion is part of a touch-screen drag gesture. */
+  bool is_touch_drag;
+  /** Screen-space origin used to decide which editor owns the touch gesture. */
+  int32_t touch_start_x;
+  int32_t touch_start_y;
+  /** Synthetic motion used to clear hover state after a touch-screen gesture. */
+  bool is_touch_leave;
 };
 
 struct GHOST_TEventButtonData {
@@ -649,6 +656,11 @@ struct GHOST_TEventButtonData {
   GHOST_TButton button;
   /** Associated tablet data. */
   GHOST_TabletData tablet;
+  /** This button event is part of a touch-screen drag gesture. */
+  bool is_touch_drag;
+  /** Screen-space origin used to decide which editor owns the touch gesture. */
+  int32_t touch_start_x;
+  int32_t touch_start_y;
 };
 
 enum GHOST_TEventWheelAxis {
@@ -685,6 +697,8 @@ struct GHOST_TEventTrackpadData {
   int32_t deltaY;
   /** The delta is inverted from the device due to system preferences. */
   char isDirectionInverted;
+  /** Number of fingers for a touch gesture, or zero when unspecified. */
+  uint8_t numFingers;
 };
 
 enum GHOST_TDragnDropTypes {
