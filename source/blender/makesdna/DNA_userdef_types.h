@@ -979,7 +979,8 @@ struct UserDef {
   char _pad0 = {};
 
   /** Space around each area. Inter-editor gap width. */
-  char border_width = 2;
+  /* Android demo change, to be replaced with a proper tablet setting override system. */
+  char border_width = 3;
 
   eUserpref_MiniAxisType mini_axis_type = USER_MINI_AXIS_TYPE_GIZMO;
   eUserpref_UI_Flag uiflag = USER_FILTERFILEEXTS | USER_DRAWVIEWINFO | USER_PLAINMENUS |
@@ -1274,9 +1275,10 @@ struct UserDef {
 
   char viewport_aa = 8;
 
-  eUserpref_RenderDisplayType render_display_type = USER_RENDER_DISPLAY_WINDOW;
-  eUserpref_TempSpaceDisplayType filebrowser_display_type = USER_TEMP_SPACE_DISPLAY_WINDOW;
-  eUserpref_TempSpaceDisplayType preferences_display_type = USER_TEMP_SPACE_DISPLAY_WINDOW;
+  /* Android demo change, to be replaced with a proper tablet setting override system. */
+  eUserpref_RenderDisplayType render_display_type = USER_RENDER_DISPLAY_AREA;
+  eUserpref_TempSpaceDisplayType filebrowser_display_type = USER_TEMP_SPACE_DISPLAY_FULLSCREEN;
+  eUserpref_TempSpaceDisplayType preferences_display_type = USER_TEMP_SPACE_DISPLAY_FULLSCREEN;
   char _pad18[7] = {};
 
   eUserpref_SeqProxySetup sequencer_proxy_setup = USER_SEQ_PROXY_SETUP_AUTOMATIC;
