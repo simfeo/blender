@@ -824,6 +824,9 @@ def km_screen(params):
          {"properties": [("direction", 'NEXT')]}),
         ("screen.workspace_cycle", {"type": 'PAGE_UP', "value": 'PRESS', "ctrl": True},
          {"properties": [("direction", 'PREV')]}),
+        # Focus mode
+        ("screen.screen_full_area", {"type": 'TOUCH_FOUR_FINGER_TAP', "value": 'PRESS'},
+         {"properties": [("use_hide_panels", True)]}),
         # Quad view
         ("screen.region_quadview", {"type": 'Q', "value": 'PRESS', "ctrl": True, "alt": True}, None),
         # Repeat last
@@ -838,6 +841,8 @@ def km_screen(params):
         # Undo
         ("ed.undo", {"type": 'Z', "value": 'PRESS', "ctrl": True, "repeat": True}, None),
         ("ed.redo", {"type": 'Z', "value": 'PRESS', "shift": True, "ctrl": True, "repeat": True}, None),
+        ("ed.undo", {"type": 'TOUCH_TWO_FINGER_TAP', "value": 'PRESS'}, None),
+        ("ed.redo", {"type": 'TOUCH_THREE_FINGER_TAP', "value": 'PRESS'}, None),
         # Render
         ("render.render", {"type": 'F12', "value": 'PRESS'},
          {"properties": [("use_viewport", True)]}),

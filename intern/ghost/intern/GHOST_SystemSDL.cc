@@ -532,6 +532,8 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
     active_touches_.clear();
     touch_gesture_mode_ = TouchGestureMode::None;
     primary_touch_window_id_ = 0;
+    multi_finger_tap_start_time_ms_ = 0;
+    multi_finger_tap_count_ = 0;
     touch_start_x_ = 0.0f;
     touch_start_y_ = 0.0f;
     touch_previous_x_ = 0.0f;
@@ -551,6 +553,7 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
     }
     if (active_touches_.empty()) {
       primary_touch_window_id_ = sdl_sub_evt.windowID;
+      multi_finger_tap_start_time_ms_ = event_ms;
     }
   }
   else if (find_touch() == active_touches_.end()) {
@@ -567,6 +570,14 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
   int x_win, y_win, width, height;
   SDL_GetWindowPosition(sdl_win, &x_win, &y_win);
   SDL_GetWindowSize(sdl_win, &width, &height);
+
+  /* Allow normal tap jitter without delaying the start of precision drags too much. This is 15
+   * pixels at Android's 288 DPI. */
+  constexpr float drag_threshold_points = 5.0f;
+  constexpr uint64_t multi_finger_tap_timeout_ms = 500;
+  const float drag_threshold = std::max(
+      drag_threshold_points,
+      drag_threshold_points * static_cast<GHOST_IWindow *>(window)->getDPIHint() / 96.0f);
 
   auto set_cursor = [&](const float x, const float y) {
     touch_cursor_x_ = int32_t(x * width) + x_win;
@@ -636,14 +647,48 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
                                                     inverted,
                                                     num_fingers));
   };
+  auto begin_two_finger_gesture = [&](const TouchGestureMode mode) {
+    touch_gesture_mode_ = mode;
+    touch_start_x_ = touch_previous_x_ =
+        (active_touches_[0].x + active_touches_[1].x) * 0.5f;
+    touch_start_y_ = touch_previous_y_ =
+        (active_touches_[0].y + active_touches_[1].y) * 0.5f;
+    const float distance_x = (active_touches_[1].x - active_touches_[0].x) * width;
+    const float distance_y = (active_touches_[1].y - active_touches_[0].y) * height;
+    touch_previous_distance_ = std::sqrt(distance_x * distance_x + distance_y * distance_y);
+    set_cursor(touch_start_x_, touch_start_y_);
+  };
+  auto multi_finger_tap_is_valid = [&]() {
+    if (event_ms - multi_finger_tap_start_time_ms_ > multi_finger_tap_timeout_ms) {
+      return false;
+    }
+    for (const TouchPoint &touch : active_touches_) {
+      const float delta_x = (touch.x - touch.start_x) * width;
+      const float delta_y = (touch.y - touch.start_y) * height;
+      if (delta_x * delta_x + delta_y * delta_y >= drag_threshold * drag_threshold) {
+        return false;
+      }
+    }
+    return true;
+  };
+  auto suppress_touch_gesture = [&](const float x) {
+    if (touch_gesture_mode_ != TouchGestureMode::Suppressed) {
+      push_leave(x);
+    }
+    touch_gesture_mode_ = TouchGestureMode::Suppressed;
+  };
   if (is_down) {
     const TouchGestureMode previous_gesture_mode = touch_gesture_mode_;
     const bool same_device_and_window =
         active_touches_.empty() ||
         (active_touches_.front().touch_id == sdl_sub_evt.touchID &&
          primary_touch_window_id_ == sdl_sub_evt.windowID);
-    active_touches_.push_back(
-        {sdl_sub_evt.touchID, sdl_sub_evt.fingerID, sdl_sub_evt.x, sdl_sub_evt.y});
+    active_touches_.push_back({sdl_sub_evt.touchID,
+                               sdl_sub_evt.fingerID,
+                               sdl_sub_evt.x,
+                               sdl_sub_evt.y,
+                               sdl_sub_evt.x,
+                               sdl_sub_evt.y});
 
     if (active_touches_.size() == 1) {
       touch_gesture_mode_ = TouchGestureMode::TapPending;
@@ -651,28 +696,43 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
       touch_start_y_ = touch_previous_y_ = sdl_sub_evt.y;
       set_cursor(sdl_sub_evt.x, sdl_sub_evt.y);
     }
+    else if (previous_gesture_mode == TouchGestureMode::MultiFingerTapPending) {
+      /* Replacing an already released finger does not extend the same tap. */
+      if (same_device_and_window && active_touches_.size() <= 4 &&
+          active_touches_.size() == multi_finger_tap_count_ + 1)
+      {
+        multi_finger_tap_count_ = uint8_t(active_touches_.size());
+        touch_start_x_ = 0.0f;
+        touch_start_y_ = 0.0f;
+        for (const TouchPoint &touch : active_touches_) {
+          touch_start_x_ += touch.x;
+          touch_start_y_ += touch.y;
+        }
+        touch_start_x_ /= active_touches_.size();
+        touch_start_y_ /= active_touches_.size();
+        set_cursor(touch_start_x_, touch_start_y_);
+      }
+      else {
+        suppress_touch_gesture(sdl_sub_evt.x);
+      }
+    }
     else if (active_touches_.size() == 2 && same_device_and_window) {
       if (previous_gesture_mode == TouchGestureMode::OneFingerDrag) {
         push_touch_button(GHOST_kEventButtonUp, true);
       }
-      touch_gesture_mode_ = TouchGestureMode::TwoFingerPan;
-      touch_start_x_ = touch_previous_x_ =
-          (active_touches_[0].x + active_touches_[1].x) * 0.5f;
-      touch_start_y_ = touch_previous_y_ =
-          (active_touches_[0].y + active_touches_[1].y) * 0.5f;
-      const float distance_x = (active_touches_[1].x - active_touches_[0].x) * width;
-      const float distance_y = (active_touches_[1].y - active_touches_[0].y) * height;
-      touch_previous_distance_ = std::sqrt(distance_x * distance_x + distance_y * distance_y);
-      set_cursor(touch_previous_x_, touch_previous_y_);
+      if (previous_gesture_mode == TouchGestureMode::TapPending) {
+        multi_finger_tap_count_ = 2;
+        begin_two_finger_gesture(TouchGestureMode::MultiFingerTapPending);
+      }
+      else {
+        begin_two_finger_gesture(TouchGestureMode::TwoFingerPan);
+      }
     }
     else {
       if (previous_gesture_mode == TouchGestureMode::OneFingerDrag) {
         push_touch_button(GHOST_kEventButtonUp, true);
       }
-      if (touch_gesture_mode_ != TouchGestureMode::Suppressed) {
-        push_leave(sdl_sub_evt.x);
-      }
-      touch_gesture_mode_ = TouchGestureMode::Suppressed;
+      suppress_touch_gesture(sdl_sub_evt.x);
     }
     return;
   }
@@ -687,12 +747,6 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
       set_cursor(touch->x, touch->y);
       const float delta_x = (touch->x - touch_start_x_) * width;
       const float delta_y = (touch->y - touch_start_y_) * height;
-      /* Keep enough tolerance for tap jitter without making precision drags, such as editor
-       * borders, travel too far before they begin. This is 15 pixels at Android's 288 DPI. */
-      constexpr float drag_threshold_points = 5.0f;
-      const float drag_threshold = std::max(
-          drag_threshold_points,
-          drag_threshold_points * static_cast<GHOST_IWindow *>(window)->getDPIHint() / 96.0f);
 
       if (delta_x * delta_x + delta_y * delta_y >= drag_threshold * drag_threshold) {
         touch_gesture_mode_ = TouchGestureMode::OneFingerDrag;
@@ -712,9 +766,24 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
         touch_previous_x_ = touch->x;
         touch_previous_y_ = touch->y;
       }
+      return;
     }
-    else if (touch_gesture_mode_ == TouchGestureMode::OneFingerDrag ||
-             touch_gesture_mode_ == TouchGestureMode::OneFingerOrbit)
+
+    if (touch_gesture_mode_ == TouchGestureMode::MultiFingerTapPending) {
+      if (multi_finger_tap_is_valid()) {
+        return;
+      }
+      if (multi_finger_tap_count_ == 2 && active_touches_.size() == 2) {
+        touch_gesture_mode_ = TouchGestureMode::TwoFingerPan;
+      }
+      else {
+        suppress_touch_gesture(touch->x);
+        return;
+      }
+    }
+
+    if (touch_gesture_mode_ == TouchGestureMode::OneFingerDrag ||
+        touch_gesture_mode_ == TouchGestureMode::OneFingerOrbit)
     {
       set_cursor(touch->x, touch->y);
       const int32_t delta_x = int32_t((touch->x - touch_previous_x_) * width);
@@ -761,6 +830,45 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
 
   touch->x = sdl_sub_evt.x;
   touch->y = sdl_sub_evt.y;
+
+  if (touch_gesture_mode_ == TouchGestureMode::MultiFingerTapPending) {
+    if (!is_canceled && multi_finger_tap_is_valid()) {
+      active_touches_.erase(touch);
+      if (active_touches_.empty()) {
+        GHOST_TEventType tap_event_type = GHOST_kEventUnknown;
+        switch (multi_finger_tap_count_) {
+          case 2:
+            tap_event_type = GHOST_kEventTwoFingerTap;
+            break;
+          case 3:
+            tap_event_type = GHOST_kEventThreeFingerTap;
+            break;
+          case 4:
+            tap_event_type = GHOST_kEventFourFingerTap;
+            break;
+          default:
+            break;
+        }
+        if (tap_event_type != GHOST_kEventUnknown) {
+          set_cursor(touch_start_x_, touch_start_y_);
+          push_cursor();
+          pushEvent(std::make_unique<GHOST_Event>(event_ms, tap_event_type, window));
+        }
+        push_leave(touch_start_x_);
+        reset_touch_state();
+      }
+      return;
+    }
+    if (is_canceled) {
+      suppress_touch_gesture(touch->x);
+    }
+    else if (multi_finger_tap_count_ == 2 && active_touches_.size() == 2) {
+      touch_gesture_mode_ = TouchGestureMode::TwoFingerPan;
+    }
+    else {
+      suppress_touch_gesture(touch->x);
+    }
+  }
 
   if (touch_gesture_mode_ == TouchGestureMode::TapPending && active_touches_.size() == 1) {
     set_cursor(touch->x, touch->y);

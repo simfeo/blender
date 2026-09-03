@@ -94,11 +94,14 @@ class GHOST_SystemSDL : public GHOST_System {
     SDL_FingerID finger_id;
     float x;
     float y;
+    float start_x;
+    float start_y;
   };
 
   enum class TouchGestureMode {
     None,
     TapPending,
+    MultiFingerTapPending,
     OneFingerDrag,
     OneFingerOrbit,
     TwoFingerPan,
@@ -108,6 +111,8 @@ class GHOST_SystemSDL : public GHOST_System {
   std::vector<TouchPoint> active_touches_;
   TouchGestureMode touch_gesture_mode_ = TouchGestureMode::None;
   SDL_WindowID primary_touch_window_id_ = 0;
+  uint64_t multi_finger_tap_start_time_ms_ = 0;
+  uint8_t multi_finger_tap_count_ = 0;
   float touch_start_x_ = 0.0f;
   float touch_start_y_ = 0.0f;
   float touch_previous_x_ = 0.0f;

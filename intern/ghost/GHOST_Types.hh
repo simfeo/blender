@@ -341,6 +341,11 @@ enum GHOST_TEventType {
    */
   GHOST_kEventTrackpad,
 
+  /** Multi-touch tap events. */
+  GHOST_kEventTwoFingerTap,
+  GHOST_kEventThreeFingerTap,
+  GHOST_kEventFourFingerTap,
+
 #ifdef WITH_INPUT_NDOF
   /**
    * N degree of freedom device motion event.

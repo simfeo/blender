@@ -6373,6 +6373,21 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
       wm_event_add_trackpad(win, &event, delta[0], delta[1]);
       break;
     }
+    case GHOST_kEventTwoFingerTap:
+      event.type = TOUCH_TWO_FINGER_TAP;
+      event.val = KM_PRESS;
+      wm_event_add_intern(win, &event);
+      break;
+    case GHOST_kEventThreeFingerTap:
+      event.type = TOUCH_THREE_FINGER_TAP;
+      event.val = KM_PRESS;
+      wm_event_add_intern(win, &event);
+      break;
+    case GHOST_kEventFourFingerTap:
+      event.type = TOUCH_FOUR_FINGER_TAP;
+      event.val = KM_PRESS;
+      wm_event_add_intern(win, &event);
+      break;
     /* Mouse button. */
     case GHOST_kEventButtonDown:
     case GHOST_kEventButtonUp: {

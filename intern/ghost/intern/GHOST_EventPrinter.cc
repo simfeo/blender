@@ -88,6 +88,9 @@ bool GHOST_EventPrinter::processEvent(const GHOST_IEvent *event)
     }
 
       CASE_TYPE(GHOST_kEventTrackpad);
+      CASE_TYPE(GHOST_kEventTwoFingerTap);
+      CASE_TYPE(GHOST_kEventThreeFingerTap);
+      CASE_TYPE(GHOST_kEventFourFingerTap);
 
 #ifdef WITH_INPUT_NDOF
     case GHOST_kEventNDOFMotion: {
