@@ -585,7 +585,7 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
                                                   touch_start_x,
                                                   touch_start_y));
   };
-  auto push_touch_drag_button = [&](const GHOST_TEventType type) {
+  auto push_touch_button = [&](const GHOST_TEventType type, const bool is_touch_drag) {
     const int32_t touch_start_x = int32_t(touch_start_x_ * width) + x_win;
     const int32_t touch_start_y = int32_t(touch_start_y_ * height) + y_win;
     pushEvent(std::make_unique<GHOST_EventButton>(event_ms,
@@ -594,6 +594,7 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
                                                   GHOST_kButtonMaskLeft,
                                                   GHOST_TABLET_DATA_NONE,
                                                   true,
+                                                  is_touch_drag,
                                                   touch_start_x,
                                                   touch_start_y));
   };
@@ -602,6 +603,8 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
      * edge. Tag this separately so Blender can clear touch hover without dispatching the fake
      * motion to a UI element or modal operation. */
     const int32_t leave_x = x < 0.5f ? x_win + width + 32 : x_win - 32;
+    touch_cursor_x_ = leave_x;
+    touch_cursor_override_ = true;
     pushEvent(std::make_unique<GHOST_EventCursor>(event_ms,
                                                   GHOST_kEventCursorMove,
                                                   window,
@@ -650,7 +653,7 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
     }
     else if (active_touches_.size() == 2 && same_device_and_window) {
       if (previous_gesture_mode == TouchGestureMode::OneFingerDrag) {
-        push_touch_drag_button(GHOST_kEventButtonUp);
+        push_touch_button(GHOST_kEventButtonUp, true);
       }
       touch_gesture_mode_ = TouchGestureMode::TwoFingerPan;
       touch_start_x_ = touch_previous_x_ =
@@ -664,7 +667,7 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
     }
     else {
       if (previous_gesture_mode == TouchGestureMode::OneFingerDrag) {
-        push_touch_drag_button(GHOST_kEventButtonUp);
+        push_touch_button(GHOST_kEventButtonUp, true);
       }
       if (touch_gesture_mode_ != TouchGestureMode::Suppressed) {
         push_leave(sdl_sub_evt.x);
@@ -699,7 +702,7 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
         const int32_t current_y = touch_cursor_y_;
         set_cursor(touch_start_x_, touch_start_y_);
         push_cursor(true);
-        push_touch_drag_button(GHOST_kEventButtonDown);
+        push_touch_button(GHOST_kEventButtonDown, true);
         touch_cursor_x_ = current_x;
         touch_cursor_y_ = current_y;
         push_cursor(true);
@@ -759,16 +762,8 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
     set_cursor(touch->x, touch->y);
     if (!is_canceled) {
       push_cursor();
-      pushEvent(std::make_unique<GHOST_EventButton>(event_ms,
-                                                    GHOST_kEventButtonDown,
-                                                    window,
-                                                    GHOST_kButtonMaskLeft,
-                                                    GHOST_TABLET_DATA_NONE));
-      pushEvent(std::make_unique<GHOST_EventButton>(event_ms,
-                                                    GHOST_kEventButtonUp,
-                                                    window,
-                                                    GHOST_kButtonMaskLeft,
-                                                    GHOST_TABLET_DATA_NONE));
+      push_touch_button(GHOST_kEventButtonDown, false);
+      push_touch_button(GHOST_kEventButtonUp, false);
     }
     push_leave(touch->x);
     reset_touch_state();
@@ -785,7 +780,7 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
         push_trackpad(GHOST_kTrackpadEventScroll, delta_x, delta_y, false, 1);
       }
     }
-    push_touch_drag_button(GHOST_kEventButtonUp);
+    push_touch_button(GHOST_kEventButtonUp, true);
     push_leave(touch->x);
     reset_touch_state();
     return;
@@ -872,6 +867,12 @@ void GHOST_SystemSDL::processEvent(SDL_Event *sdl_event)
 
     case SDL_EVENT_MOUSE_MOTION: {
       const SDL_MouseMotionEvent &sdl_sub_evt = sdl_event->motion;
+#ifdef __ANDROID__
+      if (sdl_sub_evt.which == SDL_TOUCH_MOUSEID) {
+        break;
+      }
+      touch_cursor_override_ = false;
+#endif
       const uint64_t event_ms = SDL_NS_TO_MS(sdl_sub_evt.timestamp);
       SDL_Window *sdl_win = SDL_GetWindowFromID_fallback(sdl_sub_evt.windowID);
       GHOST_WindowSDL *window = findGhostWindow(sdl_win);
@@ -1046,7 +1047,7 @@ void GHOST_SystemSDL::processEvent(SDL_Event *sdl_event)
 GHOST_TSuccess GHOST_SystemSDL::getCursorPosition(int32_t &x, int32_t &y) const
 {
 #ifdef __ANDROID__
-  if (!active_touches_.empty()) {
+  if (!active_touches_.empty() || touch_cursor_override_) {
     x = touch_cursor_x_;
     y = touch_cursor_y_;
     return GHOST_kSuccess;

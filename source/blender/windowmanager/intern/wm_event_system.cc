@@ -3295,8 +3295,8 @@ static eHandlerActionFlag wm_handlers_do_gizmo_handler(bContext *C,
   const bool is_event_drag = (event->val == KM_PRESS_DRAG);
   const bool is_event_modifier = ISKEYMODIFIER(event->type);
   const bool is_touch_view3d_drag = (event->flag & WM_EVENT_TOUCH_VIEW3D) != 0;
-  const bool is_touch_view3d_press = is_touch_view3d_drag && event->type == LEFTMOUSE &&
-                                     event->val == KM_PRESS;
+  const bool is_touch_press = (event->flag & WM_EVENT_TOUCH) && event->type == LEFTMOUSE &&
+                              event->val == KM_PRESS;
   /* Only keep the highlight if the gizmo becomes modal as result of event handling.
    * Without this check, even un-handled drag events will set the highlight if the drag
    * was initiated over a gizmo. */
@@ -3350,11 +3350,10 @@ static eHandlerActionFlag wm_handlers_do_gizmo_handler(bContext *C,
 
   /* Handle gizmo highlighting. */
   if ((prev.gz_modal == nullptr) &&
-      ((event->type == MOUSEMOVE) || is_event_modifier || is_event_drag ||
-       is_touch_view3d_press))
+      ((event->type == MOUSEMOVE) || is_event_modifier || is_event_drag || is_touch_press))
   {
     handle_highlight = true;
-    if (is_event_modifier || is_event_drag || is_touch_view3d_press) {
+    if (is_event_modifier || is_event_drag || is_touch_press) {
       handle_keymap = true;
     }
   }
@@ -3398,7 +3397,7 @@ static eHandlerActionFlag wm_handlers_do_gizmo_handler(bContext *C,
     wm_gizmomap_highlight_handled(gzmap);
   }
 
-  const bool touch_gizmo_hit = is_touch_view3d_press && gz != nullptr &&
+  const bool touch_gizmo_hit = is_touch_press && gz != nullptr &&
                                (gz->flag & WM_GIZMO_HIDDEN_KEYMAP) == 0;
 
   /* Don't use from now on. */
@@ -3481,10 +3480,9 @@ static eHandlerActionFlag wm_handlers_do_gizmo_handler(bContext *C,
   }
 
   if (touch_gizmo_hit) {
-    /* Some gizmos defer invoking their operator until the generated #KM_PRESS_DRAG event. Reserve
-     * the touch gesture as soon as the press hit-test succeeds so its following mouse motion is
-     * not discarded as an uncaptured orbit gesture before that event can be generated. */
-    CTX_wm_window(C)->runtime->touch_drag_gizmo_active = true;
+    /* Reserve the touch as soon as its press hits a gizmo. This keeps deferred drag motion from
+     * becoming viewport navigation and lets modal teardown avoid restoring mouse hover. */
+    CTX_wm_window(C)->runtime->touch_gizmo_active = true;
   }
 
   /* The mouse-style half of a View3D touch drag exists only so gizmos can claim it. Keep an
@@ -4297,7 +4295,7 @@ void wm_event_do_handlers(bContext *C)
 
       const bool is_touch_view3d_drag = (event->flag & WM_EVENT_TOUCH_VIEW3D) != 0;
       if (is_touch_view3d_drag && ISMOUSE_MOTION(event->type) &&
-          !win.runtime->touch_drag_gizmo_active &&
+          !win.runtime->touch_gizmo_active &&
           win.event_queue_consecutive_gesture_type == MOUSEROTATE)
       {
         /* Keep the initial mouse move so gizmos can establish hover and capture the following
@@ -4366,21 +4364,17 @@ void wm_event_do_handlers(bContext *C)
       CTX_wm_window_set(C, &win);
 
       if (event->flag & WM_EVENT_TOUCH_LEAVE) {
-        /* A touchscreen has no resting hover position. Clear both an already visible tooltip and
-         * pending button tooltip/highlight state, then consume the off-window cursor motion so it
-         * cannot affect another UI element or a running modal operation. */
+        /* A touchscreen has no resting hover position. Clear hover state explicitly, then consume
+         * the off-window motion so it cannot affect a UI element or modal operation. */
         WM_tooltip_clear(C, &win);
         ui::UI_screen_free_active_but_highlight(C, screen);
-        win.runtime->touch_drag_gizmo_active = false;
+        ED_screen_set_active_region(C, &win, event->xy);
         BLI_remlink(&win.runtime->event_queue, event);
         wm_event_free_last_handled(&win, event);
         continue;
       }
 
-      if (is_touch_view3d_drag && event->type == LEFTMOUSE && event->val == KM_PRESS) {
-        win.runtime->touch_drag_gizmo_active = false;
-      }
-      if (is_touch_view3d_drag && win.runtime->touch_drag_gizmo_active &&
+      if (is_touch_view3d_drag && win.runtime->touch_gizmo_active &&
           ELEM(event->type, MOUSEROTATE, MOUSEPAN))
       {
         /* The matching mouse-motion stream drives the active gizmo. Do not also orbit the view. */
@@ -4544,8 +4538,10 @@ void wm_event_do_handlers(bContext *C)
         wm_region_tag_draw_on_gizmo_delay_refresh_for_tweak(&win);
       }
 
-      if (is_touch_view3d_drag && event->type == LEFTMOUSE && event->val == KM_RELEASE) {
-        win.runtime->touch_drag_gizmo_active = false;
+      if ((event->flag & WM_EVENT_TOUCH) && event->type == LEFTMOUSE &&
+          event->val == KM_RELEASE)
+      {
+        win.runtime->touch_gizmo_active = false;
       }
 
       /* Update previous mouse position for following events to use. */
@@ -6382,6 +6378,9 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
     case GHOST_kEventButtonUp: {
       const GHOST_TEventButtonData *bd = static_cast<const GHOST_TEventButtonData *>(customdata);
 
+      if (bd->is_touch) {
+        event.flag |= WM_EVENT_TOUCH;
+      }
       if (bd->is_touch_drag) {
         event.flag |= WM_EVENT_TOUCH_ONE_FINGER;
         if (type == GHOST_kEventButtonDown) {

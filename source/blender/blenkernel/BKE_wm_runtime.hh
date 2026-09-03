@@ -235,8 +235,8 @@ struct WindowRuntime {
   /** Classification captured when a touch-screen drag begins. */
   bool touch_drag_active = false;
   bool touch_drag_start_in_view3d = false;
-  /** The View3D mouse-style touch stream was captured by a gizmo. */
-  bool touch_drag_gizmo_active = false;
+  /** The mouse-style touch stream was captured by a gizmo. */
+  bool touch_gizmo_active = false;
 
   /**
    * The time when the key is pressed in milliseconds (see #GHOST_IEvent::getTime).
