@@ -713,11 +713,15 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
         touch_previous_y_ = touch->y;
       }
     }
-    else if (touch_gesture_mode_ == TouchGestureMode::OneFingerDrag) {
+    else if (touch_gesture_mode_ == TouchGestureMode::OneFingerDrag ||
+             touch_gesture_mode_ == TouchGestureMode::OneFingerOrbit)
+    {
       set_cursor(touch->x, touch->y);
       const int32_t delta_x = int32_t((touch->x - touch_previous_x_) * width);
       const int32_t delta_y = int32_t((touch->y - touch_previous_y_) * height);
-      push_cursor(true);
+      if (touch_gesture_mode_ == TouchGestureMode::OneFingerDrag) {
+        push_cursor(true);
+      }
       if (delta_x != 0 || delta_y != 0) {
         push_trackpad(GHOST_kTrackpadEventScroll, delta_x, delta_y, false, 1);
         touch_previous_x_ = touch->x;
@@ -770,23 +774,42 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
     return;
   }
 
-  if (touch_gesture_mode_ == TouchGestureMode::OneFingerDrag && active_touches_.size() == 1) {
+  if ((touch_gesture_mode_ == TouchGestureMode::OneFingerDrag ||
+       touch_gesture_mode_ == TouchGestureMode::OneFingerOrbit) &&
+      active_touches_.size() == 1)
+  {
     set_cursor(touch->x, touch->y);
     if (!is_canceled) {
-      push_cursor(true);
+      if (touch_gesture_mode_ == TouchGestureMode::OneFingerDrag) {
+        push_cursor(true);
+      }
       const int32_t delta_x = int32_t((touch->x - touch_previous_x_) * width);
       const int32_t delta_y = int32_t((touch->y - touch_previous_y_) * height);
       if (delta_x != 0 || delta_y != 0) {
         push_trackpad(GHOST_kTrackpadEventScroll, delta_x, delta_y, false, 1);
       }
     }
-    push_touch_button(GHOST_kEventButtonUp, true);
+    if (touch_gesture_mode_ == TouchGestureMode::OneFingerDrag) {
+      push_touch_button(GHOST_kEventButtonUp, true);
+    }
     push_leave(touch->x);
     reset_touch_state();
     return;
   }
 
   if (touch_gesture_mode_ == TouchGestureMode::TwoFingerPan) {
+    if (!is_canceled && active_touches_.size() == 2) {
+      active_touches_.erase(touch);
+      const TouchPoint &remaining_touch = active_touches_.front();
+      /* Continue with one-finger trackpad motion without pressing the synthetic mouse button.
+       * A button press here could activate a gizmo or widget underneath the remaining finger. */
+      touch_gesture_mode_ = TouchGestureMode::OneFingerOrbit;
+      touch_previous_x_ = remaining_touch.x;
+      touch_previous_y_ = remaining_touch.y;
+      touch_previous_distance_ = 0.0f;
+      set_cursor(remaining_touch.x, remaining_touch.y);
+      return;
+    }
     const float centroid_x = (active_touches_[0].x + active_touches_[1].x) * 0.5f;
     const float centroid_y = (active_touches_[0].y + active_touches_[1].y) * 0.5f;
     set_cursor(centroid_x, centroid_y);

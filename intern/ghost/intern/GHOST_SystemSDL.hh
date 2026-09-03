@@ -100,6 +100,7 @@ class GHOST_SystemSDL : public GHOST_System {
     None,
     TapPending,
     OneFingerDrag,
+    OneFingerOrbit,
     TwoFingerPan,
     Suppressed,
   };
