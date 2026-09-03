@@ -715,6 +715,9 @@ static void ed_undo_refresh_for_op(bContext *C)
 
 static wmOperatorStatus ed_undo_exec(bContext *C, wmOperator *op)
 {
+  /* Android demo only for tap events to be visible. */
+  BKE_report(op->reports, RPT_INFO, "Undo");
+
   /* "last operator" should disappear, later we can tie this with undo stack nicer */
   WM_operator_stack_clear(CTX_wm_manager(C));
   wmOperatorStatus ret = ed_undo_step_direction(C, STEP_UNDO, op->reports);
@@ -743,6 +746,9 @@ static wmOperatorStatus ed_undo_push_exec(bContext *C, wmOperator *op)
 
 static wmOperatorStatus ed_redo_exec(bContext *C, wmOperator *op)
 {
+  /* Android demo only for tap events to be visible. */
+  BKE_report(op->reports, RPT_INFO, "Redo");
+
   wmOperatorStatus ret = ed_undo_step_direction(C, STEP_REDO, op->reports);
   if (ret & OPERATOR_FINISHED) {
     ed_undo_refresh_for_op(C);
