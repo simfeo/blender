@@ -16,6 +16,10 @@ global:
    * -u link option in source/creator/CMakeLists.txt. Wildcard so the other
    * platforms, where it does not exist, still link. */
   ANativeActivity_onCreate*;
+  /* Blender's own JNI entry points, for the same reason: the JVM resolves them
+   * with dlsym, so hiding them turns every call from Java into an
+   * UnsatisfiedLinkError at runtime rather than a link error at build time. */
+  Java_org_blender_*;
   /* Needed for sanitizers. Based on:
    * llvm/compiler-rt/lib/sanitizer_common/scripts/gen_dynamic_list.py. */
   __asan*;

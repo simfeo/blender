@@ -14,10 +14,13 @@
 
 #include <android/log.h>
 #include <android_native_app_glue.h>
+#include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <jni.h>
 #include <pthread.h>
 #include <string>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 
@@ -50,6 +53,26 @@ static void ghost_android_redirect_stdio()
   if (pthread_create(&thread, nullptr, ghost_android_stdio_thread, nullptr) == 0) {
     pthread_detach(thread);
   }
+}
+
+/* An app process inherits no TMPDIR from zygote, so BLI_temp_directory_path_get
+ * falls back to "/tmp", which does not exist on Android. Everything written to
+ * the temp directory then fails silently, including auto-save and the quit.blend
+ * that "Recover Last Session" reads. Point it at app-private storage instead;
+ * the cache directory is not reachable from ANativeActivity, and would in any
+ * case be a poor home for crash recovery since the system may clear it. */
+static void ghost_android_tempdir_set(struct android_app *app)
+{
+  if (!app->activity || !app->activity->internalDataPath) {
+    return;
+  }
+  const std::string tempdir = std::string(app->activity->internalDataPath) + "/tmp";
+  if (mkdir(tempdir.c_str(), 0700) != 0 && errno != EEXIST) {
+    __android_log_print(
+        ANDROID_LOG_WARN, "blender", "Could not create temp dir '%s'", tempdir.c_str());
+    return;
+  }
+  setenv("TMPDIR", tempdir.c_str(), 0);
 }
 
 namespace blender {
@@ -210,6 +233,7 @@ extern "C" JNIEXPORT void JNICALL Java_org_blender_blender_BlenderActivity_nativ
 extern "C" void android_main(struct android_app *app)
 {
   ghost_android_redirect_stdio();
+  ghost_android_tempdir_set(app);
   GHOST_SystemAndroid::setAndroidApp(app);
   app->onAppCmd = on_app_cmd;
   app->onInputEvent = on_input_event;
