@@ -30,7 +30,7 @@
         <activity
             android:name="org.blender.blender.BlenderActivity"
             android:label="Blender"
-            android:screenOrientation="landscape"
+            android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|density|navigation|uiMode"
             android:exported="true">
             <meta-data android:name="android.app.lib_name" android:value="blender" />

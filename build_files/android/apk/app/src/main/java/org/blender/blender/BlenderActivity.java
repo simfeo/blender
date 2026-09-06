@@ -65,7 +65,10 @@ public class BlenderActivity extends NativeActivity {
     extractRuntimeIfNeeded();
     setUpPythonInterpreter();
     super.onCreate(state);
-    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+    /* Sensor variant, so the tablet can be picked up from either side. Plain
+     * LANDSCAPE names one direction, which leaves the app upside down after a
+     * 180 degree turn. Portrait stays excluded either way. */
+    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
     enterImmersive();
     requestAllFilesAccess();
 
