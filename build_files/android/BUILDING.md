@@ -4,10 +4,17 @@ End-to-end guide to reproduce the Android arm64 build. Developed on Linux
 (including WSL) and on an Apple-Silicon Mac.
 Target: Android 12+ (minSdk 31), built against Android 14 (targetSdk 34).
 
-> Everything installs into a sibling of the repo:
-> `../blender_build_android/lib/android_arm64` (harvested deps), `../blender_build_android/build_android_<cfg>` (Blender),
-> `../blender_build_android/build_host_tools_<cfg>` (native codegen tools), `../blender_build_android/android_apk_stage_<cfg>`
-> (APK stage), where `<cfg>` is `full` or `lite`.
+> The dependencies are not built here. They come from the `lib/android_arm64`
+> submodule inside the repo, which is what CMake uses as `LIBDIR`, the same way
+> every other platform consumes `lib/<platform>`.
+>
+> Everything the build produces goes into a sibling of the repo:
+> `../blender_build_android/build_android_<cfg>` (Blender),
+> `../blender_build_android/build_host_tools_<cfg>` (native codegen tools),
+> `../blender_build_android/android_apk_stage_<cfg>` (APK stage), where `<cfg>`
+> is `full` or `lite`. The only dependency living there is
+> `../blender_build_android/lib/vulkan_headers`, supplied by hand because the
+> prebuilt set predates the Vulkan headers GHOST needs.
 
 ## Build configurations
 
