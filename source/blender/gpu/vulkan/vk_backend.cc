@@ -172,22 +172,26 @@ static Vector<StringRefNull> missing_capabilities_get(VkPhysicalDevice vk_physic
     missing_capabilities.append("geometry shaders");
   }
 #endif
-  if (features.features.vertexPipelineStoresAndAtomics == VK_FALSE) {
-    missing_capabilities.append("vertex pipeline stores and atomics");
-  }
   /* multiViewport, logicOp and provoking-vertex are not hard requirements: the
    * backend already treats logic_ops as optional, the framebuffer falls back to a
    * single viewport, and provoking vertex only affects the flat-shading vertex
    * convention. Requiring them excludes otherwise-capable mobile GPUs (all Adreno
-   * lack logicOp), so they are not rejected here. */
-  if (features.features.shaderClipDistance == VK_FALSE) {
-    missing_capabilities.append("shader clip distance");
-  }
+   * lack logicOp), so they are not rejected here.
+   *
+   * The three below are dropped for the same reason, one tier further out. ARM's
+   * Mali driver exposes none of them, which rejected every Mali device before the
+   * backend had a chance to run:
+   *
+   * - vertexPipelineStoresAndAtomics: nothing writes to a buffer or image from
+   *   the vertex stage. The select engine comes closest and only sets a varying
+   *   there, doing its atomic in the fragment shader.
+   * - shaderClipDistance: `gl_ClipDistance` is only written when the viewport
+   *   clipping region is enabled, a shader variant that is not compiled
+   *   otherwise. The cost of lacking it is that feature, not the renderer.
+   * - dualSrcBlend: reached only through GPU_BLEND_CUSTOM, which nothing in
+   *   Blender selects. */
   if (features.features.fragmentStoresAndAtomics == VK_FALSE) {
     missing_capabilities.append("fragment stores and atomics");
-  }
-  if (features.features.dualSrcBlend == VK_FALSE) {
-    missing_capabilities.append("dual source blending");
   }
   if (features.features.imageCubeArray == VK_FALSE) {
     missing_capabilities.append("image cube array");

@@ -467,6 +467,9 @@ struct GHOST_InstanceVK {
       device_index++;
 
       if (!device_vk.extensions.is_supported(required_extensions)) {
+        CLOG_WARN(&LOG,
+                  "Device [%s] skipped: a required extension is unsupported.",
+                  device_vk.properties.properties.deviceName);
         continue;
       }
       if (!blender::gpu::GPU_vulkan_is_supported_driver(physical_device)) {
@@ -477,15 +480,22 @@ struct GHOST_InstanceVK {
 #ifndef __APPLE__
           !device_vk.features.features.geometryShader ||
 #endif
-          !device_vk.features.features.shaderClipDistance ||
           !device_vk.features.features.fragmentStoresAndAtomics ||
-          !device_vk.features.features.imageCubeArray ||
-          !device_vk.features.features.dualSrcBlend ||
           !device_vk.features.features.imageCubeArray)
       {
-        /* multiViewport and logicOp are intentionally not required: they are
+        /* This list must agree with `missing_capabilities_get` in `vk_backend.cc`.
+         * A device that passes there and is skipped here is reported only as "no
+         * suitable Vulkan device", naming no feature, which is what hid the Mali
+         * rejection.
+         *
+         * multiViewport and logicOp are intentionally not required: they are
          * unavailable on many mobile GPUs (all Adreno lack logicOp) and the
-         * Vulkan backend treats them as optional. */
+         * Vulkan backend treats them as optional. shaderClipDistance and
+         * dualSrcBlend are left out for the same reason, for Mali. */
+        CLOG_WARN(&LOG,
+                  "Device [%s] skipped: missing one of geometry shaders, fragment stores and "
+                  "atomics, or image cube array.",
+                  device_vk.properties.properties.deviceName);
         continue;
       }
 
@@ -657,10 +667,14 @@ struct GHOST_InstanceVK {
     /* Optional on mobile GPUs; only enable when supported (else vkCreateDevice
      * fails with VK_ERROR_FEATURE_NOT_PRESENT). */
     device_features.multiViewport = device.features.features.multiViewport;
-    device_features.shaderClipDistance = VK_TRUE;
+    /* Mali exposes neither. Requesting one unconditionally fails device creation
+     * outright, so the device has to be asked for what it has: clip distance
+     * costs the viewport clipping region, and dual source blending is only
+     * reachable through GPU_BLEND_CUSTOM, which nothing selects. */
+    device_features.shaderClipDistance = device.features.features.shaderClipDistance;
     device_features.fragmentStoresAndAtomics = VK_TRUE;
     device_features.logicOp = device.features.features.logicOp;
-    device_features.dualSrcBlend = VK_TRUE;
+    device_features.dualSrcBlend = device.features.features.dualSrcBlend;
     device_features.imageCubeArray = VK_TRUE;
     device_features.multiDrawIndirect = device.features.features.multiDrawIndirect;
     device_features.drawIndirectFirstInstance = VK_TRUE;
