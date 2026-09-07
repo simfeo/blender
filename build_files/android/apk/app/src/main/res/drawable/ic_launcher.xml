@@ -7,8 +7,11 @@
     android:viewportWidth="1800"
     android:viewportHeight="1800">
 
+    <!-- Opaque background, baked in because there is no adaptive icon for the
+         launcher to supply one. Dark rather than white: the logo carries its own
+         colour and reads better against a light wallpaper. -->
     <path
-        android:fillColor="#FFFFFF"
+        android:fillColor="#232323"
         android:pathData="M0,0 H1800 V1800 H0 Z" />
 
     <group
