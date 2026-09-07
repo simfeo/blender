@@ -25,8 +25,15 @@
 #include <vector>
 
 /* Route Blender's stdout/stderr to logcat (tag "blender") so init/errors are
- * visible; NativeActivity otherwise discards them. */
+ * visible; NativeActivity otherwise discards them.
+ *
+ * The same text is copied to a file, because logcat needs adb and most people
+ * reporting a failure cannot run it. Blender refusing a GPU, for instance, is
+ * announced only through this stream: without the file the app just exits and
+ * the user has nothing to send back. */
 static int g_stdio_pipe[2];
+static FILE *g_stdio_log = nullptr;
+
 static void *ghost_android_stdio_thread(void * /*arg*/)
 {
   char line[1024];
@@ -37,9 +44,61 @@ static void *ghost_android_stdio_thread(void * /*arg*/)
     }
     line[count] = '\0';
     __android_log_write(ANDROID_LOG_INFO, "blender", line);
+    if (g_stdio_log != nullptr) {
+      /* Flushed per line: the failures worth reading are the ones that end the
+       * process before any buffer would be written out. */
+      fprintf(g_stdio_log, "%s\n", line);
+      fflush(g_stdio_log);
+    }
   }
   return nullptr;
 }
+
+/* Chosen by the Java side, which knows what storage is granted and can create
+ * the directory. Empty when that has not run, so the candidates below apply. */
+static std::string g_log_path;
+
+static bool ghost_android_try_log(const std::string &dir, const char *what)
+{
+  if (dir.empty()) {
+    return false;
+  }
+  /* A missing directory is the common reason a path silently produces no log:
+   * Download does not exist until something creates it. */
+  mkdir(dir.c_str(), 0770);
+  const std::string path = dir + "/blender-startup.log";
+  g_stdio_log = fopen(path.c_str(), "w");
+  if (g_stdio_log == nullptr) {
+    return false;
+  }
+  g_log_path = path;
+  __android_log_print(ANDROID_LOG_INFO, "blender", "startup log (%s): %s", what, path.c_str());
+  return true;
+}
+
+/* Shared storage first, so the file can be reached with a file manager without
+ * adb. Each candidate is less convenient and more likely to be writable than
+ * the last, ending at app storage, which always is. */
+static void ghost_android_open_log(struct android_app *app)
+{
+  if (!g_log_path.empty()) {
+    const std::string dir = g_log_path.substr(0, g_log_path.find_last_of('/'));
+    g_log_path.clear();
+    if (ghost_android_try_log(dir, "chosen by the activity")) {
+      return;
+    }
+  }
+  if (ghost_android_try_log("/sdcard/Download", "downloads")) {
+    return;
+  }
+  if (ghost_android_try_log("/sdcard", "shared storage root")) {
+    return;
+  }
+  if (app->activity != nullptr && app->activity->externalDataPath != nullptr) {
+    ghost_android_try_log(app->activity->externalDataPath, "app storage");
+  }
+}
+
 static void ghost_android_redirect_stdio()
 {
   setvbuf(stdout, nullptr, _IONBF, 0);
@@ -165,6 +224,11 @@ static void on_app_cmd(android_app *app, int32_t cmd)
           argv.push_back(arg.c_str());
         }
         argv.push_back("--disable-crash-handler");
+        /* Every category, because the log file is the only diagnostic channel a
+         * user without adb has, and a second attempt to reproduce a startup
+         * failure costs a round trip through that user. */
+        argv.push_back("--log");
+        argv.push_back("*");
         for (const char *arg : argv) {
           __android_log_print(ANDROID_LOG_INFO, "blender", "[BlenderAndroid] argv: %s", arg);
         }
@@ -222,6 +286,20 @@ extern "C" JNIEXPORT void JNICALL Java_org_blender_blender_BlenderActivity_nativ
   env->ReleaseStringUTFChars(text, utf);
 }
 
+/* Called before the native activity starts, so the path is known by the time
+ * the log is opened. The activity picks it because it can test what storage is
+ * actually granted, and it tells the user where the file went. */
+extern "C" JNIEXPORT void JNICALL Java_org_blender_blender_BlenderActivity_nativeSetLogPath(
+    JNIEnv *env, jobject /*thiz*/, jstring path)
+{
+  if (path == nullptr) {
+    return;
+  }
+  const char *utf = env->GetStringUTFChars(path, nullptr);
+  g_log_path = utf;
+  env->ReleaseStringUTFChars(path, utf);
+}
+
 extern "C" JNIEXPORT void JNICALL Java_org_blender_blender_BlenderActivity_nativeOnKey(
     JNIEnv * /*env*/, jobject /*thiz*/, jint keycode, jint action, jint meta_state)
 {
@@ -232,6 +310,7 @@ extern "C" JNIEXPORT void JNICALL Java_org_blender_blender_BlenderActivity_nativ
 
 extern "C" void android_main(struct android_app *app)
 {
+  ghost_android_open_log(app);
   ghost_android_redirect_stdio();
   ghost_android_tempdir_set(app);
   GHOST_SystemAndroid::setAndroidApp(app);

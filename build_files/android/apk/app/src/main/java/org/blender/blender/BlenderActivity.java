@@ -24,6 +24,7 @@ import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
+import android.widget.Toast;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -58,13 +59,20 @@ public class BlenderActivity extends NativeActivity {
 
   private native void nativeOnCommitText(String text);
   private native void nativeOnKey(int keycode, int action, int metaState);
+  private native void nativeSetLogPath(String path);
+
+  private String logPath = null;
 
   @Override
   protected void onCreate(Bundle state) {
     /* Runtime files must exist before native Blender init reads them. */
     extractRuntimeIfNeeded();
     setUpPythonInterpreter();
+    /* Before super.onCreate: that is what starts the native activity, and the
+     * log is opened as the first thing it does. */
+    chooseLogPath();
     super.onCreate(state);
+    announceLogPath();
     /* Sensor variant, so the tablet can be picked up from either side. Plain
      * LANDSCAPE names one direction, which leaves the app upside down after a
      * 180 degree turn. Portrait stays excluded either way. */
@@ -243,6 +251,43 @@ public class BlenderActivity extends NativeActivity {
         }
       }
     }
+  }
+
+  /* Everything Blender prints is copied to this file, because logcat needs adb
+   * and someone reporting a failure usually cannot run it. Picked here rather
+   * than in native code so the directory is created and tested for real, and so
+   * the user can be told where to find it. */
+  private void chooseLogPath() {
+    File[] candidates = {
+        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+        Environment.getExternalStorageDirectory(),
+        getExternalFilesDir(null),
+    };
+    for (File dir : candidates) {
+      if (dir == null) {
+        continue;
+      }
+      /* Existence is not enough: shared storage is unwritable until the
+       * all-files permission is granted, and that fails at open, not here. */
+      dir.mkdirs();
+      File candidate = new File(dir, "blender-startup.log");
+      try (FileOutputStream probe = new FileOutputStream(candidate)) {
+        logPath = candidate.getAbsolutePath();
+        break;
+      }
+      catch (Exception ignored) {
+        /* Try the next one. */
+      }
+    }
+    if (logPath != null) {
+      nativeSetLogPath(logPath);
+    }
+  }
+
+  private void announceLogPath() {
+    final String message = (logPath != null) ? "Log: " + logPath :
+                                               "No writable location for the log";
+    runOnUiThread(() -> Toast.makeText(this, message, Toast.LENGTH_LONG).show());
   }
 
   private void extractRuntimeIfNeeded() {
