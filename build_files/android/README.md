@@ -7,8 +7,10 @@ Target: Android 12 or newer (minSdk 31), built against Android 14
 (targetSdk 34), `arm64-v8a` only. Rendering is Vulkan; devices reporting only Vulkan 1.1 are
 supported through a render pass fallback.
 
-Tested on a Galaxy Tab S7 FE (SM-T733, Adreno 642L) and a Galaxy S24 Ultra
-(Adreno 750).
+Tested on a Galaxy Tab S7 FE (SM-T733, Adreno 642L, Qualcomm driver), a Galaxy
+S22 Ultra (SM-S908B, Xclipse 920, Samsung driver), and a Mediatek tablet with a
+Mali-G57 MC2 (ARM driver). The Adreno 750 work came from Wanderson's branch and
+is not tested here.
 
 To build one, read `BUILDING.md`. This file describes what is here and what
 works.
