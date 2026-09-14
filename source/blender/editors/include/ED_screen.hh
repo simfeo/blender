@@ -271,7 +271,7 @@ void ED_area_tag_region_size_update(ScrArea *area, ARegion *changed_region);
  * Only exported for WM.
  */
 void ED_area_do_refresh(bContext *C, ScrArea *area);
-AZone *ED_area_azones_update(ScrArea *area, const int mouse_xy[2]);
+AZone *ED_area_azones_update(ScrArea *area, const int mouse_xy[2], bool cursor_hover);
 /**
  * Show the given text in the area's header, instead of its regular contents.
  * Use NULL to disable this and show the regular header contents again.

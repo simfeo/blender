@@ -61,6 +61,7 @@
 #include "ED_markers.hh"
 #include "ED_render.hh"
 #include "ED_screen.hh"
+#include "ED_screen_types.hh"
 #include "ED_undo.hh"
 #include "ED_util.hh"
 #include "ED_view3d.hh"
@@ -4267,6 +4268,17 @@ static void wm_event_cursor_hover_clear(bContext *C, wmWindow *win)
     if (area->type && area->type->deactivate) {
       area->type->deactivate(area);
     }
+    for (AZone &az : area->actionzones) {
+      if (az.type == AZONE_REGION_SCROLL) {
+        char &alpha = az.direction == AZ_SCROLL_HOR ? az.region->v2d.alpha_hor :
+                                                      az.region->v2d.alpha_vert;
+        if (alpha != 0) {
+          alpha = 0;
+          ED_region_tag_redraw_no_rebuild(az.region);
+        }
+        az.alpha = 0.0f;
+      }
+    }
     for (ARegion &region : area->regionbase) {
       wm_event_region_hover_clear(C, &region);
     }
@@ -4501,7 +4513,7 @@ void wm_event_do_handlers(bContext *C)
           /* Update action-zones if needed,
            * done here because it needs to be independent from redraws. */
           if (area->flag & AREA_FLAG_ACTIONZONES_UPDATE) {
-            ED_area_azones_update(area, event->xy);
+            ED_area_azones_update(area, event->xy, win.runtime->cursor_hover);
           }
 
           if (wm_event_inside_rect(event, &area->totrct)) {

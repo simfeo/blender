@@ -1063,11 +1063,17 @@ static void area_actionzone_get_rect(AZone *az, rcti *r_rect)
   }
 }
 
-static AZone *area_actionzone_refresh_xy(ScrArea *area, const int xy[2], const bool test_only)
+static AZone *area_actionzone_refresh_xy(ScrArea *area,
+                                         const int xy[2],
+                                         const bool test_only,
+                                         const bool cursor_hover = true)
 {
   AZone *az = nullptr;
 
   for (az = area->actionzones.first(); az; az = az->next) {
+    if (!cursor_hover && az->type == AZONE_REGION_SCROLL) {
+      continue;
+    }
     rcti az_rect;
     area_actionzone_get_rect(az, &az_rect);
     if (BLI_rcti_isect_pt_v(&az_rect, xy)) {
@@ -1259,9 +1265,9 @@ AZone *ED_area_actionzone_find_xy(ScrArea *area, const int xy[2])
   return area_actionzone_refresh_xy(area, xy, true);
 }
 
-AZone *ED_area_azones_update(ScrArea *area, const int xy[2])
+AZone *ED_area_azones_update(ScrArea *area, const int xy[2], const bool cursor_hover)
 {
-  return area_actionzone_refresh_xy(area, xy, false);
+  return area_actionzone_refresh_xy(area, xy, false, cursor_hover);
 }
 
 static void actionzone_exit(wmOperator *op)
