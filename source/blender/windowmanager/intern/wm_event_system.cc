@@ -64,6 +64,7 @@
 #include "ED_render.hh"
 #include "ED_screen.hh"
 #include "ED_screen_types.hh"
+#include "ED_time_scrub_ui.hh"
 #include "ED_undo.hh"
 #include "ED_util.hh"
 #include "ED_view3d.hh"
@@ -6209,6 +6210,11 @@ static bke::WindowRuntime::TouchDragMode wm_touch_drag_start_mode(wmWindow *win,
     copy_v2_v2_int(event.xy, xy);
     if (ui::but_find_mouse_over(region, &event) ||
         ui::view2d_mouse_in_scrollers(region, &region->v2d, xy))
+    {
+      return TouchDragMode::Mouse;
+    }
+    if ((region->runtime->type->keymapflag & ED_KEYMAP_ANIMATION) &&
+        ED_time_scrub_event_in_region(region, &event))
     {
       return TouchDragMode::Mouse;
     }
