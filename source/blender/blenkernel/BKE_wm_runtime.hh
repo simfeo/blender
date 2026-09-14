@@ -232,9 +232,26 @@ struct WindowRuntime {
    */
   wmEvent *eventstate = nullptr;
 
+  /**
+   * A one-finger touch drag generates mouse motion/button events and trackpad-style pan events.
+   * This mode determines which events are passed to Blender's handlers.
+   * In Pan and Orbit modes, mouse events allow dragging gizmos but cannot activate selection
+   * tools. If a gizmo takes the drag, view navigation is suppressed.
+   */
+  enum class TouchDragMode {
+    /** Pass both mouse and pan events to the existing UI scrolling and dragging handlers. */
+    Default,
+    /** Pass mouse events and discard pan events, allowing content and widget dragging. */
+    Mouse,
+    /** Use the trackpad-style events to pan the view. */
+    Pan,
+    /** Translate the trackpad-style events into view rotation. */
+    Orbit,
+  };
+
   /** Classification captured when a touch-screen drag begins. */
   bool touch_drag_active = false;
-  bool touch_drag_start_in_view3d = false;
+  TouchDragMode touch_drag_mode = TouchDragMode::Default;
   /** The mouse-style touch stream was captured by a gizmo. */
   bool touch_gizmo_active = false;
 

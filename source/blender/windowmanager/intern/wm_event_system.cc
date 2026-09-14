@@ -20,6 +20,7 @@
 #include "DNA_listBase.h"
 #include "DNA_scene_types.h"
 #include "DNA_screen_types.h"
+#include "DNA_space_types.h"
 #include "DNA_userdef_types.h"
 #include "DNA_windowmanager_types.h"
 
@@ -59,6 +60,7 @@
 #include "ED_geometry.hh"
 #include "ED_info.hh"
 #include "ED_markers.hh"
+#include "ED_node.hh"
 #include "ED_render.hh"
 #include "ED_screen.hh"
 #include "ED_screen_types.hh"
@@ -3292,7 +3294,7 @@ static eHandlerActionFlag wm_handlers_do_gizmo_handler(bContext *C,
    * Get the highlight again in case the user dragged off the gizmo. */
   const bool is_event_drag = (event->val == KM_PRESS_DRAG);
   const bool is_event_modifier = ISKEYMODIFIER(event->type);
-  const bool is_touch_view3d_drag = (event->flag & WM_EVENT_TOUCH_VIEW3D) != 0;
+  const bool is_touch_navigation = (event->flag & WM_EVENT_TOUCH_NAVIGATION) != 0;
   const bool is_touch_press = (event->flag & WM_EVENT_TOUCH) && event->type == LEFTMOUSE &&
                               event->val == KM_PRESS;
   /* Only keep the highlight if the gizmo becomes modal as result of event handling.
@@ -3483,10 +3485,9 @@ static eHandlerActionFlag wm_handlers_do_gizmo_handler(bContext *C,
     CTX_wm_window(C)->runtime->touch_gizmo_active = true;
   }
 
-  /* The mouse-style half of a View3D touch drag exists only so gizmos can claim it. Keep an
-   * unclaimed press or motion out of selection and tool key-maps; its paired trackpad event owns
-   * empty-space viewport navigation. */
-  if (is_touch_view3d_drag && (ISMOUSE_MOTION(event->type) || ISMOUSE_BUTTON(event->type)) &&
+  /* Let gizmos claim the mouse-style events before using the paired trackpad events for
+   * view navigation. Keep unclaimed mouse events out of selection and tool key-maps. */
+  if (is_touch_navigation && (ISMOUSE_MOTION(event->type) || ISMOUSE_BUTTON(event->type)) &&
       (action & WM_HANDLER_BREAK) == 0)
   {
     action |= WM_HANDLER_BREAK | WM_HANDLER_MODAL;
@@ -4345,15 +4346,14 @@ void wm_event_do_handlers(bContext *C)
 
       eHandlerActionFlag action = WM_HANDLER_CONTINUE;
 
-      const bool is_touch_view3d_drag = (event->flag & WM_EVENT_TOUCH_VIEW3D) != 0;
-      if (is_touch_view3d_drag && ISMOUSE_MOTION(event->type) &&
-          !win.runtime->touch_gizmo_active &&
-          win.event_queue_consecutive_gesture_type == MOUSEROTATE)
+      const bool is_touch_navigation = (event->flag & WM_EVENT_TOUCH_NAVIGATION) != 0;
+      if (is_touch_navigation && ISMOUSE_MOTION(event->type) && !win.runtime->touch_gizmo_active &&
+          ELEM(win.event_queue_consecutive_gesture_type, MOUSEROTATE, MOUSEPAN))
       {
         /* Keep the initial mouse move so gizmos can establish hover and capture the following
-         * press. Once the paired trackpad orbit chain has started without a gizmo capture, later
+         * press. Once trackpad navigation has started without a gizmo capture, later
          * mouse moves are redundant. Filter them before both consecutive-gesture bookkeeping and
-         * gizmo GPU hit-testing, without replacing the last handled orbit event. */
+         * gizmo GPU hit-testing, without replacing the last handled navigation event. */
         BLI_remlink(&win.runtime->event_queue, event);
         wm_event_free(event);
         continue;
@@ -4415,10 +4415,10 @@ void wm_event_do_handlers(bContext *C)
 
       CTX_wm_window_set(C, &win);
 
-      if (is_touch_view3d_drag && win.runtime->touch_gizmo_active &&
+      if (is_touch_navigation && win.runtime->touch_gizmo_active &&
           ELEM(event->type, MOUSEROTATE, MOUSEPAN))
       {
-        /* The matching mouse-motion stream drives the active gizmo. Do not also orbit the view. */
+        /* The mouse-motion stream drives the active gizmo. Do not also navigate the view. */
         BLI_remlink(&win.runtime->event_queue, event);
         wm_event_free_last_handled(&win, event);
         continue;
@@ -4465,11 +4465,11 @@ void wm_event_do_handlers(bContext *C)
         return;
       }
 
-      if (is_touch_view3d_drag && (ISMOUSE_MOTION(event->type) || ISMOUSE_BUTTON(event->type)) &&
+      if (is_touch_navigation && (ISMOUSE_MOTION(event->type) || ISMOUSE_BUTTON(event->type)) &&
           (CTX_wm_region(C) == nullptr || CTX_wm_region(C)->runtime->gizmo_map == nullptr))
       {
         /* With no gizmo map to claim the mouse-style half of this gesture, keep it away from
-         * ordinary View3D mouse key-maps. The trackpad half will perform viewport navigation. */
+         * ordinary mouse key-maps. The trackpad half will perform view navigation. */
         action |= WM_HANDLER_BREAK;
       }
 
@@ -6157,33 +6157,75 @@ static bool wm_event_is_ignorable_key_press(const wmWindow *win, const wmEvent &
   return wm_event_is_same_key_press(last_event, event);
 }
 
-static bool wm_touch_drag_start_is_view3d(wmWindow *win,
-                                          const int32_t ghost_x,
-                                          const int32_t ghost_y)
+static bke::WindowRuntime::TouchDragMode wm_touch_drag_start_mode(wmWindow *win,
+                                                                  const int32_t ghost_x,
+                                                                  const int32_t ghost_y,
+                                                                  const bool test_content)
 {
+  using TouchDragMode = bke::WindowRuntime::TouchDragMode;
   int xy[2] = {ghost_x, ghost_y};
   wm_cursor_position_from_ghost_screen_coords(win, &xy[0], &xy[1]);
 
   const bScreen *screen = WM_window_get_active_screen(win);
   if (screen == nullptr) {
-    return false;
+    return TouchDragMode::Default;
   }
   ScrArea *area = BKE_screen_find_area_xy(screen, SPACE_TYPE_ANY, xy);
-  if (area == nullptr || area->spacetype != SPACE_VIEW3D) {
-    return false;
+  if (area == nullptr) {
+    return TouchDragMode::Default;
   }
 
   /* Screen edges belong to neighboring areas as well. Keep a touch-sized margin on the normal
-   * mouse-drag path so area resize/join action-zones are never interpreted as viewport orbit. */
+   * mouse-drag path so area resize/join action-zones are never interpreted as view navigation. */
   const int edge_margin = int(4.0f * UI_SCALE_FAC);
   if (xy[0] <= area->totrct.xmin + edge_margin || xy[0] >= area->totrct.xmax - edge_margin ||
       xy[1] <= area->totrct.ymin + edge_margin || xy[1] >= area->totrct.ymax - edge_margin)
   {
-    return false;
+    return TouchDragMode::Default;
   }
 
-  const ARegion *region = BKE_area_find_region_xy(area, RGN_TYPE_ANY, xy);
-  return region != nullptr && region->regiontype == RGN_TYPE_WINDOW;
+  ARegion *region = BKE_area_find_region_xy(area, RGN_TYPE_ANY, xy);
+  if (region == nullptr || !ELEM(region->regiontype, RGN_TYPE_WINDOW, RGN_TYPE_PREVIEW)) {
+    return TouchDragMode::Default;
+  }
+  if (area->spacetype == SPACE_VIEW3D) {
+    return TouchDragMode::Orbit;
+  }
+
+  /* Keep item dragging and panel interaction on their existing event paths. */
+  if (region->runtime->type == nullptr ||
+      ELEM(area->spacetype, SPACE_FILE, SPACE_OUTLINER, SPACE_PROPERTIES, SPACE_USERPREF))
+  {
+    return TouchDragMode::Default;
+  }
+  if (!(region->runtime->type->keymapflag & ED_KEYMAP_VIEW2D) &&
+      !ELEM(area->spacetype, SPACE_IMAGE, SPACE_CLIP, SPACE_SEQ, SPACE_TEXT))
+  {
+    return TouchDragMode::Default;
+  }
+
+  if (test_content) {
+    wmEvent event = {};
+    copy_v2_v2_int(event.xy, xy);
+    if (ui::but_find_mouse_over(region, &event) ||
+        ui::view2d_mouse_in_scrollers(region, &region->v2d, xy))
+    {
+      return TouchDragMode::Mouse;
+    }
+    if (area->spacetype == SPACE_NODE) {
+      SpaceNode &snode = *reinterpret_cast<SpaceNode *>(area->spacedata.first());
+      float2 mouse;
+      ui::view2d_region_to_view(&region->v2d,
+                                xy[0] - region->winrct.xmin,
+                                xy[1] - region->winrct.ymin,
+                                &mouse.x,
+                                &mouse.y);
+      if (snode.edittree && ed::space_node::node_or_socket_isect_mouse(snode, *region, mouse)) {
+        return TouchDragMode::Mouse;
+      }
+    }
+  }
+  return TouchDragMode::Pan;
 }
 
 void wm_event_add_ghostevent(wmWindowManager *wm,
@@ -6269,12 +6311,13 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
       const GHOST_TEventCursorData *cd = static_cast<const GHOST_TEventCursorData *>(customdata);
 
       if (cd->is_touch_drag) {
-        const bool start_in_view3d = win->runtime->touch_drag_active ?
-                                         win->runtime->touch_drag_start_in_view3d :
-                                         wm_touch_drag_start_is_view3d(
-                                             win, cd->touch_start_x, cd->touch_start_y);
-        if (start_in_view3d) {
-          event.flag |= WM_EVENT_TOUCH_VIEW3D;
+        using TouchDragMode = bke::WindowRuntime::TouchDragMode;
+        const TouchDragMode mode = win->runtime->touch_drag_active ?
+                                       win->runtime->touch_drag_mode :
+                                       wm_touch_drag_start_mode(
+                                           win, cd->touch_start_x, cd->touch_start_y, true);
+        if (ELEM(mode, TouchDragMode::Pan, TouchDragMode::Orbit)) {
+          event.flag |= WM_EVENT_TOUCH_NAVIGATION;
         }
         event.flag |= WM_EVENT_TOUCH_ONE_FINGER;
       }
@@ -6327,12 +6370,19 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
 
       const bool is_one_finger_touch_pan = pd->subtype == GHOST_kTrackpadEventScroll &&
                                            pd->numFingers == 1;
-      const bool touch_start_in_view3d = is_one_finger_touch_pan &&
-                                         (win->runtime->touch_drag_active ?
-                                              win->runtime->touch_drag_start_in_view3d :
-                                              wm_touch_drag_start_is_view3d(win, pd->x, pd->y));
+      using TouchDragMode = bke::WindowRuntime::TouchDragMode;
+      /* Without a paired mouse drag, the remaining finger after a pinch keeps navigating. */
+      TouchDragMode mode = TouchDragMode::Default;
+      if (pd->numFingers != 0) {
+        mode = is_one_finger_touch_pan && win->runtime->touch_drag_active ?
+                   win->runtime->touch_drag_mode :
+                   wm_touch_drag_start_mode(win, pd->x, pd->y, false);
+      }
+      if (is_one_finger_touch_pan && mode == TouchDragMode::Mouse) {
+        break;
+      }
       if (pd->subtype == GHOST_kTrackpadEventMagnify && pd->numFingers == 2 &&
-          !wm_touch_drag_start_is_view3d(win, pd->x, pd->y))
+          !ELEM(mode, TouchDragMode::Pan, TouchDragMode::Orbit))
       {
         break;
       }
@@ -6352,7 +6402,7 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
           break;
         case GHOST_kTrackpadEventScroll:
         default:
-          if (touch_start_in_view3d) {
+          if (is_one_finger_touch_pan && mode == TouchDragMode::Orbit) {
             /* View rotation consumes trackpad deltas in the opposite direction to a direct
              * pointer drag. */
             event.type = MOUSEROTATE;
@@ -6383,8 +6433,8 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
       }
       if (pd->numFingers == 1) {
         event.flag |= WM_EVENT_TOUCH_ONE_FINGER;
-        if (touch_start_in_view3d) {
-          event.flag |= WM_EVENT_TOUCH_VIEW3D;
+        if (ELEM(mode, TouchDragMode::Pan, TouchDragMode::Orbit)) {
+          event.flag |= WM_EVENT_TOUCH_NAVIGATION;
         }
       }
       else if (pd->numFingers == 2) {
@@ -6437,17 +6487,18 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
       if (bd->is_touch_drag) {
         event.flag |= WM_EVENT_TOUCH_ONE_FINGER;
         if (type == GHOST_kEventButtonDown) {
-          win->runtime->touch_drag_start_in_view3d = wm_touch_drag_start_is_view3d(
-              win, bd->touch_start_x, bd->touch_start_y);
+          win->runtime->touch_drag_mode = wm_touch_drag_start_mode(
+              win, bd->touch_start_x, bd->touch_start_y, true);
           win->runtime->touch_drag_active = true;
         }
 
-        const bool start_in_view3d = win->runtime->touch_drag_start_in_view3d;
+        using TouchDragMode = bke::WindowRuntime::TouchDragMode;
+        const TouchDragMode mode = win->runtime->touch_drag_mode;
         if (type == GHOST_kEventButtonUp) {
           win->runtime->touch_drag_active = false;
         }
-        if (start_in_view3d) {
-          event.flag |= WM_EVENT_TOUCH_VIEW3D;
+        if (ELEM(mode, TouchDragMode::Pan, TouchDragMode::Orbit)) {
+          event.flag |= WM_EVENT_TOUCH_NAVIGATION;
         }
       }
 
