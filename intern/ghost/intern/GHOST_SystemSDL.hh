@@ -85,6 +85,9 @@ class GHOST_SystemSDL : public GHOST_System {
   bool generateWindowExposeEvents();
 
   void processEvent(SDL_Event *sdl_event);
+  void processPenEvent(const SDL_Event &sdl_event);
+
+  GHOST_TabletData pen_tablet_data_ = {};
 
 #ifdef __ANDROID__
   void processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt);
