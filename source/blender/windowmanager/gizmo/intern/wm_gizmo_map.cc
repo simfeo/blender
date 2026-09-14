@@ -782,6 +782,10 @@ wmGizmo *wm_gizmomap_highlight_find(wmGizmoMap *gzmap,
                                     const wmEvent *event,
                                     int *r_part)
 {
+  if (!CTX_wm_window(C)->runtime->cursor_hover) {
+    return nullptr;
+  }
+
   wmWindowManager *wm = CTX_wm_manager(C);
   wmGizmo *gz = nullptr;
   Vector<wmGizmo *, 128> visible_3d_gizmos;

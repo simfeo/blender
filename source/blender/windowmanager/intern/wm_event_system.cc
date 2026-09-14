@@ -4245,6 +4245,34 @@ static eHandlerActionFlag wm_event_do_handlers_area_regions(bContext *C,
   return wm_event_do_region_handlers(C, event, region_hovered);
 }
 
+static void wm_event_region_hover_clear(bContext *C, ARegion *region)
+{
+  ui::UI_region_clear_hover(C, region);
+  if (region->runtime->gizmo_map && WM_gizmo_highlight_set(region->runtime->gizmo_map, nullptr)) {
+    ED_region_tag_redraw_no_rebuild(region);
+  }
+}
+
+static void wm_event_cursor_hover_clear(bContext *C, wmWindow *win)
+{
+  win->runtime->cursor_hover = false;
+  win->event_queue_consecutive_gesture_type = EVENT_NONE;
+  WM_event_consecutive_data_free(win);
+
+  bScreen *screen = WM_window_get_active_screen(win);
+  WM_tooltip_clear(C, win);
+  screen->do_draw_paintcursor = true;
+
+  ED_screen_areas_iter (win, screen, area) {
+    for (ARegion &region : area->regionbase) {
+      wm_event_region_hover_clear(C, &region);
+    }
+  }
+  for (ARegion &region : screen->regionbase) {
+    wm_event_region_hover_clear(C, &region);
+  }
+}
+
 void wm_event_do_handlers(bContext *C)
 {
   PRF_scope(ProfileCategory::Core);
@@ -4284,6 +4312,20 @@ void wm_event_do_handlers(bContext *C)
        * previous iteration has been early-terminated (using `continue;` e.g.). */
       if (wm->runtime->break_events_handling) {
         break;
+      }
+
+      if (event->type == EVT_CURSOR_HOVER_CLEAR) {
+        CTX_wm_window_set(C, &win);
+        wm_event_cursor_hover_clear(C, &win);
+        BLI_remlink(&win.runtime->event_queue, event);
+        wm_event_free(event);
+        continue;
+      }
+      /* Mouse moves generated for UI refreshes must not restore hover after touch input. */
+      if (!(event->flag & WM_EVENT_CURSOR_REFRESH) &&
+          (ISMOUSE(event->type) || ISTOUCH(event->type)))
+      {
+        win.runtime->cursor_hover = true;
       }
 
       eHandlerActionFlag action = WM_HANDLER_CONTINUE;
@@ -4358,17 +4400,6 @@ void wm_event_do_handlers(bContext *C)
 
       CTX_wm_window_set(C, &win);
 
-      if (event->flag & WM_EVENT_TOUCH_LEAVE) {
-        /* A touchscreen has no resting hover position. Clear hover state explicitly, then consume
-         * the off-window motion so it cannot affect a UI element or modal operation. */
-        WM_tooltip_clear(C, &win);
-        ui::UI_screen_free_active_but_highlight(C, screen);
-        ED_screen_set_active_region(C, &win, event->xy);
-        BLI_remlink(&win.runtime->event_queue, event);
-        wm_event_free_last_handled(&win, event);
-        continue;
-      }
-
       if (is_touch_view3d_drag && win.runtime->touch_gizmo_active &&
           ELEM(event->type, MOUSEROTATE, MOUSEPAN))
       {
@@ -4442,7 +4473,7 @@ void wm_event_do_handlers(bContext *C)
       if ((action & WM_HANDLER_BREAK) == 0) {
         /* NOTE: setting sub-window active should be done here,
          * after modal handlers have been done. */
-        if (event->type == MOUSEMOVE) {
+        if (event->type == MOUSEMOVE && win.runtime->cursor_hover) {
           /* State variables in screen, cursors.
            * Also used in `wm_draw.cc`, fails for modal handlers though. */
           ED_screen_set_active_region(C, &win, event->xy);
@@ -4552,7 +4583,7 @@ void wm_event_do_handlers(bContext *C)
       tevent.val = KM_NOTHING;
       tevent.prev_xy[0] = tevent.xy[0];
       tevent.prev_xy[1] = tevent.xy[1];
-      tevent.flag = eWM_EventFlag(0);
+      tevent.flag = WM_EVENT_CURSOR_REFRESH;
       wm_event_add_intern(&win, &tevent);
       win.addmousemove = 0;
     }
@@ -5936,7 +5967,7 @@ static wmEvent *wm_event_add_mousemove(wmWindow *win, const wmEvent *event)
    * them for better performance. */
   if (event_last && event_last->type == MOUSEMOVE) {
     event_last->type = INBETWEEN_MOUSEMOVE;
-    event_last->flag = eWM_EventFlag(0);
+    event_last->flag &= WM_EVENT_CURSOR_REFRESH;
   }
 
   wmEvent *event_new = wm_event_add_intern(win, event);
@@ -5960,7 +5991,6 @@ static wmEvent *wm_event_add_mousemove_to_head(wmWindow *win)
   if (event_last) {
     tevent = *event_last;
 
-    tevent.flag = eWM_EventFlag(0);
     tevent.utf8_buf[0] = '\0';
 
     wm_event_custom_clear(&tevent);
@@ -5971,6 +6001,7 @@ static wmEvent *wm_event_add_mousemove_to_head(wmWindow *win)
 
   tevent.type = MOUSEMOVE;
   tevent.val = KM_NOTHING;
+  tevent.flag = WM_EVENT_CURSOR_REFRESH;
   copy_v2_v2_int(tevent.prev_xy, tevent.xy);
 
   wmEvent *event_new = wm_event_add_intern(win, &tevent);
@@ -6212,6 +6243,12 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
 #endif
 
   switch (type) {
+    case GHOST_kEventCursorHoverClear:
+      /* Keep the cursor position used by popups opened by the preceding touch release. */
+      event.type = EVT_CURSOR_HOVER_CLEAR;
+      event.val = KM_NOTHING;
+      wm_event_add_intern(win, &event);
+      break;
     /* Mouse move, also to inactive window (X11 does this). */
     case GHOST_kEventCursorMove: {
       const GHOST_TEventCursorData *cd = static_cast<const GHOST_TEventCursorData *>(customdata);
@@ -6225,9 +6262,6 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
           event.flag |= WM_EVENT_TOUCH_VIEW3D;
         }
         event.flag |= WM_EVENT_TOUCH_ONE_FINGER;
-      }
-      if (cd->is_touch_leave) {
-        event.flag |= WM_EVENT_TOUCH_LEAVE;
       }
 
       copy_v2_v2_int(event.xy, &cd->x);
@@ -6247,8 +6281,7 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
 
       /* Also add to other window if event is there, this makes overdraws disappear nicely. */
       /* It remaps mouse-coord to other window in event. */
-      wmWindow *win_other = cd->is_touch_leave ? nullptr :
-                                                 wm_event_cursor_other_windows(wm, win, &event);
+      wmWindow *win_other = wm_event_cursor_other_windows(wm, win, &event);
       if (win_other) {
         wmEvent event_other = *win_other->runtime->eventstate;
 

@@ -238,6 +238,9 @@ struct WindowRuntime {
   /** The mouse-style touch stream was captured by a gizmo. */
   bool touch_gizmo_active = false;
 
+  /** Hover is disabled after touch input until the next pointer input. */
+  bool cursor_hover = true;
+
   /**
    * The time when the key is pressed in milliseconds (see #GHOST_IEvent::getTime).
    * Used to detect double-click events.

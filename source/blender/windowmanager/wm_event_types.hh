@@ -387,6 +387,9 @@ enum wmEventType : int16_t {
   /* Could become gizmo callback. */
   EVT_GIZMO_UPDATE = 0x5025, /* 20517 */
 
+  /* Clear pointer hover without changing event coordinates. */
+  EVT_CURSOR_HOVER_CLEAR = 0x5026, /* 20518 */
+
   /* XR events: 0x503x. */
   EVT_XR_ACTION = 0x5030, /* 20528 */
   /* ********** End of Blender internal events. ********** */

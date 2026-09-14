@@ -125,7 +125,8 @@ static void wm_paintcursor_draw(bContext *C, ScrArea *area, ARegion *region)
     return;
   }
 
-  if (!region->runtime->visible || region != screen->active_region) {
+  if (!win->runtime->cursor_hover || !region->runtime->visible || region != screen->active_region)
+  {
     return;
   }
 

@@ -123,8 +123,8 @@ class GHOST_SystemSDL : public GHOST_System {
   float touch_previous_distance_ = 0.0f;
   int32_t touch_cursor_x_ = 0;
   int32_t touch_cursor_y_ = 0;
-  /** Keep SDL's retained touch position from becoming a logical mouse hover after release. */
-  bool touch_cursor_override_ = false;
+  /** Use the last touch position until mouse or pen input updates the cursor. */
+  bool use_touch_cursor_position_ = false;
 #endif
 
   /** The vector of windows that need to be updated. */

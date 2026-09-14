@@ -346,6 +346,9 @@ enum GHOST_TEventType {
   GHOST_kEventThreeFingerTap,
   GHOST_kEventFourFingerTap,
 
+  /** Clear pointer hover without changing the cursor position. */
+  GHOST_kEventCursorHoverClear,
+
 #ifdef WITH_INPUT_NDOF
   /**
    * N degree of freedom device motion event.
@@ -652,8 +655,6 @@ struct GHOST_TEventCursorData {
   /** Screen-space origin used to decide which editor owns the touch gesture. */
   int32_t touch_start_x;
   int32_t touch_start_y;
-  /** Synthetic motion used to clear hover state after a touch-screen gesture. */
-  bool is_touch_leave;
 };
 
 struct GHOST_TEventButtonData {

@@ -1147,6 +1147,7 @@ void blocklist_free_inactive(const bContext *C, ARegion *region);
  */
 void UI_screen_free_active_but_highlight(const bContext *C, bScreen *screen);
 void UI_region_free_active_but_all(bContext *C, ARegion *region);
+void UI_region_clear_hover(const bContext *C, ARegion *region);
 
 void block_region_set(Block *block, ARegion *region);
 

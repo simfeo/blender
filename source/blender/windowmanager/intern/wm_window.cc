@@ -1863,7 +1863,7 @@ static bool ghost_event_proc(const GHOST_IEvent *ghost_event, GHOST_TUserDataPtr
       event.type = MOUSEMOVE;
       event.val = KM_NOTHING;
       copy_v2_v2_int(event.prev_xy, event.xy);
-      event.flag = eWM_EventFlag(0);
+      event.flag = WM_EVENT_CURSOR_REFRESH;
 
       WM_event_add(win, &event);
 
