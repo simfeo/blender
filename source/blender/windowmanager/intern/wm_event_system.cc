@@ -3485,8 +3485,7 @@ static eHandlerActionFlag wm_handlers_do_gizmo_handler(bContext *C,
   /* The mouse-style half of a View3D touch drag exists only so gizmos can claim it. Keep an
    * unclaimed press or motion out of selection and tool key-maps; its paired trackpad event owns
    * empty-space viewport navigation. */
-  if (is_touch_view3d_drag &&
-      (ISMOUSE_MOTION(event->type) || ISMOUSE_BUTTON(event->type)) &&
+  if (is_touch_view3d_drag && (ISMOUSE_MOTION(event->type) || ISMOUSE_BUTTON(event->type)) &&
       (action & WM_HANDLER_BREAK) == 0)
   {
     action |= WM_HANDLER_BREAK | WM_HANDLER_MODAL;
@@ -4420,8 +4419,7 @@ void wm_event_do_handlers(bContext *C)
         return;
       }
 
-      if (is_touch_view3d_drag &&
-          (ISMOUSE_MOTION(event->type) || ISMOUSE_BUTTON(event->type)) &&
+      if (is_touch_view3d_drag && (ISMOUSE_MOTION(event->type) || ISMOUSE_BUTTON(event->type)) &&
           (CTX_wm_region(C) == nullptr || CTX_wm_region(C)->runtime->gizmo_map == nullptr))
       {
         /* With no gizmo map to claim the mouse-style half of this gesture, keep it away from
@@ -4534,9 +4532,7 @@ void wm_event_do_handlers(bContext *C)
         wm_region_tag_draw_on_gizmo_delay_refresh_for_tweak(&win);
       }
 
-      if ((event->flag & WM_EVENT_TOUCH) && event->type == LEFTMOUSE &&
-          event->val == KM_RELEASE)
-      {
+      if ((event->flag & WM_EVENT_TOUCH) && event->type == LEFTMOUSE && event->val == KM_RELEASE) {
         win.runtime->touch_gizmo_active = false;
       }
 
@@ -6252,7 +6248,7 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
       /* Also add to other window if event is there, this makes overdraws disappear nicely. */
       /* It remaps mouse-coord to other window in event. */
       wmWindow *win_other = cd->is_touch_leave ? nullptr :
-                                                   wm_event_cursor_other_windows(wm, win, &event);
+                                                 wm_event_cursor_other_windows(wm, win, &event);
       if (win_other) {
         wmEvent event_other = *win_other->runtime->eventstate;
 
@@ -6283,11 +6279,10 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
 
       const bool is_one_finger_touch_pan = pd->subtype == GHOST_kTrackpadEventScroll &&
                                            pd->numFingers == 1;
-      const bool touch_start_in_view3d =
-          is_one_finger_touch_pan &&
-          (win->runtime->touch_drag_active ?
-               win->runtime->touch_drag_start_in_view3d :
-               wm_touch_drag_start_is_view3d(win, pd->x, pd->y));
+      const bool touch_start_in_view3d = is_one_finger_touch_pan &&
+                                         (win->runtime->touch_drag_active ?
+                                              win->runtime->touch_drag_start_in_view3d :
+                                              wm_touch_drag_start_is_view3d(win, pd->x, pd->y));
       if (pd->subtype == GHOST_kTrackpadEventMagnify && pd->numFingers == 2 &&
           !wm_touch_drag_start_is_view3d(win, pd->x, pd->y))
       {

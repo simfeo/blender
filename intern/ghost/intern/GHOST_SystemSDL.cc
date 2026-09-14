@@ -568,9 +568,10 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
   };
 
   auto find_touch = [&]() {
-    return std::find_if(active_touches_.begin(), active_touches_.end(), [&](const TouchPoint &touch) {
-      return touch.touch_id == sdl_sub_evt.touchID && touch.finger_id == sdl_sub_evt.fingerID;
-    });
+    return std::find_if(
+        active_touches_.begin(), active_touches_.end(), [&](const TouchPoint &touch) {
+          return touch.touch_id == sdl_sub_evt.touchID && touch.finger_id == sdl_sub_evt.fingerID;
+        });
   };
 
   if (is_down) {
@@ -663,22 +664,13 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
      * otherwise start an operation in a different editor. */
     const int32_t event_x = int32_t(touch_start_x_ * width) + x_win;
     const int32_t event_y = int32_t(touch_start_y_ * height) + y_win;
-    pushEvent(std::make_unique<GHOST_EventTrackpad>(event_ms,
-                                                    window,
-                                                    subtype,
-                                                    event_x,
-                                                    event_y,
-                                                    delta_x,
-                                                    delta_y,
-                                                    inverted,
-                                                    num_fingers));
+    pushEvent(std::make_unique<GHOST_EventTrackpad>(
+        event_ms, window, subtype, event_x, event_y, delta_x, delta_y, inverted, num_fingers));
   };
   auto begin_two_finger_gesture = [&](const TouchGestureMode mode) {
     touch_gesture_mode_ = mode;
-    touch_start_x_ = touch_previous_x_ =
-        (active_touches_[0].x + active_touches_[1].x) * 0.5f;
-    touch_start_y_ = touch_previous_y_ =
-        (active_touches_[0].y + active_touches_[1].y) * 0.5f;
+    touch_start_x_ = touch_previous_x_ = (active_touches_[0].x + active_touches_[1].x) * 0.5f;
+    touch_start_y_ = touch_previous_y_ = (active_touches_[0].y + active_touches_[1].y) * 0.5f;
     const float distance_x = (active_touches_[1].x - active_touches_[0].x) * width;
     const float distance_y = (active_touches_[1].y - active_touches_[0].y) * height;
     touch_previous_distance_ = std::sqrt(distance_x * distance_x + distance_y * distance_y);
@@ -705,10 +697,9 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
   };
   if (is_down) {
     const TouchGestureMode previous_gesture_mode = touch_gesture_mode_;
-    const bool same_device_and_window =
-        active_touches_.empty() ||
-        (active_touches_.front().touch_id == sdl_sub_evt.touchID &&
-         primary_touch_window_id_ == sdl_sub_evt.windowID);
+    const bool same_device_and_window = active_touches_.empty() ||
+                                        (active_touches_.front().touch_id == sdl_sub_evt.touchID &&
+                                         primary_touch_window_id_ == sdl_sub_evt.windowID);
     active_touches_.push_back({sdl_sub_evt.touchID,
                                sdl_sub_evt.fingerID,
                                sdl_sub_evt.x,
@@ -823,8 +814,7 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
         touch_previous_y_ = touch->y;
       }
     }
-    else if (touch_gesture_mode_ == TouchGestureMode::TwoFingerPan &&
-             active_touches_.size() == 2)
+    else if (touch_gesture_mode_ == TouchGestureMode::TwoFingerPan && active_touches_.size() == 2)
     {
       const float centroid_x = (active_touches_[0].x + active_touches_[1].x) * 0.5f;
       const float centroid_y = (active_touches_[0].y + active_touches_[1].y) * 0.5f;

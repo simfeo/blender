@@ -35,8 +35,7 @@ class GHOST_EventButton : public GHOST_Event {
                     int32_t touch_start_x = 0,
                     int32_t touch_start_y = 0)
       : GHOST_Event(time, type, window),
-        button_event_data_(
-            {button, tablet, is_touch, is_touch_drag, touch_start_x, touch_start_y})
+        button_event_data_({button, tablet, is_touch, is_touch_drag, touch_start_x, touch_start_y})
   {
     data_ = &button_event_data_;
   }
