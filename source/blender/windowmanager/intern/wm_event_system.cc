@@ -4264,6 +4264,9 @@ static void wm_event_cursor_hover_clear(bContext *C, wmWindow *win)
   screen->do_draw_paintcursor = true;
 
   ED_screen_areas_iter (win, screen, area) {
+    if (area->type && area->type->deactivate) {
+      area->type->deactivate(area);
+    }
     for (ARegion &region : area->regionbase) {
       wm_event_region_hover_clear(C, &region);
     }
