@@ -238,7 +238,7 @@ struct WindowRuntime {
   /** The mouse-style touch stream was captured by a gizmo. */
   bool touch_gizmo_active = false;
 
-  /** Hover is disabled after touch input until the next pointer input. */
+  /** Hover is disabled after touch input or pen proximity leave until the next pointer input. */
   bool cursor_hover = true;
 
   /**

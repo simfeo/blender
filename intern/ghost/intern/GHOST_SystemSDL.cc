@@ -935,10 +935,23 @@ void GHOST_SystemSDL::processPenEvent(const SDL_Event &sdl_event)
 {
   GHOST_TabletData &tablet = pen_tablet_data_;
 
-  /* Proximity events do not always have an associated window. */
   if (sdl_event.type == SDL_EVENT_PEN_PROXIMITY_IN ||
       sdl_event.type == SDL_EVENT_PEN_PROXIMITY_OUT)
   {
+    if (sdl_event.type == SDL_EVENT_PEN_PROXIMITY_OUT) {
+      const SDL_PenProximityEvent &event = sdl_event.pproximity;
+      GHOST_IWindow *window = nullptr;
+      if (event.windowID) {
+        window = findGhostWindow(SDL_GetWindowFromID(event.windowID));
+      }
+      else if (!window_manager_->getWindows().empty()) {
+        window = window_manager_->getWindows().front();
+      }
+      if (window) {
+        pushEvent(std::make_unique<GHOST_Event>(
+            SDL_NS_TO_MS(event.timestamp), GHOST_kEventCursorHoverClear, window));
+      }
+    }
     tablet = {};
     return;
   }
