@@ -15,6 +15,7 @@
 #include "DNA_windowmanager_types.h"
 
 #include "BLI_set.hh"
+#include "BLI_vector.hh"
 
 namespace blender {
 
@@ -248,6 +249,32 @@ struct WindowRuntime {
     /** Translate the trackpad-style events into view rotation. */
     Orbit,
   };
+
+  struct ModifierWheel {
+    enum class Button { None, Handle, Ctrl, Shift, Alt, Favorites };
+    struct Contact {
+      uint64_t device, id;
+      Button button;
+      float start[2];
+      float center[2];
+      bool moved = false;
+      bool pointer = false;
+    };
+    bool enabled = false;
+    bool initialized = false;
+    bool collapsed = false;
+    float center[2] = {-1.0f, -1.0f};
+    uint8_t modifiers = 0;
+    Vector<Contact> contacts;
+    int pointer_xy[2] = {};
+    uint32_t pointer_buttons = 0;
+    /** Consume button releases even after the wheel is disabled. */
+    uint32_t captured_buttons = 0;
+    Button hover = Button::None;
+  } modifier_wheel;
+
+  /** Hardware modifiers are independent of the modifier wheel's latched keys. */
+  uint8_t physical_modifiers = 0;
 
   /** Classification captured when a touch-screen drag begins. */
   bool touch_drag_active = false;

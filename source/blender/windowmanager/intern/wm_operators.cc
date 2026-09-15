@@ -113,6 +113,7 @@
 #include "wm_event_system.hh"
 #include "wm_event_types.hh"
 #include "wm_files.hh"
+#include "wm_modifier_wheel.hh"
 #include "wm_window.hh"
 
 #ifdef WITH_XR_OPENXR
@@ -4327,6 +4328,7 @@ static void WM_OT_stereo3d_set(wmOperatorType *ot)
 
 void wm_operatortypes_register()
 {
+  WM_operatortype_append(WM_OT_modifier_wheel_toggle);
   WM_operatortype_append(WM_OT_window_close);
   WM_operatortype_append(WM_OT_window_new);
   WM_operatortype_append(WM_OT_window_new_main);

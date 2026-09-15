@@ -348,6 +348,8 @@ enum GHOST_TEventType {
 
   /** Clear pointer hover without changing the cursor position. */
   GHOST_kEventCursorHoverClear,
+  /** Touch input captured before gesture recognition. */
+  GHOST_kEventTouch,
 
 #ifdef WITH_INPUT_NDOF
   /**
@@ -642,6 +644,16 @@ enum GHOST_TAxisFlag {
 };
 
 using GHOST_TEventDataPtr = const void *;
+
+enum class GHOST_TTouchPhase { Down, Motion, Up, Cancel };
+
+struct GHOST_TEventTouchData {
+  uint64_t device_id;
+  uint64_t contact_id;
+  /** Window client coordinates, with the origin at the top left. */
+  int32_t x, y;
+  GHOST_TTouchPhase phase;
+};
 
 struct GHOST_TEventCursorData {
   /** The x-coordinate of the cursor position. */

@@ -66,6 +66,7 @@
 #include "wm.hh"
 #include "wm_draw.hh"
 #include "wm_event_system.hh"
+#include "wm_modifier_wheel.hh"
 #include "wm_surface.hh"
 #include "wm_window.hh"
 #include "wm_window_private.hh"
@@ -1252,6 +1253,8 @@ static void wm_draw_window_onscreen(bContext *C, wmWindow *win, int view)
     wm_drags_draw(C, win);
     wmWindowViewport(win);
   }
+
+  wm_modifier_wheel_draw(win);
 
   if (wm_software_cursor_needed()) {
     GrabState grab_state;

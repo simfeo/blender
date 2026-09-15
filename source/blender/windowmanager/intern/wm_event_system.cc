@@ -88,6 +88,7 @@
 #include "wm.hh"
 #include "wm_event_system.hh"
 #include "wm_event_types.hh"
+#include "wm_modifier_wheel.hh"
 #include "wm_surface.hh"
 #include "wm_window.hh"
 #include "wm_window_private.hh"
@@ -4336,6 +4337,13 @@ void wm_event_do_handlers(bContext *C)
         break;
       }
 
+      if (event->type == EVT_MODIFIER_WHEEL_MENU) {
+        wm_modifier_wheel_popup(C, &win, event->xy);
+        BLI_remlink(&win.runtime->event_queue, event);
+        wm_event_free(event);
+        continue;
+      }
+
       if (event->type == EVT_CURSOR_HOVER_CLEAR) {
         CTX_wm_window_set(C, &win);
         wm_event_cursor_hover_clear(C, &win);
@@ -6243,6 +6251,28 @@ static bke::WindowRuntime::TouchDragMode wm_touch_drag_start_mode(wmWindow *win,
   return TouchDragMode::Pan;
 }
 
+void wm_event_modifier_wheel_set(wmWindow *win, const uint8_t modifiers, const uint64_t time)
+{
+  wmEvent *state = win->runtime->eventstate;
+  win->runtime->modifier_wheel.modifiers = modifiers;
+  const uint8_t effective = win->runtime->physical_modifiers | modifiers;
+  const wmEventType keys[] = {EVT_LEFTCTRLKEY, EVT_LEFTSHIFTKEY, EVT_LEFTALTKEY};
+  const wmEventModifierFlag flags[] = {KM_CTRL, KM_SHIFT, KM_ALT};
+  for (int i = 0; i < ARRAY_SIZE(keys); i++) {
+    if ((state->modifier ^ effective) & flags[i]) {
+      wmEvent event = *state;
+      event.type = keys[i];
+      event.val = (effective & flags[i]) ? KM_PRESS : KM_RELEASE;
+      event.flag = eWM_EventFlag(0);
+      event.utf8_buf[0] = '\0';
+      SET_FLAG_FROM_TEST(event.modifier, effective & flags[i], flags[i]);
+      wm_event_state_update_and_click_set_ex(
+          &event, time, state, &win->runtime->eventstate_prev_press_time_ms, true, false);
+      wm_event_add_intern(win, &event);
+    }
+  }
+}
+
 void wm_event_add_ghostevent(wmWindowManager *wm,
                              wmWindow *win,
                              const int type,
@@ -6657,6 +6687,9 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
        * To my knowledge users never reported a bug relating to these limitations so
        * it seems reasonable to keep the current logic. */
 
+      if (ISKEYMODIFIER(event.type)) {
+        event.modifier = wmEventModifierFlag(win->runtime->physical_modifiers);
+      }
       switch (event.type) {
         case EVT_LEFTSHIFTKEY:
         case EVT_RIGHTSHIFTKEY: {
@@ -6707,6 +6740,15 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
              * it shouldn't harm to clear it. */
             event_state->keymodifier = event.keymodifier = EVENT_NONE;
           }
+          break;
+        }
+      }
+
+      if (ISKEYMODIFIER(event.type)) {
+        win->runtime->physical_modifiers = event.modifier;
+        event.modifier |= wmEventModifierFlag(win->runtime->modifier_wheel.modifiers);
+        /* Releasing a hardware key must not release a key still held by the wheel. */
+        if (win->runtime->modifier_wheel.modifiers && event.modifier == event_state->modifier) {
           break;
         }
       }

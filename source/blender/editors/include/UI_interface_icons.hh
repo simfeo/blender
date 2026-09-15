@@ -85,6 +85,9 @@ void icon_render_id_ex(const bContext *C,
  */
 int icon_preview_to_render_size(enum eIconSizes size);
 
+/** Extra layout spacing used by input-event icons. */
+float event_icon_offset(int icon_id);
+
 /**
  * Draws icon with DPI scale factor.
  */

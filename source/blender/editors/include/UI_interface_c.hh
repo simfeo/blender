@@ -918,8 +918,10 @@ bool popup_menu_end_or_cancel(bContext *C, PopupMenu *pup);
 Layout *popup_menu_layout(PopupMenu *pup);
 
 void popup_menu_reports(bContext *C, ReportList *reports) ATTR_NONNULL();
-wmOperatorStatus popup_menu_invoke(bContext *C, const char *idname, ReportList *reports)
-    ATTR_NONNULL(1, 2);
+wmOperatorStatus popup_menu_invoke(bContext *C,
+                                   const char *idname,
+                                   ReportList *reports,
+                                   const int anchor_xy[2] = nullptr) ATTR_NONNULL(1, 2);
 
 /**
  * If \a block is displayed in a popup menu, tag it for closing.

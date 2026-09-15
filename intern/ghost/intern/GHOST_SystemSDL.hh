@@ -111,6 +111,12 @@ class GHOST_SystemSDL : public GHOST_System {
     Suppressed,
   };
 
+  struct CapturedTouch {
+    SDL_TouchID touch_id;
+    SDL_FingerID finger_id;
+    SDL_WindowID window_id;
+  };
+  std::vector<CapturedTouch> captured_touches_;
   std::vector<TouchPoint> active_touches_;
   TouchGestureMode touch_gesture_mode_ = TouchGestureMode::None;
   SDL_WindowID primary_touch_window_id_ = 0;

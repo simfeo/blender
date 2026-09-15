@@ -256,6 +256,14 @@ class GHOST_IWindow {
    */
   virtual void setUserData(const GHOST_TUserDataPtr user_data) = 0;
 
+  /**
+   * Test whether a new contact should be delivered as raw touch input.
+   * Coordinates are relative to the top left of the window client area.
+   */
+  using TouchCaptureFn = bool (*)(GHOST_TUserDataPtr, int32_t, int32_t);
+  virtual void setTouchCaptureCallback(TouchCaptureFn callback) = 0;
+  virtual bool shouldCaptureTouch(int32_t x, int32_t y) const = 0;
+
   virtual bool isDialog() const = 0;
 
   /***************************************************************************************

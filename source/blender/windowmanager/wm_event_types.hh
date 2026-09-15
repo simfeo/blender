@@ -389,6 +389,7 @@ enum wmEventType : int16_t {
 
   /* Clear pointer hover without changing event coordinates. */
   EVT_CURSOR_HOVER_CLEAR = 0x5026, /* 20518 */
+  EVT_MODIFIER_WHEEL_MENU = 0x5027,
 
   /* XR events: 0x503x. */
   EVT_XR_ACTION = 0x5030, /* 20528 */

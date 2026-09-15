@@ -71,6 +71,7 @@
 #include "wm_draw.hh"
 #include "wm_event_system.hh"
 #include "wm_files.hh"
+#include "wm_modifier_wheel.hh"
 #include "wm_window.hh"
 #include "wm_window_private.hh"
 #ifdef WITH_XR_OPENXR
@@ -871,7 +872,7 @@ static void wm_window_update_eventstate_modifiers(wmWindowManager *wm,
       wm_ghost_modifier_query(MOD_SIDE_RIGHT),
   };
   const uint8_t keymodifier = keymodifier_sided[0] | keymodifier_sided[1];
-  const uint8_t keymodifier_eventstate = win->runtime->eventstate->modifier;
+  const uint8_t keymodifier_eventstate = win->runtime->physical_modifiers;
   if (keymodifier != keymodifier_eventstate) {
     GHOST_TEventKeyData kdata{};
     kdata.key = GHOST_kKeyUnknown;
@@ -1040,6 +1041,7 @@ static void wm_window_ghostwindow_add(wmWindowManager *wm,
     ghost_window->setUserData(win); /* Pointer back. */
 
     wm_window_ensure_eventstate(win);
+    wm_modifier_wheel_init(win);
 
     /* Store actual window size in blender window. */
     /* WIN32: gives undefined window size when minimized. */
@@ -1821,8 +1823,13 @@ static bool ghost_event_proc(const GHOST_IEvent *ghost_event, GHOST_TUserDataPtr
 
   wmWindow *win = static_cast<wmWindow *>(ghost_window->getUserData());
 
+  if (wm_modifier_wheel_event(wm, win, type, data, event_time_ms)) {
+    return true;
+  }
+
   switch (type) {
     case GHOST_kEventWindowDeactivate: {
+      wm_modifier_wheel_release(win, event_time_ms);
       wm_window_update_eventstate_modifiers_clear(wm, win, event_time_ms);
 
       wm_event_add_ghostevent(wm, win, type, data, event_time_ms);

@@ -26,6 +26,7 @@
 #include "GHOST_EventButton.hh"
 #include "GHOST_EventCursor.hh"
 #include "GHOST_EventKey.hh"
+#include "GHOST_EventTouch.hh"
 #include "GHOST_EventTrackpad.hh"
 #include "GHOST_EventWheel.hh"
 
@@ -553,6 +554,56 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
   const bool is_motion = sdl_sub_evt.type == SDL_EVENT_FINGER_MOTION;
   const bool is_up = sdl_sub_evt.type == SDL_EVENT_FINGER_UP;
   const bool is_canceled = sdl_sub_evt.type == SDL_EVENT_FINGER_CANCELED;
+
+  /* Captured contacts do not participate in mouse emulation or gesture recognition. */
+  auto captured = std::find_if(
+      captured_touches_.begin(), captured_touches_.end(), [&](const CapturedTouch &touch) {
+        return touch.touch_id == sdl_sub_evt.touchID && touch.finger_id == sdl_sub_evt.fingerID;
+      });
+  if (is_down && captured != captured_touches_.end()) {
+    /* A reused ID must also cancel the previous contact in the application. */
+    if (GHOST_WindowSDL *window = findGhostWindow(SDL_GetWindowFromID(captured->window_id))) {
+      pushEvent(std::make_unique<GHOST_EventTouch>(
+          event_ms,
+          window,
+          GHOST_TEventTouchData{
+              captured->touch_id, captured->finger_id, 0, 0, GHOST_TTouchPhase::Cancel}));
+    }
+    captured_touches_.erase(captured);
+    captured = captured_touches_.end();
+  }
+  SDL_Window *capture_sdl_window = captured != captured_touches_.end() ?
+                                       SDL_GetWindowFromID(captured->window_id) :
+                                       SDL_GetWindowFromID_fallback(sdl_sub_evt.windowID);
+  GHOST_WindowSDL *capture_window = findGhostWindow(capture_sdl_window);
+  int capture_width = 0, capture_height = 0;
+  if (capture_sdl_window) {
+    SDL_GetWindowSize(capture_sdl_window, &capture_width, &capture_height);
+  }
+  const int capture_x = int(sdl_sub_evt.x * capture_width);
+  const int capture_y = int(sdl_sub_evt.y * capture_height);
+  if (is_down && capture_window && capture_window->shouldCaptureTouch(capture_x, capture_y)) {
+    captured_touches_.push_back(
+        {sdl_sub_evt.touchID, sdl_sub_evt.fingerID, SDL_GetWindowID(capture_sdl_window)});
+    captured = std::prev(captured_touches_.end());
+  }
+  if (captured != captured_touches_.end()) {
+    if (capture_window) {
+      const GHOST_TTouchPhase phase = is_down   ? GHOST_TTouchPhase::Down :
+                                      is_motion ? GHOST_TTouchPhase::Motion :
+                                      is_up     ? GHOST_TTouchPhase::Up :
+                                                  GHOST_TTouchPhase::Cancel;
+      pushEvent(std::make_unique<GHOST_EventTouch>(
+          event_ms,
+          capture_window,
+          GHOST_TEventTouchData{
+              sdl_sub_evt.touchID, sdl_sub_evt.fingerID, capture_x, capture_y, phase}));
+    }
+    if (is_up || is_canceled) {
+      captured_touches_.erase(captured);
+    }
+    return;
+  }
 
   auto reset_touch_state = [this]() {
     active_touches_.clear();
