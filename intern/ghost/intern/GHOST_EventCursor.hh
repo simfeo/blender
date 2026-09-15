@@ -32,9 +32,11 @@ class GHOST_EventCursor : public GHOST_Event {
                     const GHOST_TabletData &tablet,
                     bool is_touch_drag = false,
                     int32_t touch_start_x = 0,
-                    int32_t touch_start_y = 0)
+                    int32_t touch_start_y = 0,
+                    bool is_touch = false)
       : GHOST_Event(msec, type, window),
-        cursor_event_data_({x, y, tablet, is_touch_drag, touch_start_x, touch_start_y})
+        cursor_event_data_(
+            {x, y, tablet, is_touch_drag, touch_start_x, touch_start_y, is_touch || is_touch_drag})
   {
     data_ = &cursor_event_data_;
   }

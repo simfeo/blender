@@ -4256,6 +4256,21 @@ static void wm_event_region_hover_clear(bContext *C, ARegion *region)
   }
 }
 
+static void wm_event_scrollbar_hover_clear(ScrArea *area)
+{
+  for (AZone &az : area->actionzones) {
+    if (az.type == AZONE_REGION_SCROLL) {
+      char &alpha = az.direction == AZ_SCROLL_HOR ? az.region->v2d.alpha_hor :
+                                                    az.region->v2d.alpha_vert;
+      if (alpha != 0) {
+        alpha = 0;
+        ED_region_tag_redraw_no_rebuild(az.region);
+      }
+      az.alpha = 0.0f;
+    }
+  }
+}
+
 static void wm_event_cursor_hover_clear(bContext *C, wmWindow *win)
 {
   win->runtime->cursor_hover = false;
@@ -4270,17 +4285,7 @@ static void wm_event_cursor_hover_clear(bContext *C, wmWindow *win)
     if (area->type && area->type->deactivate) {
       area->type->deactivate(area);
     }
-    for (AZone &az : area->actionzones) {
-      if (az.type == AZONE_REGION_SCROLL) {
-        char &alpha = az.direction == AZ_SCROLL_HOR ? az.region->v2d.alpha_hor :
-                                                      az.region->v2d.alpha_vert;
-        if (alpha != 0) {
-          alpha = 0;
-          ED_region_tag_redraw_no_rebuild(az.region);
-        }
-        az.alpha = 0.0f;
-      }
-    }
+    wm_event_scrollbar_hover_clear(area);
     for (ARegion &region : area->regionbase) {
       wm_event_region_hover_clear(C, &region);
     }
@@ -4339,9 +4344,14 @@ void wm_event_do_handlers(bContext *C)
         continue;
       }
       /* Mouse moves generated for UI refreshes must not restore hover after touch input. */
-      if (!(event->flag & WM_EVENT_CURSOR_REFRESH) &&
-          (ISMOUSE(event->type) || ISTOUCH(event->type)))
-      {
+      if (!(event->flag & WM_EVENT_CURSOR_REFRESH) && ISMOUSE(event->type)) {
+        const bool is_touch = (event->flag & WM_EVENT_TOUCH) != 0;
+        if (is_touch && !win.runtime->cursor_is_touch) {
+          ED_screen_areas_iter (&win, screen, area) {
+            wm_event_scrollbar_hover_clear(area);
+          }
+        }
+        win.runtime->cursor_is_touch = is_touch;
         win.runtime->cursor_hover = true;
       }
 
@@ -4514,7 +4524,8 @@ void wm_event_do_handlers(bContext *C)
           /* Update action-zones if needed,
            * done here because it needs to be independent from redraws. */
           if (area->flag & AREA_FLAG_ACTIONZONES_UPDATE) {
-            ED_area_azones_update(area, event->xy, win.runtime->cursor_hover);
+            ED_area_azones_update(
+                area, event->xy, win.runtime->cursor_hover && !win.runtime->cursor_is_touch);
           }
 
           if (wm_event_inside_rect(event, &area->totrct)) {
@@ -6208,9 +6219,7 @@ static bke::WindowRuntime::TouchDragMode wm_touch_drag_start_mode(wmWindow *win,
   if (test_content) {
     wmEvent event = {};
     copy_v2_v2_int(event.xy, xy);
-    if (ui::but_find_mouse_over(region, &event) ||
-        ui::view2d_mouse_in_scrollers(region, &region->v2d, xy))
-    {
+    if (ui::but_find_mouse_over(region, &event)) {
       return TouchDragMode::Mouse;
     }
     if ((region->runtime->type->keymapflag & ED_KEYMAP_ANIMATION) &&
@@ -6316,6 +6325,9 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
     case GHOST_kEventCursorMove: {
       const GHOST_TEventCursorData *cd = static_cast<const GHOST_TEventCursorData *>(customdata);
 
+      if (cd->is_touch) {
+        event.flag |= WM_EVENT_TOUCH;
+      }
       if (cd->is_touch_drag) {
         using TouchDragMode = bke::WindowRuntime::TouchDragMode;
         const TouchDragMode mode = win->runtime->touch_drag_active ?
@@ -6352,6 +6364,7 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
         /* Use the modifier state of this window. */
         event_other.modifier = event.modifier;
         event_other.keymodifier = event.keymodifier;
+        event_other.flag |= event.flag & WM_EVENT_TOUCH;
 
         /* See comment for this operation on `event` for details. */
         event_other.prev_type = event_other.type;
@@ -6380,6 +6393,7 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
       /* Without a paired mouse drag, the remaining finger after a pinch keeps navigating. */
       TouchDragMode mode = TouchDragMode::Default;
       if (pd->numFingers != 0) {
+        event.flag |= WM_EVENT_TOUCH;
         mode = is_one_finger_touch_pan && win->runtime->touch_drag_active ?
                    win->runtime->touch_drag_mode :
                    wm_touch_drag_start_mode(win, pd->x, pd->y, false);

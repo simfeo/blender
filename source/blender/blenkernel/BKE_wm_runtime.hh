@@ -257,6 +257,8 @@ struct WindowRuntime {
 
   /** Hover is disabled after touch input or pen proximity leave until the next pointer input. */
   bool cursor_hover = true;
+  /** Whether the last pointer input came from the touchscreen. */
+  bool cursor_is_touch = false;
 
   /**
    * The time when the key is pressed in milliseconds (see #GHOST_IEvent::getTime).

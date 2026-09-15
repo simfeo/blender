@@ -622,7 +622,8 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
                                                   GHOST_TABLET_DATA_NONE,
                                                   is_touch_drag,
                                                   touch_start_x,
-                                                  touch_start_y));
+                                                  touch_start_y,
+                                                  true));
   };
   auto push_touch_button = [&](const GHOST_TEventType type, const bool is_touch_drag) {
     const int32_t touch_start_x = int32_t(touch_start_x_ * width) + x_win;

@@ -2965,6 +2965,9 @@ static bool text_region_scroll_poll(bContext *C)
 
 static wmOperatorStatus text_scroll_bar_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
+  if (event->flag & WM_EVENT_TOUCH) {
+    return OPERATOR_PASS_THROUGH;
+  }
   SpaceText *st = CTX_wm_space_text(C);
   ARegion *region = CTX_wm_region(C);
   TextScroll *tsc;

@@ -2167,6 +2167,9 @@ static wmOperatorStatus scroller_activate_modal(bContext *C, wmOperator *op, con
  * should have occurred, so check if it happened in scrollbar */
 static wmOperatorStatus scroller_activate_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
+  if (event->flag & WM_EVENT_TOUCH) {
+    return OPERATOR_PASS_THROUGH;
+  }
   ARegion *region = CTX_wm_region(C);
   View2D *v2d = &region->v2d;
 
