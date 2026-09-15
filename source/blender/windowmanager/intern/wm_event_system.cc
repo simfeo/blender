@@ -6172,7 +6172,7 @@ static bool wm_event_is_ignorable_key_press(const wmWindow *win, const wmEvent &
 static bke::WindowRuntime::TouchDragMode wm_touch_drag_start_mode(wmWindow *win,
                                                                   const int32_t ghost_x,
                                                                   const int32_t ghost_y,
-                                                                  const bool test_content)
+                                                                  const bool allow_widget_dragging)
 {
   using TouchDragMode = bke::WindowRuntime::TouchDragMode;
   int xy[2] = {ghost_x, ghost_y};
@@ -6216,7 +6216,7 @@ static bke::WindowRuntime::TouchDragMode wm_touch_drag_start_mode(wmWindow *win,
     return TouchDragMode::Default;
   }
 
-  if (test_content) {
+  if (allow_widget_dragging) {
     wmEvent event = {};
     copy_v2_v2_int(event.xy, xy);
     if (ui::but_find_mouse_over(region, &event)) {
