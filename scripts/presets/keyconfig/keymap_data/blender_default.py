@@ -825,7 +825,7 @@ def km_screen(params):
         ("screen.workspace_cycle", {"type": 'PAGE_UP', "value": 'PRESS', "ctrl": True},
          {"properties": [("direction", 'PREV')]}),
         # Maximize Area
-        ("screen.screen_full_area", {"type": 'TOUCH_FOUR_FINGER_TAP', "value": 'PRESS'}, None),
+        ("screen.screen_full_area", {"type": 'TOUCH_FOUR_FINGER_TAP', "value": 'PRESS', "any": True}, None),
         # Quad view
         ("screen.region_quadview", {"type": 'Q', "value": 'PRESS', "ctrl": True, "alt": True}, None),
         # Repeat last
@@ -840,8 +840,8 @@ def km_screen(params):
         # Undo
         ("ed.undo", {"type": 'Z', "value": 'PRESS', "ctrl": True, "repeat": True}, None),
         ("ed.redo", {"type": 'Z', "value": 'PRESS', "shift": True, "ctrl": True, "repeat": True}, None),
-        ("ed.undo", {"type": 'TOUCH_TWO_FINGER_TAP', "value": 'PRESS'}, None),
-        ("ed.redo", {"type": 'TOUCH_THREE_FINGER_TAP', "value": 'PRESS'}, None),
+        ("ed.undo", {"type": 'TOUCH_TWO_FINGER_TAP', "value": 'PRESS', "any": True}, None),
+        ("ed.redo", {"type": 'TOUCH_THREE_FINGER_TAP', "value": 'PRESS', "any": True}, None),
         # Render
         ("render.render", {"type": 'F12', "value": 'PRESS'},
          {"properties": [("use_viewport", True)]}),
