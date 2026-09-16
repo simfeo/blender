@@ -6245,10 +6245,13 @@ static bke::WindowRuntime::TouchDragMode wm_touch_drag_start_mode(wmWindow *win,
   if (area->spacetype == SPACE_VIEW3D) {
     return TouchDragMode::Navigate3D;
   }
+  if (area->spacetype == SPACE_OUTLINER) {
+    return TouchDragMode::Navigate2D;
+  }
 
   /* Keep item dragging and panel interaction on their existing event paths. */
   if (region->runtime->type == nullptr ||
-      ELEM(area->spacetype, SPACE_FILE, SPACE_OUTLINER, SPACE_PROPERTIES, SPACE_USERPREF))
+      ELEM(area->spacetype, SPACE_FILE, SPACE_PROPERTIES, SPACE_USERPREF))
   {
     return TouchDragMode::Default;
   }
