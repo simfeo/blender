@@ -427,8 +427,8 @@ static void wheel_draw_button(const Wheel &wheel, const Button button, const int
   const bool show_modifiers = button == Button::Handle && wheel.collapsed && wheel.modifiers;
   wheel_draw_icon(icon, x, y + (show_modifiers ? 0.25f * unit : 0.0f), unit, text, active);
   if (show_modifiers) {
-    const int icons[] = {ICON_EVENT_SHIFT, ICON_EVENT_CTRL, ICON_EVENT_ALT};
-    const int modifiers[] = {KM_SHIFT, KM_CTRL, KM_ALT};
+    const int icons[] = {ICON_EVENT_CTRL, ICON_EVENT_SHIFT, ICON_EVENT_ALT};
+    const int modifiers[] = {KM_CTRL, KM_SHIFT, KM_ALT};
     for (int i = 0; i < 3; i++) {
       if (wheel.modifiers & modifiers[i]) {
         wheel_draw_icon(icons[i],
