@@ -222,6 +222,10 @@ static void wheel_contact(wmWindow *win,
           device, id, button, {float(xy[0]), float(xy[1])}, {wheel.center[0], wheel.center[1]}};
       contact.pointer = pointer;
       wheel.contacts.append(contact);
+      /* Toggle modifiers on press so the finger can leave the button before release. */
+      if (wheel_button_modifier(button)) {
+        wheel_button_activate(win, button, time);
+      }
       wheel_redraw(win);
     }
     return;
@@ -240,8 +244,8 @@ static void wheel_contact(wmWindow *win,
   }
   if (phase == GHOST_TTouchPhase::Up || phase == GHOST_TTouchPhase::Cancel) {
     const Button button = contact.button;
-    const bool activate = phase == GHOST_TTouchPhase::Up && !contact.moved &&
-                          wheel_hit_test(wheel, xy) == button;
+    const bool activate = phase == GHOST_TTouchPhase::Up && !wheel_button_modifier(button) &&
+                          !contact.moved && wheel_hit_test(wheel, xy) == button;
     wheel.contacts.remove_and_reorder(index);
     if (activate) {
       wheel_button_activate(win, button, time);
