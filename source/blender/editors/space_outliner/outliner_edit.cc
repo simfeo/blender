@@ -112,7 +112,7 @@ static wmOperatorStatus outliner_highlight_update_invoke(bContext *C,
                                                          const wmEvent *event)
 {
   /* Stop highlighting if out of area or pointer hover is disabled. */
-  if (!ED_screen_area_active(C) || !CTX_wm_window(C)->runtime->cursor_hover) {
+  if (!ED_screen_area_active(C) || !CTX_wm_window(C)->runtime->cursor_hover_enabled) {
     return OPERATOR_PASS_THROUGH;
   }
 

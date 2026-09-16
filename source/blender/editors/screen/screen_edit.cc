@@ -1086,9 +1086,10 @@ void ED_screen_set_active_region(bContext *C, wmWindow *win, const int xy[2])
       if (xy[1] > (area_iter->totrct.ymin + BORDERPADDING) &&
           xy[1] < (area_iter->totrct.ymax - BORDERPADDING))
       {
-        if (ED_area_azones_update(
-                area_iter, xy, win->runtime->cursor_hover && !win->runtime->cursor_is_touch) ==
-            nullptr)
+        if (ED_area_azones_update(area_iter,
+                                  xy,
+                                  win->runtime->cursor_hover_enabled &&
+                                      !win->runtime->cursor_is_touch) == nullptr)
         {
           area = area_iter;
           break;

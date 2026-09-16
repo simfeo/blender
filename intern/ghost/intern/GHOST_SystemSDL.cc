@@ -777,7 +777,7 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
         begin_two_finger_gesture(TouchGestureMode::MultiFingerTapPending);
       }
       else {
-        begin_two_finger_gesture(TouchGestureMode::TwoFingerPan);
+        begin_two_finger_gesture(TouchGestureMode::TwoFingerPanZoom);
       }
     }
     else {
@@ -826,7 +826,7 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
         return;
       }
       if (multi_finger_tap_count_ == 2 && active_touches_.size() == 2) {
-        touch_gesture_mode_ = TouchGestureMode::TwoFingerPan;
+        touch_gesture_mode_ = TouchGestureMode::TwoFingerPanZoom;
       }
       else {
         suppress_touch_gesture();
@@ -835,7 +835,7 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
     }
 
     if (touch_gesture_mode_ == TouchGestureMode::OneFingerDrag ||
-        touch_gesture_mode_ == TouchGestureMode::OneFingerOrbit)
+        touch_gesture_mode_ == TouchGestureMode::OneFingerTrackpadOnly)
     {
       set_cursor(touch->x, touch->y);
       const int32_t delta_x = int32_t((touch->x - touch_previous_x_) * width);
@@ -849,7 +849,8 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
         touch_previous_y_ = touch->y;
       }
     }
-    else if (touch_gesture_mode_ == TouchGestureMode::TwoFingerPan && active_touches_.size() == 2)
+    else if (touch_gesture_mode_ == TouchGestureMode::TwoFingerPanZoom &&
+             active_touches_.size() == 2)
     {
       const float centroid_x = (active_touches_[0].x + active_touches_[1].x) * 0.5f;
       const float centroid_y = (active_touches_[0].y + active_touches_[1].y) * 0.5f;
@@ -914,7 +915,7 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
       suppress_touch_gesture();
     }
     else if (multi_finger_tap_count_ == 2 && active_touches_.size() == 2) {
-      touch_gesture_mode_ = TouchGestureMode::TwoFingerPan;
+      touch_gesture_mode_ = TouchGestureMode::TwoFingerPanZoom;
     }
     else {
       suppress_touch_gesture();
@@ -934,7 +935,7 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
   }
 
   if ((touch_gesture_mode_ == TouchGestureMode::OneFingerDrag ||
-       touch_gesture_mode_ == TouchGestureMode::OneFingerOrbit) &&
+       touch_gesture_mode_ == TouchGestureMode::OneFingerTrackpadOnly) &&
       active_touches_.size() == 1)
   {
     set_cursor(touch->x, touch->y);
@@ -956,13 +957,13 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
     return;
   }
 
-  if (touch_gesture_mode_ == TouchGestureMode::TwoFingerPan) {
+  if (touch_gesture_mode_ == TouchGestureMode::TwoFingerPanZoom) {
     if (!is_canceled && active_touches_.size() == 2) {
       active_touches_.erase(touch);
       const TouchPoint &remaining_touch = active_touches_.front();
       /* Continue with one-finger trackpad motion without pressing the synthetic mouse button.
        * A button press here could activate a gizmo or widget underneath the remaining finger. */
-      touch_gesture_mode_ = TouchGestureMode::OneFingerOrbit;
+      touch_gesture_mode_ = TouchGestureMode::OneFingerTrackpadOnly;
       touch_previous_x_ = remaining_touch.x;
       touch_previous_y_ = remaining_touch.y;
       touch_previous_distance_ = 0.0f;

@@ -371,9 +371,8 @@ static wmOperatorStatus viewrotate_invoke(bContext *C, wmOperator *op, const wmE
 {
   /* Depending on the navigation preferences, unmodified trackpad-pan events can be mapped to
    * view rotation. Two-finger touch-screen gestures always pan the view. */
-  const ViewOpsType *nav_type = (event->flag & WM_EVENT_MULTITOUCH_TWO_FINGERS) ?
-                                    &ViewOpsType_move :
-                                    &ViewOpsType_rotate;
+  const ViewOpsType *nav_type = (event->flag & WM_EVENT_TOUCH_TWO_FINGERS) ? &ViewOpsType_move :
+                                                                             &ViewOpsType_rotate;
   return view3d_navigate_invoke_impl(C, op, event, nav_type);
 }
 

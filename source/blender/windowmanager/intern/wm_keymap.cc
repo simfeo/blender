@@ -238,7 +238,7 @@ int WM_keymap_item_map_type_get(const wmKeyMapItem *kmi)
   if (ISNDOF(kmi->type)) {
     return KMI_TYPE_NDOF;
   }
-  if (ISTOUCH(kmi->type)) {
+  if (ISTOUCH_TAP(kmi->type)) {
     return KMI_TYPE_TOUCH;
   }
   if (kmi->type == KM_TEXTINPUT) {

@@ -404,7 +404,7 @@ enum wmEventType : int16_t {
 #define ISTIMER(event_type) ((event_type) >= TIMER && (event_type) <= _TIMER_MAX)
 
 /** Test whether the event is a touch tap. */
-#define ISTOUCH(event_type) ((event_type) >= _EVT_TOUCH_MIN && (event_type) <= _EVT_TOUCH_MAX)
+#define ISTOUCH_TAP(event_type) ((event_type) >= _EVT_TOUCH_MIN && (event_type) <= _EVT_TOUCH_MAX)
 
 /** Test whether the event is a key on the keyboard (including modifier keys). */
 #define ISKEYBOARD(event_type) \

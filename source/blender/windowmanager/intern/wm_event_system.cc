@@ -3484,7 +3484,7 @@ static eHandlerActionFlag wm_handlers_do_gizmo_handler(bContext *C,
   if (touch_gizmo_hit) {
     /* Reserve the touch as soon as its press hits a gizmo. This keeps deferred drag motion from
      * becoming viewport navigation and lets modal teardown avoid restoring mouse hover. */
-    CTX_wm_window(C)->runtime->touch_gizmo_active = true;
+    CTX_wm_window(C)->runtime->touch_gizmo_claimed = true;
   }
 
   /* Let gizmos claim the mouse-style events before using the paired trackpad events for
@@ -4274,7 +4274,7 @@ static void wm_event_scrollbar_hover_clear(ScrArea *area)
 
 static void wm_event_cursor_hover_clear(bContext *C, wmWindow *win)
 {
-  win->runtime->cursor_hover = false;
+  win->runtime->cursor_hover_enabled = false;
   win->event_queue_consecutive_gesture_type = EVENT_NONE;
   WM_event_consecutive_data_free(win);
 
@@ -4360,13 +4360,14 @@ void wm_event_do_handlers(bContext *C)
           }
         }
         win.runtime->cursor_is_touch = is_touch;
-        win.runtime->cursor_hover = true;
+        win.runtime->cursor_hover_enabled = true;
       }
 
       eHandlerActionFlag action = WM_HANDLER_CONTINUE;
 
       const bool is_touch_navigation = (event->flag & WM_EVENT_TOUCH_NAVIGATION) != 0;
-      if (is_touch_navigation && ISMOUSE_MOTION(event->type) && !win.runtime->touch_gizmo_active &&
+      if (is_touch_navigation && ISMOUSE_MOTION(event->type) &&
+          !win.runtime->touch_gizmo_claimed &&
           ELEM(win.event_queue_consecutive_gesture_type, MOUSEROTATE, MOUSEPAN))
       {
         /* Keep the initial mouse move so gizmos can establish hover and capture the following
@@ -4434,7 +4435,7 @@ void wm_event_do_handlers(bContext *C)
 
       CTX_wm_window_set(C, &win);
 
-      if (is_touch_navigation && win.runtime->touch_gizmo_active &&
+      if (is_touch_navigation && win.runtime->touch_gizmo_claimed &&
           ELEM(event->type, MOUSEROTATE, MOUSEPAN))
       {
         /* The mouse-motion stream drives the active gizmo. Do not also navigate the view. */
@@ -4507,7 +4508,7 @@ void wm_event_do_handlers(bContext *C)
       if ((action & WM_HANDLER_BREAK) == 0) {
         /* NOTE: setting sub-window active should be done here,
          * after modal handlers have been done. */
-        if (event->type == MOUSEMOVE && win.runtime->cursor_hover) {
+        if (event->type == MOUSEMOVE && win.runtime->cursor_hover_enabled) {
           /* State variables in screen, cursors.
            * Also used in `wm_draw.cc`, fails for modal handlers though. */
           ED_screen_set_active_region(C, &win, event->xy);
@@ -4532,8 +4533,10 @@ void wm_event_do_handlers(bContext *C)
           /* Update action-zones if needed,
            * done here because it needs to be independent from redraws. */
           if (area->flag & AREA_FLAG_ACTIONZONES_UPDATE) {
-            ED_area_azones_update(
-                area, event->xy, win.runtime->cursor_hover && !win.runtime->cursor_is_touch);
+            ED_area_azones_update(area,
+                                  event->xy,
+                                  win.runtime->cursor_hover_enabled &&
+                                      !win.runtime->cursor_is_touch);
           }
 
           if (wm_event_inside_rect(event, &area->totrct)) {
@@ -4599,7 +4602,7 @@ void wm_event_do_handlers(bContext *C)
       }
 
       if ((event->flag & WM_EVENT_TOUCH) && event->type == LEFTMOUSE && event->val == KM_RELEASE) {
-        win.runtime->touch_gizmo_active = false;
+        win.runtime->touch_gizmo_claimed = false;
       }
 
       /* Update previous mouse position for following events to use. */
@@ -6493,7 +6496,7 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
         }
       }
       else if (pd->numFingers == 2) {
-        event.flag |= WM_EVENT_MULTITOUCH_TWO_FINGERS;
+        event.flag |= WM_EVENT_TOUCH_TWO_FINGERS;
       }
 
 #if !defined(WIN32) && !defined(__APPLE__)

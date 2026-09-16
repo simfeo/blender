@@ -82,7 +82,7 @@ static void fileselect_initialize_params_common(SpaceFile *sfile, FileSelectPara
 
   /* Android demo: Override base file browser directory to demo files dir when present. */
   if (const char *extract_dir = BLI_getenv("BLENDER_ANDROID_EXTRACT_DIR")) {
-    static char demo_dir[FILE_MAXDIR];
+    char demo_dir[FILE_MAXDIR];
     BLI_path_join(demo_dir, sizeof(demo_dir), extract_dir, "demo_files");
     if (BLI_is_dir(demo_dir)) {
       STRNCPY(params->dir, demo_dir);

@@ -10189,7 +10189,7 @@ static Button *but_find_open_event(ARegion *region, const wmEvent *event)
 
 static int handle_button_over(bContext *C, const wmEvent *event, ARegion *region)
 {
-  if (event->type == MOUSEMOVE && CTX_wm_window(C)->runtime->cursor_hover) {
+  if (event->type == MOUSEMOVE && CTX_wm_window(C)->runtime->cursor_hover_enabled) {
     const bool labeledit = event->modifier & KM_CTRL;
     /* Allow buttons to be activated to show the tool-tip,
      * then force-disable them if they're not considered interactive
@@ -10893,7 +10893,7 @@ static int handle_viewlist_items_hover(const bContext *C, const wmEvent *event, 
     if (Button *but = view_item_find_search_highlight(region)) {
       return but;
     }
-    if (!CTX_wm_window(C)->runtime->cursor_hover) {
+    if (!CTX_wm_window(C)->runtime->cursor_hover_enabled) {
       return nullptr;
     }
     if (Button *but = view_item_find_mouse_over(region, event->xy)) {
@@ -11596,7 +11596,8 @@ static int handle_menu_event(bContext *C,
         /* Initial press before starting to drag. */
         WM_cursor_set(win, PopupTitleDragCursor);
       }
-      else if (event->type == MOUSEMOVE && win->runtime->cursor_hover && !win->modalcursor) {
+      else if (event->type == MOUSEMOVE && win->runtime->cursor_hover_enabled && !win->modalcursor)
+      {
         /* Hover over draggable area. */
         WM_cursor_set(win, PopupTitleHoverCursor);
       }
@@ -11642,7 +11643,7 @@ static int handle_menu_event(bContext *C,
     }
   }
   else if (event->type == TIMER && event->customdata == menu->scrolltimer) {
-    if (!win->runtime->cursor_hover || !menu_scroll_test(block, {mx, my})) {
+    if (!win->runtime->cursor_hover_enabled || !menu_scroll_test(block, {mx, my})) {
       WM_event_timer_remove(CTX_wm_manager(C), win, menu->scrolltimer);
       menu->scrolltimer = nullptr;
     }
@@ -11653,7 +11654,7 @@ static int handle_menu_event(bContext *C,
   }
   else {
     /* for mouse_motion_towards_block */
-    if (event->type == MOUSEMOVE && win->runtime->cursor_hover) {
+    if (event->type == MOUSEMOVE && win->runtime->cursor_hover_enabled) {
       if (block->flag & (BLOCK_MOVEMOUSE_QUIT | BLOCK_POPOVER)) {
         mouse_motion_towards_init(menu, event->xy);
       }
@@ -12180,7 +12181,7 @@ static int handle_menu_event(bContext *C,
       else {
 
         /* check mouse moving outside of the menu */
-        if (win->runtime->cursor_hover && inside == false &&
+        if (win->runtime->cursor_hover_enabled && inside == false &&
             (block->flag & (BLOCK_MOVEMOUSE_QUIT | BLOCK_POPOVER)))
         {
           SafetyRect *saferct;
@@ -12996,7 +12997,8 @@ static int handler_region_menu(bContext *C, const wmEvent *event, void * /*userd
     /* handle activated button events */
     HandleButtonData *data = but->active;
 
-    if (CTX_wm_window(C)->runtime->cursor_hover && (data->state == BUTTON_STATE_MENU_OPEN) &&
+    if (CTX_wm_window(C)->runtime->cursor_hover_enabled &&
+        (data->state == BUTTON_STATE_MENU_OPEN) &&
         /* Make sure this popup isn't dragging a button.
          * can happen with popovers (see #67882). */
         (region_find_active_but(data->menu->region) == nullptr) &&

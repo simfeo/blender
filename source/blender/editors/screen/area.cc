@@ -2311,7 +2311,7 @@ void ED_area_update_region_sizes(wmWindowManager *wm, wmWindow *win, ScrArea *ar
   }
   ED_area_azones_update(area,
                         win->runtime->eventstate->xy,
-                        win->runtime->cursor_hover && !win->runtime->cursor_is_touch);
+                        win->runtime->cursor_hover_enabled && !win->runtime->cursor_is_touch);
 
   area->flag &= ~AREA_FLAG_REGION_SIZE_UPDATE;
 }

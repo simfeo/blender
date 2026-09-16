@@ -48,7 +48,7 @@ void WM_tooltip_timer_init_ex(
 {
   WM_tooltip_timer_clear(C, win);
 
-  if (!win->runtime->cursor_hover) {
+  if (!win->runtime->cursor_hover_enabled) {
     return;
   }
 

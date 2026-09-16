@@ -279,11 +279,11 @@ struct WindowRuntime {
   /** Classification captured when a touch-screen drag begins. */
   bool touch_drag_active = false;
   TouchDragMode touch_drag_mode = TouchDragMode::Default;
-  /** The mouse-style touch stream was captured by a gizmo. */
-  bool touch_gizmo_active = false;
+  /** A gizmo claimed the touch press, preventing view navigation for the rest of the drag. */
+  bool touch_gizmo_claimed = false;
 
   /** Hover is disabled after touch input or pen proximity leave until the next pointer input. */
-  bool cursor_hover = true;
+  bool cursor_hover_enabled = true;
   /** Whether the last pointer input came from the touchscreen. */
   bool cursor_is_touch = false;
 

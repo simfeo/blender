@@ -105,9 +105,11 @@ class GHOST_SystemSDL : public GHOST_System {
     None,
     TapPending,
     MultiFingerTapPending,
+    /** Emit mouse events and trackpad-style motion for Blender to choose between. */
     OneFingerDrag,
-    OneFingerOrbit,
-    TwoFingerPan,
+    /** Continue with trackpad-style motion only after one finger of a two-finger gesture lifts. */
+    OneFingerTrackpadOnly,
+    TwoFingerPanZoom,
     Suppressed,
   };
 

@@ -782,7 +782,7 @@ wmGizmo *wm_gizmomap_highlight_find(wmGizmoMap *gzmap,
                                     const wmEvent *event,
                                     int *r_part)
 {
-  if (!CTX_wm_window(C)->runtime->cursor_hover) {
+  if (!CTX_wm_window(C)->runtime->cursor_hover_enabled) {
     return nullptr;
   }
 
@@ -1161,7 +1161,7 @@ void wm_gizmomap_modal_set(
 
     if (C) {
       wmWindow *win = CTX_wm_window(C);
-      const bool is_touch = win->runtime->touch_gizmo_active;
+      const bool is_touch = win->runtime->touch_gizmo_claimed;
       if (is_touch) {
         if (gzmap->gzmap_context.event_xy[0] != INT_MAX) {
           /* Touch has no cursor to restore. Releasing at the gizmo's initial position would
