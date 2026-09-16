@@ -845,7 +845,8 @@ struct UserDef_SpaceData {
  * #UserDef_SpaceData.)
  */
 struct UserDef_FileSpaceData {
-  eFileDisplayType display_type = FILE_VERTICALDISPLAY; /* FileSelectParams.display */
+  /* Android demo: Override File Browser default file display mode to thumbnails. */
+  eFileDisplayType display_type = FILE_IMGDISPLAY; /* FileSelectParams.display */
   eFileSortType sort_type = FILE_SORT_ALPHA;            /* FileSelectParams.sort */
   int thumbnail_size = 96;                              /* FileSelectParams.thumbnail_size */
   eFileDetails details_flags = FILE_DETAILS_SIZE |
