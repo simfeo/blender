@@ -6208,6 +6208,16 @@ static bke::WindowRuntime::TouchDragMode wm_touch_drag_start_mode(wmWindow *win,
   }
 
   ARegion *region = ED_area_find_region_xy_visual(area, RGN_TYPE_ANY, xy);
+  if (region && region->regiontype == RGN_TYPE_HUD) {
+    if (allow_widget_dragging) {
+      wmEvent event = {};
+      copy_v2_v2_int(event.xy, xy);
+      if (ui::but_find_mouse_over(region, &event)) {
+        return TouchDragMode::Mouse;
+      }
+    }
+    return TouchDragMode::Ignore;
+  }
   if (region == nullptr || !ELEM(region->regiontype, RGN_TYPE_WINDOW, RGN_TYPE_PREVIEW)) {
     return TouchDragMode::Default;
   }
@@ -6367,6 +6377,9 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
                                        win->runtime->touch_drag_mode :
                                        wm_touch_drag_start_mode(
                                            win, cd->touch_start_x, cd->touch_start_y, true);
+        if (mode == TouchDragMode::Ignore) {
+          break;
+        }
         if (ELEM(mode, TouchDragMode::Navigate2D, TouchDragMode::Navigate3D)) {
           event.flag |= WM_EVENT_TOUCH_NAVIGATION;
         }
@@ -6436,7 +6449,9 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
           event.modifier = wmEventModifierFlag(0);
         }
       }
-      if (is_one_finger_touch_pan && mode == TouchDragMode::Mouse) {
+      if (mode == TouchDragMode::Ignore ||
+          (is_one_finger_touch_pan && mode == TouchDragMode::Mouse))
+      {
         break;
       }
       if (pd->subtype == GHOST_kTrackpadEventMagnify && pd->numFingers == 2 &&
@@ -6554,6 +6569,9 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
         const TouchDragMode mode = win->runtime->touch_drag_mode;
         if (type == GHOST_kEventButtonUp) {
           win->runtime->touch_drag_active = false;
+        }
+        if (mode == TouchDragMode::Ignore) {
+          break;
         }
         if (ELEM(mode, TouchDragMode::Navigate2D, TouchDragMode::Navigate3D)) {
           event.flag |= WM_EVENT_TOUCH_NAVIGATION;

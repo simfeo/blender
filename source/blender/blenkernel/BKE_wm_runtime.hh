@@ -244,6 +244,8 @@ struct WindowRuntime {
     Default,
     /** Pass mouse events and discard pan events, allowing content and widget dragging. */
     Mouse,
+    /** Discard mouse and trackpad events for this touch drag. */
+    Ignore,
     /** Navigate 2D editors: one finger pans, two fingers pan and zoom. */
     Navigate2D,
     /** Navigate the 3D viewport: one finger orbits, two fingers pan and zoom. */
