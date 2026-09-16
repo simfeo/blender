@@ -3160,6 +3160,24 @@ static eHandlerActionFlag wm_handlers_do_keymap_with_keymap_handler(
 {
   eHandlerActionFlag action = WM_HANDLER_CONTINUE;
 
+  const ARegion *region = CTX_wm_region(C);
+  if (keymap && (event->flag & WM_EVENT_TOUCH) && event->type == LEFTMOUSE &&
+      CTX_wm_region_view3d(C) && handlers == &region->runtime->handlers)
+  {
+    /* Touch can select, but drawing and brush tools require a pen or mouse. */
+    const bToolRef *tool = WM_toolsystem_ref_from_context(C);
+    if (tool && tool->runtime &&
+        ((tool->runtime->flag & TOOLREF_FLAG_USE_BRUSHES) || STR_ELEM(tool->idname,
+                                                                      "builtin.draw",
+                                                                      "builtin.annotate",
+                                                                      "builtin.annotate_line",
+                                                                      "builtin.annotate_polygon",
+                                                                      "builtin.annotate_eraser")))
+    {
+      return WM_HANDLER_BREAK;
+    }
+  }
+
   if (keymap == nullptr) {
     /* Only callback is allowed to have nullptr key-maps. */
     BLI_assert(handler->dynamic.keymap_fn);
