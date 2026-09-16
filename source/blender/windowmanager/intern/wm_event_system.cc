@@ -6193,6 +6193,9 @@ static bke::WindowRuntime::TouchDragMode wm_touch_drag_start_mode(wmWindow *win,
   if (screen == nullptr) {
     return TouchDragMode::Default;
   }
+  if (BKE_screen_find_region_xy(screen, RGN_TYPE_ANY, xy)) {
+    return TouchDragMode::Mouse;
+  }
   ScrArea *area = BKE_screen_find_area_xy(screen, SPACE_TYPE_ANY, xy);
   if (area == nullptr) {
     return TouchDragMode::Default;
