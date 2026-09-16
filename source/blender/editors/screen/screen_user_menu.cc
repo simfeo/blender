@@ -262,8 +262,46 @@ static void handle_operator_asset_reference_props(const bContext &C,
   WM_operator_properties_free(&opptr);
 }
 
+static const char *screen_user_menu_delete_operator(const eContextObjectMode mode)
+{
+  switch (mode) {
+    case CTX_MODE_EDIT_MESH:
+      return "MESH_OT_delete";
+    case CTX_MODE_EDIT_CURVE:
+    case CTX_MODE_EDIT_SURFACE:
+      return "CURVE_OT_delete";
+    case CTX_MODE_EDIT_TEXT:
+      return "FONT_OT_delete";
+    case CTX_MODE_EDIT_ARMATURE:
+      return "ARMATURE_OT_delete";
+    case CTX_MODE_EDIT_METABALL:
+      return "MBALL_OT_delete_metaelems";
+    case CTX_MODE_EDIT_CURVES:
+      return "CURVES_OT_delete";
+    case CTX_MODE_EDIT_GREASE_PENCIL:
+      return "GREASE_PENCIL_OT_delete";
+    case CTX_MODE_EDIT_POINTCLOUD:
+      return "POINTCLOUD_OT_delete";
+    default:
+      return "OBJECT_OT_delete";
+  }
+}
+
 static void screen_user_menu_draw(const bContext *C, Menu *menu)
 {
+  /* Android demo: Fixed quick favorites overrides for demo purposes. */
+  if (CTX_wm_view3d(C)) {
+    ui::Layout &layout = *menu->layout;
+    const eContextObjectMode mode = CTX_data_mode_enum(C);
+    layout.operator_context_set(wm::OpCallContext::InvokeRegionWin);
+    layout.op("VIEW3D_OT_localview", std::nullopt, ICON_NONE);
+    if (mode == CTX_MODE_EDIT_CURVE) {
+      layout.op("CURVE_OT_select_all", "Select All Curves", ICON_NONE);
+    }
+    layout.op(screen_user_menu_delete_operator(mode), "Delete", ICON_NONE);
+    return;
+  }
+
   /* Enable when we have the ability to edit menus. */
   const bool show_missing = false;
   char label[512];
