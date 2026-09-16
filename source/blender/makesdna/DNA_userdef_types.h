@@ -994,7 +994,7 @@ struct UserDef {
 
   /** Space around each area. Inter-editor gap width. */
   /* Android demo change, to be replaced with a proper tablet setting override system. */
-  char border_width = 3;
+  char border_width = 4;
 
   /* Android demo change (USER_AREA_CORNER_HANDLE), to be replaced with a proper tablet setting
    * override system. */
@@ -1037,6 +1037,7 @@ struct UserDef {
    * In most cases this should not be used directly it is an offset used to calculate `pixelsize`
    * which should be used to define the line width.
    */
+  /* Android demo: Set default UI Line Width setting to 1 (Thick). */
   int ui_line_width = 0;
   /** Runtime, full DPI divided by `pixelsize`. */
   int dpi = 0;
