@@ -847,8 +847,8 @@ struct UserDef_SpaceData {
 struct UserDef_FileSpaceData {
   /* Android demo: Override File Browser default file display mode to thumbnails. */
   eFileDisplayType display_type = FILE_IMGDISPLAY; /* FileSelectParams.display */
-  eFileSortType sort_type = FILE_SORT_ALPHA;            /* FileSelectParams.sort */
-  int thumbnail_size = 96;                              /* FileSelectParams.thumbnail_size */
+  eFileSortType sort_type = FILE_SORT_ALPHA;       /* FileSelectParams.sort */
+  int thumbnail_size = 96;                         /* FileSelectParams.thumbnail_size */
   eFileDetails details_flags = FILE_DETAILS_SIZE |
                                FILE_DETAILS_DATETIME; /* FileSelectParams.details_flags */
   char _pad[5] = {};
