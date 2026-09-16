@@ -179,7 +179,7 @@ static void wheel_button_activate(wmWindow *win, const Button button, const uint
     wheel_clamp(win);
   }
   else if (button == Button::Favorites) {
-    /* Open the menu when processing the event queue, where a context is available. */
+    /* Toggle the menu when processing the event queue, where a context is available. */
     wmEvent event = *win->runtime->eventstate;
     event.type = EVT_MODIFIER_WHEEL_MENU;
     event.val = KM_PRESS;
@@ -373,7 +373,9 @@ void wm_modifier_wheel_popup(bContext *C, wmWindow *win, const int xy[2])
   const int anchor[2] = {int(wheel.center[0] + wheel_radius(wheel) + UI_UNIT_X),
                          int(wheel.center[1])};
   WM_tooltip_clear(C, win);
-  ui::popup_menu_invoke(C, "SCREEN_MT_user_menu", nullptr, anchor);
+  if (!ui::popup_menu_close_by_name(C, win, "SCREEN_MT_user_menu")) {
+    ui::popup_menu_invoke(C, "SCREEN_MT_user_menu", nullptr, anchor);
+  }
   CTX_wm_window_set(C, previous_window);
   CTX_wm_area_set(C, previous_area);
   CTX_wm_region_set(C, previous_region);

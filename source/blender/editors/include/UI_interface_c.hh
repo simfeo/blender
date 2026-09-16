@@ -935,6 +935,9 @@ void popup_menu_close(const Block *block, bool is_cancel = false);
  */
 void popup_menu_close_from_but(const Button *but, bool is_cancel = false);
 
+/** Close an open menu by its type identifier, returning whether it was found. */
+bool popup_menu_close_by_name(bContext *C, wmWindow *win, const char *idname);
+
 /**
  * Allow setting menu return value from externals.
  * E.g. WM might need to do this for exiting files correctly.

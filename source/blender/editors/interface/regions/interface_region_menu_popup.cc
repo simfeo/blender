@@ -928,6 +928,20 @@ void popup_menu_close_from_but(const Button *but, const bool is_cancel)
   popup_menu_close(but->block, is_cancel);
 }
 
+bool popup_menu_close_by_name(bContext *C, wmWindow *win, const char *idname)
+{
+  bScreen *screen = WM_window_get_active_screen(win);
+  for (ARegion &region : screen->regionbase) {
+    for (Block &block : region.runtime->uiblocks) {
+      if (block.handle && STREQ(block.handle->menu_idname, idname)) {
+        popup_block_close(C, win, &block);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 /** \} */
 
 }  // namespace blender::ui
