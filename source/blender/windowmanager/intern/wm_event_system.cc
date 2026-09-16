@@ -6207,7 +6207,7 @@ static bke::WindowRuntime::TouchDragMode wm_touch_drag_start_mode(wmWindow *win,
     return TouchDragMode::Default;
   }
 
-  ARegion *region = BKE_area_find_region_xy(area, RGN_TYPE_ANY, xy);
+  ARegion *region = ED_area_find_region_xy_visual(area, RGN_TYPE_ANY, xy);
   if (region == nullptr || !ELEM(region->regiontype, RGN_TYPE_WINDOW, RGN_TYPE_PREVIEW)) {
     return TouchDragMode::Default;
   }
