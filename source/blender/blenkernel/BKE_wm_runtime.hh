@@ -236,18 +236,18 @@ struct WindowRuntime {
   /**
    * A one-finger touch drag generates mouse motion/button events and trackpad-style pan events.
    * This mode determines which events are passed to Blender's handlers.
-   * In Pan and Orbit modes, mouse events allow dragging gizmos but cannot activate selection
-   * tools. If a gizmo takes the drag, view navigation is suppressed.
+   * In Navigate2D and Navigate3D modes, mouse events allow dragging gizmos but cannot activate
+   * selection tools. If a gizmo takes the drag, view navigation is suppressed.
    */
   enum class TouchDragMode {
     /** Pass both mouse and pan events to the existing UI scrolling and dragging handlers. */
     Default,
     /** Pass mouse events and discard pan events, allowing content and widget dragging. */
     Mouse,
-    /** Use the trackpad-style events to pan the view. */
-    Pan,
-    /** Translate the trackpad-style events into view rotation. */
-    Orbit,
+    /** Navigate 2D editors: one finger pans, two fingers pan and zoom. */
+    Navigate2D,
+    /** Navigate the 3D viewport: one finger orbits, two fingers pan and zoom. */
+    Navigate3D,
   };
 
   struct ModifierWheel {

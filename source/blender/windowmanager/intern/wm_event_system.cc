@@ -6209,7 +6209,7 @@ static bke::WindowRuntime::TouchDragMode wm_touch_drag_start_mode(wmWindow *win,
     return TouchDragMode::Default;
   }
   if (area->spacetype == SPACE_VIEW3D) {
-    return TouchDragMode::Orbit;
+    return TouchDragMode::Navigate3D;
   }
 
   /* Keep item dragging and panel interaction on their existing event paths. */
@@ -6248,7 +6248,7 @@ static bke::WindowRuntime::TouchDragMode wm_touch_drag_start_mode(wmWindow *win,
       }
     }
   }
-  return TouchDragMode::Pan;
+  return TouchDragMode::Navigate2D;
 }
 
 void wm_event_modifier_wheel_set(wmWindow *win, const uint8_t modifiers, const uint64_t time)
@@ -6364,7 +6364,7 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
                                        win->runtime->touch_drag_mode :
                                        wm_touch_drag_start_mode(
                                            win, cd->touch_start_x, cd->touch_start_y, true);
-        if (ELEM(mode, TouchDragMode::Pan, TouchDragMode::Orbit)) {
+        if (ELEM(mode, TouchDragMode::Navigate2D, TouchDragMode::Navigate3D)) {
           event.flag |= WM_EVENT_TOUCH_NAVIGATION;
         }
         event.flag |= WM_EVENT_TOUCH_ONE_FINGER;
@@ -6427,12 +6427,17 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
         mode = is_one_finger_touch_pan && win->runtime->touch_drag_active ?
                    win->runtime->touch_drag_mode :
                    wm_touch_drag_start_mode(win, pd->x, pd->y, false);
+        if (ELEM(mode, TouchDragMode::Navigate2D, TouchDragMode::Navigate3D)) {
+          /* Touch navigation uses the finger count, prevent clash with active modifier wheel
+           * modifiers. */
+          event.modifier = wmEventModifierFlag(0);
+        }
       }
       if (is_one_finger_touch_pan && mode == TouchDragMode::Mouse) {
         break;
       }
       if (pd->subtype == GHOST_kTrackpadEventMagnify && pd->numFingers == 2 &&
-          !ELEM(mode, TouchDragMode::Pan, TouchDragMode::Orbit))
+          !ELEM(mode, TouchDragMode::Navigate2D, TouchDragMode::Navigate3D))
       {
         break;
       }
@@ -6452,7 +6457,7 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
           break;
         case GHOST_kTrackpadEventScroll:
         default:
-          if (is_one_finger_touch_pan && mode == TouchDragMode::Orbit) {
+          if (is_one_finger_touch_pan && mode == TouchDragMode::Navigate3D) {
             /* View rotation consumes trackpad deltas in the opposite direction to a direct
              * pointer drag. */
             event.type = MOUSEROTATE;
@@ -6483,7 +6488,7 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
       }
       if (pd->numFingers == 1) {
         event.flag |= WM_EVENT_TOUCH_ONE_FINGER;
-        if (ELEM(mode, TouchDragMode::Pan, TouchDragMode::Orbit)) {
+        if (ELEM(mode, TouchDragMode::Navigate2D, TouchDragMode::Navigate3D)) {
           event.flag |= WM_EVENT_TOUCH_NAVIGATION;
         }
       }
@@ -6547,7 +6552,7 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
         if (type == GHOST_kEventButtonUp) {
           win->runtime->touch_drag_active = false;
         }
-        if (ELEM(mode, TouchDragMode::Pan, TouchDragMode::Orbit)) {
+        if (ELEM(mode, TouchDragMode::Navigate2D, TouchDragMode::Navigate3D)) {
           event.flag |= WM_EVENT_TOUCH_NAVIGATION;
         }
       }
