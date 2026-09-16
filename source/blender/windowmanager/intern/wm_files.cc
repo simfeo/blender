@@ -309,6 +309,8 @@ static void wm_file_read_setup_wm_substitute_old_window(wmWindowManager *oldwm,
 
   win->runtime->eventstate = oldwin->runtime->eventstate;
   win->runtime->event_last_handled = oldwin->runtime->event_last_handled;
+  win->runtime->cursor_is_touch = oldwin->runtime->cursor_is_touch;
+  win->runtime->cursor_hover_enabled = oldwin->runtime->cursor_hover_enabled;
   oldwin->runtime->eventstate = nullptr;
   oldwin->runtime->event_last_handled = nullptr;
 
