@@ -294,6 +294,23 @@ static void screen_user_menu_draw(const bContext *C, Menu *menu)
     ui::Layout &layout = *menu->layout;
     const eContextObjectMode mode = CTX_data_mode_enum(C);
     layout.operator_context_set(wm::OpCallContext::InvokeRegionWin);
+
+    if (mode == CTX_MODE_SCULPT) {
+      PointerRNA ptr = layout.op("WM_OT_radial_control", "Brush Size", ICON_NONE);
+
+      RNA_string_set(&ptr, "data_path_primary", "tool_settings.sculpt.brush.size");
+      RNA_string_set(
+          &ptr, "data_path_secondary", "tool_settings.sculpt.unified_paint_settings.size");
+      RNA_string_set(&ptr, "use_secondary", "tool_settings.sculpt.brush.use_unified_size");
+      RNA_string_set(&ptr, "rotation_path", "tool_settings.sculpt.brush.texture_slot.angle");
+      RNA_string_set(&ptr, "color_path", "tool_settings.sculpt.brush.cursor_color_add");
+      RNA_string_set(&ptr, "image_id", "tool_settings.sculpt.brush");
+
+      RNA_boolean_set(&ptr, "use_pen", true);
+
+      layout.separator();
+    }
+
     layout.op("VIEW3D_OT_localview", std::nullopt, ICON_NONE);
     if (mode == CTX_MODE_EDIT_CURVE) {
       layout.op("CURVE_OT_select_all", "Select All Curves", ICON_NONE);
