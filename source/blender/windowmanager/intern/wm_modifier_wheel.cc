@@ -287,7 +287,8 @@ bool wm_modifier_wheel_event(wmWindowManager *wm,
   }
   if (type == GHOST_kEventCursorMove) {
     const auto &cursor = *static_cast<const GHOST_TEventCursorData *>(data);
-    if (cursor.is_touch) {
+    /* Modifier wheel ignores pen input. */
+    if (cursor.is_touch || cursor.tablet.Active != GHOST_kTabletModeNone) {
       return false;
     }
     wheel.pointer_xy[0] = cursor.x;
@@ -312,7 +313,7 @@ bool wm_modifier_wheel_event(wmWindowManager *wm,
   }
   if (ELEM(type, GHOST_kEventButtonDown, GHOST_kEventButtonUp)) {
     const auto &button = *static_cast<const GHOST_TEventButtonData *>(data);
-    if (button.is_touch) {
+    if (button.is_touch || button.tablet.Active != GHOST_kTabletModeNone) {
       return false;
     }
     const uint32_t mask = button.button;
