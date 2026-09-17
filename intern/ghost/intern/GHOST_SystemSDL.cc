@@ -616,6 +616,7 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
     touch_previous_x_ = 0.0f;
     touch_previous_y_ = 0.0f;
     touch_previous_distance_ = 0.0f;
+    touch_previous_angle_ = 0.0f;
   };
 
   auto find_touch = [&]() {
@@ -709,6 +710,7 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
     const float distance_x = (active_touches_[1].x - active_touches_[0].x) * width;
     const float distance_y = (active_touches_[1].y - active_touches_[0].y) * height;
     touch_previous_distance_ = std::sqrt(distance_x * distance_x + distance_y * distance_y);
+    touch_previous_angle_ = std::atan2(distance_y, distance_x);
     set_cursor(touch_start_x_, touch_start_y_);
   };
   auto multi_finger_tap_is_valid = [&]() {
@@ -777,7 +779,7 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
         begin_two_finger_gesture(TouchGestureMode::MultiFingerTapPending);
       }
       else {
-        begin_two_finger_gesture(TouchGestureMode::TwoFingerPanZoom);
+        begin_two_finger_gesture(TouchGestureMode::TwoFingerNavigation);
       }
     }
     else {
@@ -826,7 +828,7 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
         return;
       }
       if (multi_finger_tap_count_ == 2 && active_touches_.size() == 2) {
-        touch_gesture_mode_ = TouchGestureMode::TwoFingerPanZoom;
+        touch_gesture_mode_ = TouchGestureMode::TwoFingerNavigation;
       }
       else {
         suppress_touch_gesture();
@@ -849,7 +851,7 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
         touch_previous_y_ = touch->y;
       }
     }
-    else if (touch_gesture_mode_ == TouchGestureMode::TwoFingerPanZoom &&
+    else if (touch_gesture_mode_ == TouchGestureMode::TwoFingerNavigation &&
              active_touches_.size() == 2)
     {
       const float centroid_x = (active_touches_[0].x + active_touches_[1].x) * 0.5f;
@@ -871,6 +873,18 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
         push_trackpad(GHOST_kTrackpadEventMagnify, distance_delta, 0, false, 2);
         /* Retain the fractional remainder so slow pinches still accumulate into smooth events. */
         touch_previous_distance_ += distance_delta;
+      }
+
+      /* Match Cocoa's TrackpadEventRotate events (five units per degree, clockwise positive). */
+      constexpr float rotation_scale = 5.0f * 180.0f / float(M_PI);
+      const float angle = std::atan2(distance_y, distance_x);
+      const float angle_delta = std::remainder(angle - touch_previous_angle_, float(2.0 * M_PI));
+      const int32_t rotation_delta = int32_t(angle_delta * rotation_scale);
+      if (rotation_delta != 0) {
+        push_trackpad(GHOST_kTrackpadEventRotate, rotation_delta, 0, false, 2);
+        /* Retain fractional rotation and wrap when crossing the -pi/pi boundary. */
+        touch_previous_angle_ = std::remainder(
+            touch_previous_angle_ + rotation_delta / rotation_scale, float(2.0 * M_PI));
       }
     }
     return;
@@ -915,7 +929,7 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
       suppress_touch_gesture();
     }
     else if (multi_finger_tap_count_ == 2 && active_touches_.size() == 2) {
-      touch_gesture_mode_ = TouchGestureMode::TwoFingerPanZoom;
+      touch_gesture_mode_ = TouchGestureMode::TwoFingerNavigation;
     }
     else {
       suppress_touch_gesture();
@@ -957,7 +971,7 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
     return;
   }
 
-  if (touch_gesture_mode_ == TouchGestureMode::TwoFingerPanZoom) {
+  if (touch_gesture_mode_ == TouchGestureMode::TwoFingerNavigation) {
     if (!is_canceled && active_touches_.size() == 2) {
       active_touches_.erase(touch);
       const TouchPoint &remaining_touch = active_touches_.front();
@@ -967,6 +981,7 @@ void GHOST_SystemSDL::processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt)
       touch_previous_x_ = remaining_touch.x;
       touch_previous_y_ = remaining_touch.y;
       touch_previous_distance_ = 0.0f;
+      touch_previous_angle_ = 0.0f;
       set_cursor(remaining_touch.x, remaining_touch.y);
       return;
     }

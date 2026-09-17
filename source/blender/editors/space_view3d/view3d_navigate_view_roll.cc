@@ -194,7 +194,8 @@ static wmOperatorStatus viewroll_exec(bContext *C, wmOperator *op)
   }
   else {
     vod = new ViewOpsData();
-    ED_view3d_context_user_region(C, &vod->v3d, &vod->region);
+    vod->v3d = CTX_wm_view3d(C);
+    vod->region = CTX_wm_region(C);
     vod->rv3d = static_cast<RegionView3D *>(vod->region->regiondata);
   }
 
@@ -220,17 +221,18 @@ static wmOperatorStatus viewroll_exec(bContext *C, wmOperator *op)
     angle = -angle;
   }
 
+  if (vod->rv3d->persp == RV3D_CAMOB) {
+    /* Wrap to prevent poor precision at large values. */
+    vod->rv3d->camroll = angle_wrap_rad(vod->init.camroll - angle);
+    ED_region_tag_redraw(vod->region);
+    viewops_data_free(C, vod);
+    op->customdata = nullptr;
+    return OPERATOR_FINISHED;
+  }
+
   normalize_v3_v3(mousevec, vod->rv3d->viewinv[2]);
   negate_v3(mousevec);
   view_roll_angle(vod->region, quat_new, vod->rv3d->viewquat, mousevec, angle, true);
-
-  if (vod->rv3d->persp == RV3D_CAMOB) {
-    const bool is_camera_lock = ED_view3d_camera_lock_check(vod->v3d, vod->rv3d);
-    if (!is_camera_lock) {
-      /* Wrap to prevent poor precision at large values. */
-      vod->rv3d->camroll = angle_wrap_rad(vod->init.camroll - angle);
-    }
-  }
 
   V3D_SmoothParams sview_params = {};
   sview_params.quat = quat_new;
@@ -319,7 +321,7 @@ void VIEW3D_OT_view_roll(wmOperatorType *ot)
   ot->invoke = viewroll_invoke;
   ot->exec = viewroll_exec;
   ot->modal = viewroll_modal;
-  ot->poll = ED_operator_rv3d_user_region_poll;
+  ot->poll = ED_operator_region_view3d_active;
   ot->cancel = view3d_navigate_cancel_fn;
 
   /* flags */

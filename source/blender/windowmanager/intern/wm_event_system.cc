@@ -6070,9 +6070,10 @@ static wmEvent *wm_event_add_mousemove_to_head(wmWindow *win)
 static wmEvent *wm_event_add_trackpad(wmWindow *win, const wmEvent *event, int deltax, int deltay)
 {
   /* Ignore in between trackpad events for performance, we only need high accuracy
-   * for painting with mouse moves, for navigation using the accumulated value is ok. */
+   * for painting with mouse moves, for navigation using the accumulated value is ok.
+   * Keep different touch gestures and scroll directions separate. */
   const wmEvent *event_last = win->runtime->event_queue.last();
-  if (event_last && event_last->type == event->type) {
+  if (event_last && event_last->type == event->type && event_last->flag == event->flag) {
     deltax += event_last->xy[0] - event_last->prev_xy[0];
     deltay += event_last->xy[1] - event_last->prev_xy[1];
 
@@ -6478,8 +6479,8 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
       {
         break;
       }
-      if (pd->subtype == GHOST_kTrackpadEventMagnify && pd->numFingers == 2 &&
-          !ELEM(mode, TouchDragMode::Navigate2D, TouchDragMode::Navigate3D))
+      if (ELEM(pd->subtype, GHOST_kTrackpadEventMagnify, GHOST_kTrackpadEventRotate) &&
+          pd->numFingers == 2 && !ELEM(mode, TouchDragMode::Navigate2D, TouchDragMode::Navigate3D))
       {
         break;
       }

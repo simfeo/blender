@@ -327,6 +327,13 @@ static void screen_user_menu_draw(const bContext *C, Menu *menu)
 
         layout.separator();
       }
+      else if (mode == CTX_MODE_PAINT_GREASE_PENCIL) {
+        ptr = layout.op("VIEW3D_OT_view_roll_set", "Reset Roll", ICON_NONE);
+        RNA_float_set(&ptr, "angle", 0.0f);
+        layout.op("VIEW3D_OT_view_flip", std::nullopt, ICON_NONE);
+
+        layout.separator();
+      }
     }
 
     if (ELEM(mode, CTX_MODE_OBJECT, CTX_MODE_EDIT_MESH)) {

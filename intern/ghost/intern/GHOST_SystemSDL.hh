@@ -109,7 +109,7 @@ class GHOST_SystemSDL : public GHOST_System {
     OneFingerDrag,
     /** Continue with trackpad-style motion only after one finger of a two-finger gesture lifts. */
     OneFingerTrackpadOnly,
-    TwoFingerPanZoom,
+    TwoFingerNavigation,
     Suppressed,
   };
 
@@ -129,6 +129,7 @@ class GHOST_SystemSDL : public GHOST_System {
   float touch_previous_x_ = 0.0f;
   float touch_previous_y_ = 0.0f;
   float touch_previous_distance_ = 0.0f;
+  float touch_previous_angle_ = 0.0f;
   int32_t touch_cursor_x_ = 0;
   int32_t touch_cursor_y_ = 0;
   /** Use the last touch position until mouse or pen input updates the cursor. */
