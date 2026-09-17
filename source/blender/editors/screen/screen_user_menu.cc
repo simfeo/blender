@@ -279,6 +279,7 @@ static const char *screen_user_menu_delete_operator(const eContextObjectMode mod
     case CTX_MODE_EDIT_CURVES:
       return "CURVES_OT_delete";
     case CTX_MODE_EDIT_GREASE_PENCIL:
+    case CTX_MODE_PAINT_GREASE_PENCIL:
       return "GREASE_PENCIL_OT_delete";
     case CTX_MODE_EDIT_POINTCLOUD:
       return "POINTCLOUD_OT_delete";
