@@ -824,8 +824,9 @@ def km_screen(params):
          {"properties": [("direction", 'NEXT')]}),
         ("screen.workspace_cycle", {"type": 'PAGE_UP', "value": 'PRESS', "ctrl": True},
          {"properties": [("direction", 'PREV')]}),
-        # Maximize Area
-        ("screen.screen_full_area", {"type": 'TOUCH_FOUR_FINGER_TAP', "value": 'PRESS', "any": True}, None),
+        # Focus mode
+        ("screen.screen_full_area", {"type": 'TOUCH_FOUR_FINGER_TAP', "value": 'PRESS', "any": True},
+         {"properties": [("use_hide_panels", True)]}),
         # Quad view
         ("screen.region_quadview", {"type": 'Q', "value": 'PRESS', "ctrl": True, "alt": True}, None),
         # Repeat last
