@@ -295,16 +295,21 @@ static void screen_user_menu_draw(const bContext *C, Menu *menu)
     const eContextObjectMode mode = CTX_data_mode_enum(C);
     layout.operator_context_set(wm::OpCallContext::InvokeRegionWin);
 
-    if (mode == CTX_MODE_SCULPT) {
+    if (ELEM(mode, CTX_MODE_SCULPT, CTX_MODE_PAINT_GREASE_PENCIL)) {
       PointerRNA ptr = layout.op("WM_OT_radial_control", "Brush Size", ICON_NONE);
 
-      RNA_string_set(&ptr, "data_path_primary", "tool_settings.sculpt.brush.size");
-      RNA_string_set(
-          &ptr, "data_path_secondary", "tool_settings.sculpt.unified_paint_settings.size");
-      RNA_string_set(&ptr, "use_secondary", "tool_settings.sculpt.brush.use_unified_size");
-      RNA_string_set(&ptr, "rotation_path", "tool_settings.sculpt.brush.texture_slot.angle");
-      RNA_string_set(&ptr, "color_path", "tool_settings.sculpt.brush.cursor_color_add");
-      RNA_string_set(&ptr, "image_id", "tool_settings.sculpt.brush");
+      if (mode == CTX_MODE_SCULPT) {
+        RNA_string_set(&ptr, "data_path_primary", "tool_settings.sculpt.brush.size");
+        RNA_string_set(
+            &ptr, "data_path_secondary", "tool_settings.sculpt.unified_paint_settings.size");
+        RNA_string_set(&ptr, "use_secondary", "tool_settings.sculpt.brush.use_unified_size");
+        RNA_string_set(&ptr, "rotation_path", "tool_settings.sculpt.brush.texture_slot.angle");
+        RNA_string_set(&ptr, "color_path", "tool_settings.sculpt.brush.cursor_color_add");
+        RNA_string_set(&ptr, "image_id", "tool_settings.sculpt.brush");
+      }
+      else if (mode == CTX_MODE_PAINT_GREASE_PENCIL) {
+        RNA_string_set(&ptr, "data_path_primary", "tool_settings.gpencil_paint.brush.size");
+      }
 
       RNA_boolean_set(&ptr, "use_pen", true);
 
