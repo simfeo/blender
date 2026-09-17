@@ -972,11 +972,11 @@ static bool paint_cursor_context_init(bContext *C,
     return false;
   }
   pcontext.mode = BKE_paintmode_get_active_from_context(C);
+  /* Touch gestures navigate the view instead of positioning the brush. */
+  if (pcontext.win->runtime->cursor_is_touch) {
+    return false;
+  }
   if (pcontext.mode == PaintMode::Sculpt) {
-    /* Touch gestures navigate the view instead of positioning the sculpt brush. */
-    if (pcontext.win->runtime->cursor_is_touch) {
-      return false;
-    }
     pcontext.sd = CTX_data_tool_settings(C)->sculpt;
   }
 
