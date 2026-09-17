@@ -315,8 +315,9 @@ static void screen_user_menu_draw(const bContext *C, Menu *menu)
       RNA_boolean_set(&ptr, "use_pen", true);
 
       ptr = layout.op("WM_OT_call_asset_shelf_popover", "Brush Select", ICON_NONE);
-      const char *asset_shelf_popover_mode = CTX_MODE_SCULPT ? "VIEW3D_AST_brush_sculpt" :
-                                                               "VIEW3D_AST_brush_gpencil_paint";
+      const char *asset_shelf_popover_mode = mode == CTX_MODE_SCULPT ?
+                                                 "VIEW3D_AST_brush_sculpt" :
+                                                 "VIEW3D_AST_brush_gpencil_paint";
       RNA_string_set(&ptr, "name", asset_shelf_popover_mode);
 
       layout.separator();
