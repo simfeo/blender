@@ -367,12 +367,21 @@ static wmOperatorStatus viewrotate_invoke_impl(bContext *C,
   return OPERATOR_RUNNING_MODAL;
 }
 
+static bool viewrotate_poll(bContext *C)
+{
+  /* Android demo workaround: Two-finger touch events mapped to rotation pan instead. */
+  return view3d_rotation_poll(C) || view3d_location_poll(C);
+}
+
 static wmOperatorStatus viewrotate_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
   /* Depending on the navigation preferences, unmodified trackpad-pan events can be mapped to
    * view rotation. Two-finger touch-screen gestures always pan the view. */
   const ViewOpsType *nav_type = (event->flag & WM_EVENT_TOUCH_TWO_FINGERS) ? &ViewOpsType_move :
                                                                              &ViewOpsType_rotate;
+  if (!nav_type->poll_fn(C)) {
+    return OPERATOR_CANCELLED;
+  }
   return view3d_navigate_invoke_impl(C, op, event, nav_type);
 }
 
@@ -386,7 +395,7 @@ void VIEW3D_OT_rotate(wmOperatorType *ot)
   /* API callbacks. */
   ot->invoke = viewrotate_invoke;
   ot->modal = view3d_navigate_modal_fn;
-  ot->poll = view3d_rotation_poll;
+  ot->poll = viewrotate_poll;
   ot->cancel = view3d_navigate_cancel_fn;
 
   /* flags */
