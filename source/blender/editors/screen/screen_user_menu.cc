@@ -316,7 +316,9 @@ static void screen_user_menu_draw(const bContext *C, Menu *menu)
       layout.separator();
     }
 
-    layout.op("VIEW3D_OT_localview", std::nullopt, ICON_NONE);
+    if (ELEM(mode, CTX_MODE_OBJECT, CTX_MODE_EDIT_MESH)) {
+      layout.op("VIEW3D_OT_localview", std::nullopt, ICON_NONE);
+    }
     if (mode == CTX_MODE_EDIT_CURVE) {
       layout.op("CURVE_OT_select_all", "Select All Curves", ICON_NONE);
     }
