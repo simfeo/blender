@@ -324,6 +324,7 @@ static void screen_user_menu_draw(const bContext *C, Menu *menu)
 
       if (mode == CTX_MODE_SCULPT) {
         layout.op("OBJECT_OT_voxel_remesh", std::nullopt, ICON_NONE);
+        layout.op("PAINT_OT_mask_flood_fill", "Clear Mask", ICON_NONE);
 
         layout.separator();
       }
