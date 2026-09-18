@@ -253,7 +253,7 @@ struct WindowRuntime {
   };
 
   struct ModifierWheel {
-    enum class Button { None, Handle, Ctrl, Shift, Alt, Favorites };
+    enum class Button { None, Handle, Ctrl, Shift, Alt, Favorites, Confirm, Cancel };
     struct Contact {
       uint64_t device, id;
       Button button;
@@ -265,6 +265,8 @@ struct WindowRuntime {
     bool enabled = false;
     bool initialized = false;
     bool collapsed = false;
+    bool show_confirm = false;
+    bool show_cancel = false;
     float center[2] = {-1.0f, -1.0f};
     uint8_t modifiers = 0;
     Vector<Contact> contacts;

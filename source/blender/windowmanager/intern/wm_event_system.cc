@@ -7444,6 +7444,16 @@ bool WM_window_modal_keymap_status_draw(bContext *C, wmWindow *win, ui::Layout &
     }
 
     const int num_items_used = template_status_bar_modal_item(&row, op, keymap, items + i);
+    if (num_items_used == 1) {
+      const wmKeyMapItem *kmi = WM_modalkeymap_find_propvalue(keymap, items[i].value);
+      if (kmi && kmi->val != KM_RELEASE && kmi->keymodifier == EVENT_NONE &&
+          kmi->shift != KM_MOD_HELD && kmi->ctrl != KM_MOD_HELD && kmi->alt != KM_MOD_HELD &&
+          kmi->oskey != KM_MOD_HELD && kmi->hyper != KM_MOD_HELD)
+      {
+        win->runtime->modifier_wheel.show_confirm |= kmi->type == EVT_RETKEY;
+        win->runtime->modifier_wheel.show_cancel |= kmi->type == EVT_ESCKEY;
+      }
+    }
     if (num_items_used > 0) {
       /* Skip items in case consecutive items were merged. */
       i += num_items_used - 1;

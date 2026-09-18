@@ -86,6 +86,14 @@ static rctf wheel_button_rect(const Wheel &wheel, const Button button)
     case Button::Favorites:
       x += offset;
       break;
+    case Button::Confirm:
+      x += offset;
+      y -= offset;
+      break;
+    case Button::Cancel:
+      x -= offset;
+      y -= offset;
+      break;
     default:
       break;
   }
@@ -99,9 +107,19 @@ static Button wheel_hit_test(const Wheel &wheel, const int xy[2])
   if (!wheel.enabled) {
     return Button::None;
   }
-  for (const Button button :
-       {Button::Handle, Button::Ctrl, Button::Shift, Button::Alt, Button::Favorites})
+  for (const Button button : {Button::Handle,
+                              Button::Ctrl,
+                              Button::Shift,
+                              Button::Alt,
+                              Button::Favorites,
+                              Button::Confirm,
+                              Button::Cancel})
   {
+    if ((button == Button::Confirm && !wheel.show_confirm) ||
+        (button == Button::Cancel && !wheel.show_cancel))
+    {
+      continue;
+    }
     const rctf rect = wheel_button_rect(wheel, button);
     const float dx = xy[0] - BLI_rctf_cent_x(&rect);
     const float dy = xy[1] - BLI_rctf_cent_y(&rect);
@@ -185,6 +203,17 @@ static void wheel_button_activate(wmWindow *win, const Button button, const uint
     event.val = KM_PRESS;
     event.flag = eWM_EventFlag(0);
     event.utf8_buf[0] = '\0';
+    WM_event_add(win, &event);
+  }
+  else if (ELEM(button, Button::Confirm, Button::Cancel)) {
+    /* Wheel input leaves the editor cursor in place. Send unmodified Enter/Esc. */
+    wmEvent event{};
+    copy_v2_v2_int(event.xy, win->runtime->eventstate->xy);
+    copy_v2_v2_int(event.prev_xy, event.xy);
+    event.type = button == Button::Confirm ? EVT_RETKEY : EVT_ESCKEY;
+    event.val = KM_PRESS;
+    WM_event_add(win, &event);
+    event.val = KM_RELEASE;
     WM_event_add(win, &event);
   }
 }
@@ -459,6 +488,12 @@ void wm_modifier_wheel_draw(wmWindow *win)
     wheel_draw_button(wheel, Button::Shift, ICON_EVENT_SHIFT);
     wheel_draw_button(wheel, Button::Alt, ICON_EVENT_ALT);
     wheel_draw_button(wheel, Button::Favorites, ICON_SOLO_ON);
+    if (wheel.show_confirm) {
+      wheel_draw_button(wheel, Button::Confirm, ICON_EVENT_RETURN);
+    }
+    if (wheel.show_cancel) {
+      wheel_draw_button(wheel, Button::Cancel, ICON_EVENT_ESC);
+    }
   }
   GPU_blend(GPU_BLEND_NONE);
 }

@@ -269,14 +269,38 @@ void uiTemplateInputStatus(Layout *layout, bContext *C)
   wmWindow *win = CTX_wm_window(C);
   WorkSpace *workspace = CTX_wm_workspace(C);
 
+  auto &wheel = win->runtime->modifier_wheel;
+  wheel.show_confirm = false;
+  wheel.show_cancel = false;
+
   /* Workspace status text has priority. */
   if (!workspace->runtime->status.is_empty()) {
     Layout &row = layout->row(true);
+    bool previous_icon_is_modifier = false;
     for (const bke::WorkSpaceStatusItem &item : workspace->runtime->status) {
       if (item.space_factor != 0.0f) {
         row.separator(item.space_factor);
       }
       else {
+        /* Android demo: Display modifier wheel enter/esc button based on status bar content.
+         * Sloppy logic to check if these are simple enter/esc actions without preceding
+         * modifiers.*/
+        if (ELEM(item.icon,
+                 ICON_EVENT_SHIFT,
+                 ICON_EVENT_CTRL,
+                 ICON_EVENT_ALT,
+                 ICON_EVENT_OS,
+                 ICON_EVENT_HYPER))
+        {
+          previous_icon_is_modifier = true;
+        }
+        else {
+          if (!previous_icon_is_modifier) {
+            wheel.show_confirm |= item.icon == ICON_EVENT_RETURN;
+            wheel.show_cancel |= item.icon == ICON_EVENT_ESC;
+          }
+          previous_icon_is_modifier = false;
+        }
         Button *but = uiItemL_ex(&row, item.text, item.icon, false, false);
         if (item.inverted) {
           but->drawflag |= BUT_ICON_INVERT;
