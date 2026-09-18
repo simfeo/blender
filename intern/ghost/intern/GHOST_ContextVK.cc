@@ -1197,6 +1197,7 @@ GHOST_TSuccess GHOST_ContextVK::swapBufferRelease()
     this->setPresentFence(swapchain_, present_fence);
   }
   acquired_swapchain_image_index_.reset();
+  backbuffer_reusable_ = ELEM(present_result, VK_SUCCESS, VK_SUBOPTIMAL_KHR);
 
 #ifdef __ANDROID__
   /* Android reports SUBOPTIMAL during device orientation changes. */
@@ -1465,6 +1466,7 @@ GHOST_TSuccess GHOST_ContextVK::initializeFrameData()
 
 GHOST_TSuccess GHOST_ContextVK::recreateSwapchain(bool use_hdr_swapchain)
 {
+  backbuffer_reusable_ = false;
   GHOST_InstanceVK &instance_vk = vulkan_instance.value();
   GHOST_DeviceVK &device_vk = instance_vk.device.value();
 

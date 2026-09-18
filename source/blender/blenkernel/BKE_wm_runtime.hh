@@ -204,6 +204,9 @@ struct WindowRuntime {
   /** Custom drawing callbacks. */
   ListBaseT<WindowDrawCB> drawcalls = {nullptr, nullptr};
 
+  /** Android demo: reuse the last frame between redraws to avoid GPU wake-up stalls. */
+  double last_present_time = 0.0;
+
   /** Gesture stuff. */
   ListBaseT<wmGesture> gesture = {nullptr, nullptr};
 

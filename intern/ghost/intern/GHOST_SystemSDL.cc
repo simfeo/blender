@@ -145,28 +145,6 @@ GHOST_TSuccess GHOST_SystemSDL::init()
   GHOST_TSuccess success = GHOST_System::init();
 
   if (success) {
-#ifdef __ANDROID__
-    /* Horrible Android demo hack for Movinkpad 14: Add a GHOST timer to constantly redraw the
-     * window 30 times per second. This avoids GPU stalls when idling, and prevents a lag spike
-     * when starting a touch gesture interaction after idle.
-     *
-     * Profiling with Tracy, the issue comes from the first 4-5 frames Vulkan present after idling
-     * taking abnormally long (35ms+ instead of a subsequent average of 8ms). From there, profiling
-     * with the Android system Perfetto profiler shows that the Android QueueBuffer is waiting for
-     * the GPU to complete the previous frame. As making the viewport smaller/easier to render
-     * greatly reduces the issue, this *could* be caused by a GPU frequency ramp-up issue.
-     */
-    this->installTimer(
-        0,
-        20,
-        [](GHOST_ITimerTask *task, uint64_t /*time*/) {
-          GHOST_SystemSDL *system = static_cast<GHOST_SystemSDL *>(task->getUserData());
-          GHOST_WindowSDL *window = static_cast<GHOST_WindowSDL *>(
-              system->window_manager_->getWindows().front());
-          window->invalidate();
-        },
-        this);
-#endif
     return GHOST_kSuccess;
   }
 

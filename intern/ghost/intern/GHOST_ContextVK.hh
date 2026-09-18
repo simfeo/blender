@@ -143,6 +143,11 @@ class GHOST_ContextVK : public GHOST_Context {
 
   /** \copydoc #GHOST_IContext::swapBuffersAcquire */
   GHOST_TSuccess swapBufferAcquire() override;
+  /** \copydoc #GHOST_IContext::canReuseBackBuffer */
+  bool canReuseBackBuffer() const override
+  {
+    return backbuffer_reusable_;
+  }
   /**
    * Swaps front and back buffers of a window.
    * \return  A boolean success indicator.
@@ -290,6 +295,7 @@ class GHOST_ContextVK : public GHOST_Context {
   VkExtent2D render_extent_min_;
   VkSurfaceFormatKHR surface_format_;
   bool use_hdr_swapchain_;
+  bool backbuffer_reusable_ = false;
 
   std::optional<uint32_t> acquired_swapchain_image_index_;
 

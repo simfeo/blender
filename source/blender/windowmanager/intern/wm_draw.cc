@@ -28,6 +28,7 @@
 #include "BLI_math_vector_c.hh"
 #include "BLI_math_vector_types.hh"
 #include "BLI_rect.hh"
+#include "BLI_time.hh"
 #include "BLI_utildefines.hh"
 
 #include "BKE_context.hh"
@@ -1729,17 +1730,40 @@ void wm_draw_update(bContext *C)
 
     CTX_wm_window_set(C, &win);
 
-    if (wm_draw_update_test_window(bmain, C, &win)) {
+    bool do_draw = wm_draw_update_test_window(bmain, C, &win);
+#if defined(__ANDROID__)
+    /* Android demo workaround: present the retained Vulkan backbuffer every 20 ms while idle.
+     * Workaround an issue on Movinkpad 14, where the first few frames after idle stall waiting for
+     * GPU work in Android QueueBuffer, possibly due to GPU frequency ramp-up. */
+    const bool present_idle = GPU_backend_get_type() == GPU_BACKEND_VULKAN && win.active &&
+                              win.runtime->ghostwin &&
+                              win.windowstate != GHOST_kWindowStateMinimized;
+    const bool present_due = present_idle &&
+                             BLI_time_now_seconds() - win.runtime->last_present_time >= 0.02;
+#else
+    const bool present_due = false;
+#endif
+
+    if (do_draw || present_due) {
       PRF_frame_mark_start("Window Drawing"_ustr);
       /* Sets context window+screen. */
       wm_window_make_drawable(wm, &win);
-      wm_window_swap_buffer_acquire(&win);
+      do_draw |= wm_window_swap_buffer_acquire(&win);
 
-      /* Notifiers for screen redraw. */
-      ED_screen_ensure_updated(C, wm, &win);
+      if (do_draw) {
+        /* Notifiers for screen redraw. */
+        ED_screen_ensure_updated(C, wm, &win);
 
-      wm_draw_window(C, &win);
-      wm_draw_update_clear_window(C, &win);
+        wm_draw_window(C, &win);
+        wm_draw_update_clear_window(C, &win);
+      }
+      else {
+        /* Bind the retained backbuffer so presenting copies the previous frame to the swapchain
+         * without redrawing the window. */
+        GPU_context_begin_frame(static_cast<GPUContext *>(win.runtime->gpuctx));
+        GPU_backbuffer_bind(GPU_BACKBUFFER_LEFT);
+        GPU_context_end_frame(static_cast<GPUContext *>(win.runtime->gpuctx));
+      }
 
       wm_window_swap_buffer_release(&win);
       PRF_frame_mark_end("Window Drawing"_ustr);
