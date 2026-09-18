@@ -115,8 +115,8 @@ static Button wheel_hit_test(const Wheel &wheel, const int xy[2])
                               Button::Confirm,
                               Button::Cancel})
   {
-    if ((button == Button::Confirm && !wheel.show_confirm) ||
-        (button == Button::Cancel && !wheel.show_cancel))
+    if ((button == Button::Confirm && (!wheel.show_confirm || wheel.pen_down)) ||
+        (button == Button::Cancel && (!wheel.show_cancel || wheel.pen_down)))
     {
       continue;
     }
@@ -290,6 +290,7 @@ void wm_modifier_wheel_release(wmWindow *win, const uint64_t time)
   wheel.contacts.clear();
   wheel.hover = Button::None;
   wheel.pointer_buttons = 0;
+  wheel.pen_down = false;
   wheel_redraw(win);
 }
 
@@ -342,11 +343,19 @@ bool wm_modifier_wheel_event(wmWindowManager *wm,
   }
   if (ELEM(type, GHOST_kEventButtonDown, GHOST_kEventButtonUp)) {
     const auto &button = *static_cast<const GHOST_TEventButtonData *>(data);
-    if (button.is_touch || button.tablet.Active != GHOST_kTabletModeNone) {
+    /* Captured touch is handled by GHOST_kEventTouch, not its emulated mouse events. */
+    if (button.is_touch) {
       return false;
     }
     const uint32_t mask = button.button;
     const bool down = type == GHOST_kEventButtonDown;
+    if (button.tablet.Active != GHOST_kTabletModeNone) {
+      if (mask == GHOST_kButtonMaskLeft) {
+        wheel.pen_down = down;
+        wheel_redraw(win);
+      }
+      return false;
+    }
     if (down && !wheel.pointer_buttons && wheel_hit_test(wheel, wheel.pointer_xy) != Button::None)
     {
       wheel.captured_buttons |= mask;
@@ -488,10 +497,10 @@ void wm_modifier_wheel_draw(wmWindow *win)
     wheel_draw_button(wheel, Button::Shift, ICON_EVENT_SHIFT);
     wheel_draw_button(wheel, Button::Alt, ICON_EVENT_ALT);
     wheel_draw_button(wheel, Button::Favorites, ICON_SOLO_ON);
-    if (wheel.show_confirm) {
+    if (wheel.show_confirm && !wheel.pen_down) {
       wheel_draw_button(wheel, Button::Confirm, ICON_EVENT_RETURN);
     }
-    if (wheel.show_cancel) {
+    if (wheel.show_cancel && !wheel.pen_down) {
       wheel_draw_button(wheel, Button::Cancel, ICON_EVENT_ESC);
     }
   }

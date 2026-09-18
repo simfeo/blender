@@ -267,6 +267,8 @@ struct WindowRuntime {
     bool collapsed = false;
     bool show_confirm = false;
     bool show_cancel = false;
+    /** Hide confirmation controls while drawing with the pen. */
+    bool pen_down = false;
     float center[2] = {-1.0f, -1.0f};
     uint8_t modifiers = 0;
     Vector<Contact> contacts;
