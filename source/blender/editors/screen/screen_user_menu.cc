@@ -343,7 +343,10 @@ static void screen_user_menu_draw(const bContext *C, Menu *menu)
     if (mode == CTX_MODE_EDIT_CURVE) {
       layout.op("CURVE_OT_select_all", "Select All Curves", ICON_NONE);
     }
-    layout.op(screen_user_menu_delete_operator(mode), "Delete", ICON_NONE);
+    PointerRNA ptr = layout.op(screen_user_menu_delete_operator(mode), "Delete", ICON_NONE);
+    if (mode == CTX_MODE_EDIT_CURVE) {
+      RNA_enum_set_identifier(nullptr, &ptr, "type", "VERT");
+    }
     return;
   }
 
