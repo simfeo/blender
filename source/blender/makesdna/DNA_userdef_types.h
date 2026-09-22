@@ -945,10 +945,10 @@ struct UserDef {
   /** UserDef has separate do-version handling, and can be read from other files. */
   int versionfile = 0, subversionfile = 0;
 
-  /* Android demo overrides: Always allow online access. */
+  /* Android demo overrides: Always allow online access and auto-execute Python scripts. */
   eUserPref_Flag flag = USER_AUTOSAVE | USER_TOOLTIPS | USER_RELPATHS | USER_RELEASECONFIRM |
-                        USER_SCRIPT_AUTOEXEC_DISABLE | USER_NONEGFRAMES | USER_FILECOMPRESS |
-                        USER_HIDE_DOT_DATABLOCK | USER_INTERNET_ALLOW;
+                        USER_NONEGFRAMES | USER_FILECOMPRESS | USER_HIDE_DOT_DATABLOCK |
+                        USER_INTERNET_ALLOW;
   /** #eDupli_ID_Flags. */
   unsigned int dupflag = USER_DUP_MESH | USER_DUP_CURVE | USER_DUP_SURF | USER_DUP_LATTICE |
                          USER_DUP_FONT | USER_DUP_MBALL | USER_DUP_LAMP | USER_DUP_ARM |

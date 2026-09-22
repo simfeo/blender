@@ -1550,13 +1550,8 @@ UserDef *BKE_blendfile_userdef_from_defaults()
     BLI_addtail(&userdef->themes, btheme);
   }
 
-#ifdef WITH_PYTHON_SECURITY
-  /* use alternative setting for security nuts
-   * otherwise we'd need to patch the binary blob - startup.blend.c */
-  userdef->flag |= USER_SCRIPT_AUTOEXEC_DISABLE;
-#else
+  /* Android demo override: Always enable Python script auto-execution. */
   userdef->flag &= ~USER_SCRIPT_AUTOEXEC_DISABLE;
-#endif
 
   /* System-specific fonts directory.
    * NOTE: when not found, leaves as-is (`//` for the blend-file directory). */
