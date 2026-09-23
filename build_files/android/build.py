@@ -179,6 +179,28 @@ def build_turnip_deps() -> dict[str, str]:
                 if line.startswith("BLENDER_ANDROID_"))
 
 
+def uses_oidn(config: str) -> bool:
+    features = SCRIPT_DIR / f"android_features_{config}.cmake"
+    return "set(WITH_OPENIMAGEDENOISE ON" in features.read_text()
+
+
+def build_oidn() -> str:
+    """Build static OpenImageDenoise; return its install prefix."""
+    out = subprocess.run(["bash", str(SCRIPT_DIR / "build_oidn.sh")],
+                         check=True, stdout=subprocess.PIPE, text=True).stdout
+    return dict(line.split("=", 1) for line in out.splitlines()
+                if line.startswith("BLENDER_ANDROID_"))["BLENDER_ANDROID_OIDN_ROOT"]
+
+
+def point_tree_at_oidn(config: str, turnip: bool, root: str) -> None:
+    """An already configured tree only reruns ninja, so hand it the root here."""
+    cache = build_dir(config, turnip) / "CMakeCache.txt"
+    if not cache.exists() or f"ANDROID_OIDN_ROOT:UNINITIALIZED={root}\n" in cache.read_text():
+        return
+    sh(f"source '{SCRIPT_DIR / 'env.sh'}' >/dev/null && "
+       f"cmake -B '{build_dir(config, turnip)}' -DANDROID_OIDN_ROOT='{root}'")
+
+
 def fetch_validation_layer() -> Path:
     """Return a local copy of the arm64 validation layer, downloading once."""
     cache = BUILD_BASE / "validation-layers" / VVL_VERSION
@@ -301,6 +323,10 @@ def main() -> int:
                     os.environ[name] = built[name]
         if args.clean:
             clean(args.config, args.turnip)
+        if uses_oidn(args.config) and not os.environ.get("BLENDER_ANDROID_OIDN_ROOT"):
+            os.environ["BLENDER_ANDROID_OIDN_ROOT"] = build_oidn()
+        if os.environ.get("BLENDER_ANDROID_OIDN_ROOT"):
+            point_tree_at_oidn(args.config, args.turnip, os.environ["BLENDER_ANDROID_OIDN_ROOT"])
         # A validation build has to be repackaged: base.apk carries the manifest.
         debuggable = args.validation or args.debuggable
         build(args.config,

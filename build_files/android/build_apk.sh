@@ -34,6 +34,9 @@ BUILD="$BUILD_BASE/build_android_$CONFIG$FLAVOUR"
 # the Turnip variables are exported in the calling shell.
 ADRENOTOOLS_ARGS=()
 [ "${BLENDER_ANDROID_TURNIP:-0}" = "1" ] || ADRENOTOOLS_ARGS=(-DADRENOTOOLS_ROOT=)
+# Static OIDN from build_oidn.sh, which build.py runs for configs that denoise.
+OIDN_ARGS=()
+[ -z "${BLENDER_ANDROID_OIDN_ROOT:-}" ] || OIDN_ARGS=(-DANDROID_OIDN_ROOT="$BLENDER_ANDROID_OIDN_ROOT")
 FEATURES="build_files/android/android_features_$CONFIG.cmake"
 
 # A CMake build dir records its own absolute path; if it was moved, cmake refuses
@@ -71,7 +74,7 @@ cmake -S . -B "$BUILD" -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$ANDROID_TOOLCHAIN_FILE" \
   -DANDROID_ABI="$ANDROID_ABI" -DANDROID_PLATFORM="android-$ANDROID_API" \
   -DHOST_C_COMPILER="$ANDROID_HOST_CC" -DHOST_CXX_COMPILER="$ANDROID_HOST_CXX" \
-  -DBLENDER_ANDROID_CONFIG="$CONFIG" "${ADRENOTOOLS_ARGS[@]}"
+  -DBLENDER_ANDROID_CONFIG="$CONFIG" "${ADRENOTOOLS_ARGS[@]}" "${OIDN_ARGS[@]}"
 ninja -C "$BUILD" blender
 # Built separately: nothing links them, the glTF add-on dlopens them. Only the
 # configs that enable the codecs define these targets, so ask ninja first.

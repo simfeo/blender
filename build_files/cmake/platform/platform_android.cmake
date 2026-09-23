@@ -157,7 +157,13 @@ else()
 endif()
 set(LibFFI_ROOT ${LIBDIR}/libffi)
 set(OpenSSL_ROOT ${LIBDIR}/openssl)
-set(OpenImageDenoise_ROOT ${LIBDIR}/openimagedenoise)
+# The prebuilt OIDN is shared and cannot load its CPU device from an APK;
+# build_oidn.sh provides a static build and build_apk.sh passes it here.
+if(ANDROID_OIDN_ROOT)
+  set(OpenImageDenoise_ROOT ${ANDROID_OIDN_ROOT})
+else()
+  set(OpenImageDenoise_ROOT ${LIBDIR}/openimagedenoise)
+endif()
 set(draco_ROOT ${LIBDIR}/draco)
 set(GMP_ROOT_DIR ${LIBDIR}/gmp)
 set(manifold_ROOT ${LIBDIR}/manifold)
@@ -451,8 +457,14 @@ if(WITH_OPENIMAGEDENOISE)
   # archives whose link order matters. OIDN ships a CMake package that already
   # encodes that graph (and pulls in TBB), so use it and hand the result to the
   # variables the rest of the build reads.
+  # find_package re-roots its search under every ${LIBDIR} prefix, where the
+  # prebuilt shared package wins over OpenImageDenoise_ROOT. Name the package
+  # directly; FORCE also moves a tree already configured against the other one.
+  file(GLOB _oidn_package_dir "${OpenImageDenoise_ROOT}/lib/cmake/OpenImageDenoise*")
+  set(OpenImageDenoise_DIR ${_oidn_package_dir} CACHE PATH "" FORCE)
+  unset(_oidn_package_dir)
   find_package(OpenImageDenoise CONFIG REQUIRED)
-  set(OPENIMAGEDENOISE_INCLUDE_DIRS ${LIBDIR}/openimagedenoise/include)
+  set(OPENIMAGEDENOISE_INCLUDE_DIRS ${OpenImageDenoise_ROOT}/include)
   set(OPENIMAGEDENOISE_LIBRARIES OpenImageDenoise)
   set(OPENIMAGEDENOISE_FOUND ON)
 endif()
