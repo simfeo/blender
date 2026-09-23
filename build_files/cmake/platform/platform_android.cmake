@@ -90,6 +90,18 @@ else()
 endif()
 include_directories(BEFORE SYSTEM ${VULKAN_INCLUDE_DIR})
 set(VULKAN_INCLUDE_DIRS ${VULKAN_INCLUDE_DIR})
+
+# The Vulkan backend includes spirv/unified1/spirv.h. Other platforms get it with
+# their Vulkan SDK headers; the NDK carries a copy in its shaderc sources.
+if(NOT EXISTS ${VULKAN_INCLUDE_DIR}/spirv/unified1/spirv.h)
+  set(SPIRV_HEADERS_INCLUDE_DIR
+    ${ANDROID_NDK}/sources/third_party/shaderc/third_party/spirv-tools/external/spirv-headers/include)
+  if(NOT EXISTS ${SPIRV_HEADERS_INCLUDE_DIR}/spirv/unified1/spirv.h)
+    message(FATAL_ERROR "SPIR-V headers not found; expected them in the NDK at "
+                        "${SPIRV_HEADERS_INCLUDE_DIR}")
+  endif()
+  include_directories(SYSTEM ${SPIRV_HEADERS_INCLUDE_DIR})
+endif()
 find_library(VULKAN_LIBRARY vulkan REQUIRED)
 set(VULKAN_LIBRARIES ${VULKAN_LIBRARY})
 set(VULKAN_FOUND ON)
