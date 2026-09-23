@@ -19,12 +19,10 @@ CONFIG="${BLENDER_ANDROID_CONFIG:-full}"
 # path against it made drop_stale_cache wipe the build dir on every run.
 BUILD_BASE="${BUILD_BASE:-$(cd "$REPO_ROOT/.." && pwd)/blender_build_android}"
 : "${LIBDIR:=$REPO_ROOT/lib/android_arm64}"
-BUILD="${BUILD:-$BUILD_BASE/build_android_$CONFIG}"
+FLAVOUR="${BLENDER_ANDROID_FLAVOUR:-}"
+BUILD="${BUILD:-$BUILD_BASE/build_android_$CONFIG$FLAVOUR}"
 BT="$ANDROID_HOME/build-tools/35.0.1"
 ANDROID_JAR="$ANDROID_HOME/platforms/android-35/android.jar"
-# Flavours differ only in what gets packaged, so they share a build tree but
-# need their own stage and output name.
-FLAVOUR="${BLENDER_ANDROID_FLAVOUR:-}"
 STAGE="$BUILD_BASE/android_apk_stage_$CONFIG$FLAVOUR"
 JNI="$STAGE/lib/arm64-v8a"
 OUT="$STAGE/blender-$CONFIG$FLAVOUR.apk"
@@ -34,6 +32,68 @@ rm -rf "$STAGE"; mkdir -p "$JNI"
 echo "[apk] gathering native libraries"
 cp "$BUILD/lib/libblender.so" "$JNI/"
 cp "$ANDROID_SYSROOT/usr/lib/aarch64-linux-android/libc++_shared.so" "$JNI/"
+
+# Mesa Turnip, loaded from the APK so a release build can use it too. Shipping
+# the driver is what turns Turnip on at runtime, so only the Turnip flavour may
+# carry it. Neither the driver nor the hooks live in the tree; both are named
+# through env.sh. See BUILDING.md.
+if [ "${BLENDER_ANDROID_TURNIP:-0}" = "1" ]; then
+  TURNIP="${BLENDER_ANDROID_TURNIP_DRIVER:-}"
+  # Accept the directory holding the driver as well as the file itself. Driver
+  # packages name the library after the Mesa driver (freedreno), so take either.
+  if [ -d "$TURNIP" ]; then
+    for _name in libvulkan_turnip.so libvulkan_freedreno.so; do
+      if [ -f "$TURNIP/$_name" ]; then
+        TURNIP="$TURNIP/$_name"
+        break
+      fi
+    done
+  fi
+  if [ -z "$TURNIP" ] || [ ! -f "$TURNIP" ]; then
+    echo "[apk] ERROR: a Turnip build needs BLENDER_ANDROID_TURNIP_DRIVER to point" >&2
+    echo "             at libvulkan_turnip.so (got: '${BLENDER_ANDROID_TURNIP_DRIVER:-unset}')" >&2
+    echo "             See build_files/android/BUILDING.md." >&2
+    exit 1
+  fi
+  ADRENO="${BLENDER_ANDROID_ADRENOTOOLS:-}"
+  if [ -z "$ADRENO" ] || [ ! -d "$ADRENO" ]; then
+    echo "[apk] ERROR: a Turnip build needs BLENDER_ANDROID_ADRENOTOOLS to point" >&2
+    echo "             at a libadrenotools build (got: '${ADRENO:-unset}')" >&2
+    exit 1
+  fi
+
+  # Android only extracts native libraries named lib*.so, and the soname must
+  # match the file name or the loader will not find it by that name.
+  cp "$TURNIP" "$JNI/libvulkan_turnip.so"
+  patchelf --set-soname libvulkan_turnip.so "$JNI/libvulkan_turnip.so"
+
+  # The driver links two private platform libraries that an app namespace does
+  # not expose, so it cannot be dlopened without stand-ins alongside it.
+  SHIM_SRC="$SCRIPT_DIR/../turnip_shim/shim.c"
+  CLANG="$ANDROID_LLVM_BIN/aarch64-linux-android$ANDROID_API-clang"
+  for part in CUTILS:libcutils.so HARDWARE:libhardware.so; do
+    out="${part#*:}"
+    "$CLANG" -shared -fPIC -O2 -DSHIM_"${part%%:*}" -o "$JNI/$out" "$SHIM_SRC" \
+      -Wl,-soname,"$out"
+  done
+
+  # libadrenotools loads these by name from the native library directory.
+  # Covers an installed prefix and an in-place build tree, which is what
+  # upstream's own instructions leave behind.
+  hooks=$(ls "$ADRENO"/hooks/*.so \
+             "$ADRENO"/lib/*hook*.so \
+             "$ADRENO"/build/src/hook/*.so \
+             "$ADRENO"/src/hook/*.so 2>/dev/null || true)
+  if [ -z "$hooks" ]; then
+    echo "[apk] ERROR: no adrenotools hook libraries under $ADRENO" >&2
+    echo "             Looked in hooks/, lib/, build/src/hook/ and src/hook/." >&2
+    exit 1
+  fi
+  echo "$hooks" | while read -r hook; do
+    [ -n "$hook" ] && cp "$hook" "$JNI/"
+  done
+  echo "[apk] bundled Mesa Turnip, platform shims and adrenotools hooks"
+fi
 
 # The Python interpreter, shipped so sys.executable is real. Blender's extension
 # system runs its CLI as a subprocess, so browsing or installing an online

@@ -92,6 +92,10 @@ def flavour(turnip: bool) -> str:
     return "-turnip" if turnip else ""
 
 
+def build_dir(config: str, turnip: bool = False) -> Path:
+    return BUILD_BASE / f"build_android_{config}{flavour(turnip)}"
+
+
 def stage_dir(config: str, turnip: bool = False) -> Path:
     return BUILD_BASE / f"android_apk_stage_{config}{flavour(turnip)}"
 
@@ -100,24 +104,24 @@ def apk_path(config: str, turnip: bool = False) -> Path:
     return stage_dir(config, turnip) / f"blender-{config}{flavour(turnip)}.apk"
 
 
-def clean(config: str) -> None:
+def clean(config: str, turnip: bool = False) -> None:
     for path in (
-        BUILD_BASE / f"build_android_{config}",
+        build_dir(config, turnip),
         BUILD_BASE / f"build_host_tools_{config}",
-        stage_dir(config),
+        stage_dir(config, turnip),
     ):
         if path.exists():
             print(f"removing {path}")
             shutil.rmtree(path)
 
 
-def pending_edges(config: str) -> int:
+def pending_edges(config: str, turnip: bool = False) -> int:
     """How much ninja thinks is stale, so a surprise full rebuild is visible."""
-    build_dir = BUILD_BASE / f"build_android_{config}"
-    if not (build_dir / "build.ninja").exists():
+    tree = build_dir(config, turnip)
+    if not (tree / "build.ninja").exists():
         return -1
     try:
-        out = subprocess.run(["bash", "-lc", f"ninja -C '{build_dir}' -n blender"],
+        out = subprocess.run(["bash", "-lc", f"ninja -C '{tree}' -n blender"],
                              check=True, capture_output=True, text=True).stdout
     except subprocess.CalledProcessError:
         return -1
@@ -135,21 +139,21 @@ def build(config: str, repackage: bool = False, debuggable: bool = False,
     reconfigure -- forcing one used to turn a flag change into a full rebuild.
     """
     stage = stage_dir(config, turnip)
-    build_dir = BUILD_BASE / f"build_android_{config}"
-    configured = (build_dir / "build.ninja").exists()
+    tree = build_dir(config, turnip)
+    configured = (tree / "build.ninja").exists()
     staged = (stage / "base.apk").exists() and (stage / "lib/arm64-v8a/libblender.so").exists()
     env = "BLENDER_ANDROID_DEBUGGABLE=1 " if debuggable else ""
     if turnip:
-        # fastdeploy has no notion of flavours, so a Turnip build always repackages.
+        # Always repackage: fastdeploy swaps only libblender.so, not the driver.
         env += f"BLENDER_ANDROID_TURNIP=1 BLENDER_ANDROID_FLAVOUR={flavour(True)} "
         repackage = True
 
-    stale = pending_edges(config)
+    stale = pending_edges(config, turnip)
     if stale >= 0:
         print(f"[build] {stale} ninja edge(s) stale")
         if stale > 500:
             print(f"[build] WARNING: that is a large rebuild for an incremental change. "
-                  f"A corrupt {build_dir}/.ninja_deps forces this; delete it to reset.")
+                  f"A corrupt {tree}/.ninja_deps forces this; delete it to reset.")
 
     if not configured:
         print("[build] path: full (configure + compile + package)")
@@ -158,13 +162,21 @@ def build(config: str, repackage: bool = False, debuggable: bool = False,
         print("[build] path: compile + repackage (no reconfigure)")
         # env.sh, not just ninja: the host code generators run during this build
         # and need it to find their libraries.
-        sh(f"source '{SCRIPT_DIR / 'env.sh'}' >/dev/null && ninja -C '{build_dir}' blender")
-        sh(f"{env}BLENDER_ANDROID_CONFIG={config} BUILD='{build_dir}' "
+        sh(f"source '{SCRIPT_DIR / 'env.sh'}' >/dev/null && ninja -C '{tree}' blender")
+        sh(f"{env}BLENDER_ANDROID_CONFIG={config} BUILD='{tree}' "
            f"bash '{SCRIPT_DIR / 'apk' / 'package.sh'}'")
     else:
         print("[build] path: fast (compile + swap libblender.so)")
         # fastdeploy installs and launches at the end; build.py owns that.
         sh(f"{env}FASTDEPLOY_NO_INSTALL=1 '{SCRIPT_DIR / 'fastdeploy.sh'}' {config}")
+
+
+def build_turnip_deps() -> dict[str, str]:
+    """Download and build libadrenotools and Turnip; return the paths to use."""
+    out = subprocess.run(["bash", str(SCRIPT_DIR / "build_turnip.sh")],
+                         check=True, stdout=subprocess.PIPE, text=True).stdout
+    return dict(line.split("=", 1) for line in out.splitlines()
+                if line.startswith("BLENDER_ANDROID_"))
 
 
 def fetch_validation_layer() -> Path:
@@ -263,7 +275,9 @@ def main() -> int:
     parser.add_argument("--disable-validation-layers", action="store_true")
     parser.add_argument("--turnip", action="store_true",
                         help="bundle Mesa Turnip in the APK; its presence is what "
-                             "selects the driver at runtime")
+                             "selects the driver at runtime. Downloads and builds "
+                             "Turnip and libadrenotools unless the environment "
+                             "names them")
     parser.add_argument("--enable-turnip", action="store_true",
                         help="run on Mesa Turnip instead of the vendor driver")
     parser.add_argument("--disable-turnip", action="store_true")
@@ -273,8 +287,20 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.config:
+        # Resolved before compiling so a failed dependency build costs nothing:
+        # packaging runs after a compile that can take an hour.
+        if args.turnip:
+            missing = [name for name in ("BLENDER_ANDROID_ADRENOTOOLS",
+                                         "BLENDER_ANDROID_TURNIP_DRIVER")
+                       if not os.environ.get(name)]
+            if missing:
+                print("[turnip] " + " and ".join(missing) + " not set; "
+                      "downloading and building them", flush=True)
+                built = build_turnip_deps()
+                for name in missing:
+                    os.environ[name] = built[name]
         if args.clean:
-            clean(args.config)
+            clean(args.config, args.turnip)
         # A validation build has to be repackaged: base.apk carries the manifest.
         debuggable = args.validation or args.debuggable
         build(args.config,
@@ -288,7 +314,7 @@ def main() -> int:
     if args.install:
         if not args.config:
             parser.error("--install needs a config")
-        adb(["install", "-r", str(apk_path(args.config))], args.serial)
+        adb(["install", "-r", str(apk_path(args.config, args.turnip))], args.serial)
 
     if args.clear_caches:
         clear_caches(args.serial)

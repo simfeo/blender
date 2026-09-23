@@ -26,7 +26,14 @@ cd "$REPO_ROOT"
 # path against it made drop_stale_cache wipe the build dir on every run.
 BUILD_BASE="${BUILD_BASE:-$(cd "$REPO_ROOT/.." && pwd)/blender_build_android}"
 HOST="$BUILD_BASE/build_host_tools_$CONFIG"
-BUILD="$BUILD_BASE/build_android_$CONFIG"
+# Flavours get their own tree: WITH_ADRENOTOOLS is fixed at configure time, so a
+# shared tree hands whichever flavour configured it last to the other one.
+FLAVOUR="${BLENDER_ANDROID_FLAVOUR:-}"
+BUILD="$BUILD_BASE/build_android_$CONFIG$FLAVOUR"
+# An empty ADRENOTOOLS_ROOT keeps the loader out of the vendor build even when
+# the Turnip variables are exported in the calling shell.
+ADRENOTOOLS_ARGS=()
+[ "${BLENDER_ANDROID_TURNIP:-0}" = "1" ] || ADRENOTOOLS_ARGS=(-DADRENOTOOLS_ROOT=)
 FEATURES="build_files/android/android_features_$CONFIG.cmake"
 
 # A CMake build dir records its own absolute path; if it was moved, cmake refuses
@@ -64,7 +71,7 @@ cmake -S . -B "$BUILD" -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$ANDROID_TOOLCHAIN_FILE" \
   -DANDROID_ABI="$ANDROID_ABI" -DANDROID_PLATFORM="android-$ANDROID_API" \
   -DHOST_C_COMPILER="$ANDROID_HOST_CC" -DHOST_CXX_COMPILER="$ANDROID_HOST_CXX" \
-  -DBLENDER_ANDROID_CONFIG="$CONFIG"
+  -DBLENDER_ANDROID_CONFIG="$CONFIG" "${ADRENOTOOLS_ARGS[@]}"
 ninja -C "$BUILD" blender
 # Built separately: nothing links them, the glTF add-on dlopens them. Only the
 # configs that enable the codecs define these targets, so ask ninja first.

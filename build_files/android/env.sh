@@ -46,6 +46,18 @@ export ANDROID_API="${ANDROID_API:-31}"
 # API we compile/target the app against (manifest targetSdkVersion). Android 14.
 export ANDROID_TARGET_API="${ANDROID_TARGET_API:-34}"
 
+# --- Mesa Turnip (optional, out of tree) -------------------------------------
+# The Turnip driver and libadrenotools are not part of the repo. build.py
+# --turnip downloads and builds both (build_turnip.sh) unless they are named
+# here. Neither affects the vendor-driver APK.
+#
+# BLENDER_ANDROID_ADRENOTOOLS: a libadrenotools build, providing
+#   include/adrenotools/driver.h, lib/libadrenotools.a and the hook .so files.
+# BLENDER_ANDROID_TURNIP_DRIVER: the driver itself, either libvulkan_turnip.so
+#   or the directory holding it.
+export BLENDER_ANDROID_ADRENOTOOLS="${BLENDER_ANDROID_ADRENOTOOLS:-}"
+export BLENDER_ANDROID_TURNIP_DRIVER="${BLENDER_ANDROID_TURNIP_DRIVER:-}"
+
 # --- Derived ----------------------------------------------------------------
 export ANDROID_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake"
 # Host prebuilt dir. The NDK ships x86_64 host binaries; on Apple Silicon they

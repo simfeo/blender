@@ -410,23 +410,56 @@ Two messages are expected on a Vulkan 1.1 Adreno device and are not bugs:
 
 Loads Mesa's Turnip in place of the vendor driver through `libadrenotools`,
 which provides `VK_KHR_dynamic_rendering` on devices whose vendor driver is
-Vulkan 1.1 only, bypassing the render-pass fallback. Selected at runtime, so no
-separate build is needed - but the Turnip driver must be present on the device.
+Vulkan 1.1 only, bypassing the render-pass fallback.
+
+Turnip is its own APK flavour (`blender-<config>-turnip.apk`). Bundling the
+driver is what selects it at runtime, so the vendor APK is unaffected and no
+device-side setup is needed.
+
+The driver and `libadrenotools` are not part of the repo or of
+`lib/android_arm64`. The build downloads and builds both on first use:
 
 ```bash
-build_files/android/build.py --enable-turnip
-build_files/android/build.py --disable-turnip
+build_files/android/build.py lite --turnip
 ```
 
-The driver itself is not shipped: place a Turnip build at
-`/data/data/org.blender.blender/files/turnip/vulkan.ad07xx.so`. The
-`libadrenotools` hooks are bundled by `package.sh` automatically.
+`build_turnip.sh` does the work: it builds
+[libadrenotools](https://github.com/bylaws/libadrenotools) and Turnip from a
+pinned Mesa release into `../blender_build_android/turnip-deps`, and skips
+whatever is already built. It needs `git`, `bison`, `flex` and `pip` on the
+host; meson, mako and, if missing, `glslangValidator` are fetched into a
+private directory next to the build. Change the
+versions with `BLENDER_ANDROID_MESA_TAG` and `BLENDER_ANDROID_ADRENOTOOLS_REV`.
+
+To use your own builds instead, for example a prebuilt driver from
+[whitebelyash/AdrenoToolsDrivers](https://github.com/whitebelyash/AdrenoToolsDrivers),
+name them and nothing is downloaded:
+
+```bash
+export BLENDER_ANDROID_ADRENOTOOLS=/path/to/libadrenotools/build
+export BLENDER_ANDROID_TURNIP_DRIVER=/path/to/libvulkan_turnip.so
+```
+
+`BLENDER_ANDROID_ADRENOTOOLS` is read at configure time and is what defines
+`WITH_ADRENOTOOLS`; without it the loader is compiled out. Both accept the
+directory or, for the driver, the file itself. `package.sh` also compiles
+`turnip_shim/shim.c` into `libcutils.so` and `libhardware.so`, stand-ins for
+two private platform libraries the driver links that an app namespace does not
+expose.
+
+Tiling is off by default (`TU_DEBUG=sysmem`): it faults the GPU on a7xx, and
+Mesa reports GMEM as broken on A810/A830 as well. Override per device with
+`adb shell setprop debug.blender.tu_debug <flags>`, and force the driver choice
+with `debug.blender.turnip`.
 
 Status on Adreno 642L (as of Aug 2026): loads and renders correctly, and passes
-the colour picker stress test, but crashes inside the driver
-(`vulkan.ad07xx.so`, null dereference reached from command recording) while
-cycling viewport shading modes. Treat it as experimental; the vendor driver is
-the default and passes both suites.
+the colour picker stress test, but crashes inside the driver (null dereference
+reached from command recording) while cycling viewport shading modes. Treat it
+as experimental; the vendor driver is the default and passes both suites.
+
+On Adreno 830 (Sep 2026) the Turnip build fails its first queue submission in
+the KGSL backend (`submit failed: Invalid argument`, then device lost). Use the
+vendor APK there.
 
 ---
 
@@ -437,7 +470,8 @@ System properties, read once at startup.
 | Property | Effect |
 | --- | --- |
 | `debug.blender.log` | Per-frame Vulkan submission and draw-lock tracing. Off by default: it costs several logcat lines per frame. |
-| `debug.blender.turnip` | Load Mesa Turnip instead of the vendor driver. |
+| `debug.blender.turnip` | Load Mesa Turnip instead of the vendor driver. Defaults to on when the APK ships the driver. |
+| `debug.blender.tu_debug` | Turnip `TU_DEBUG` flags. Defaults to `sysmem`, which disables tiling. |
 | `debug.blender.lowmem` | Force the low-memory device tier. |
 | `debug.blender.renderdiv` | Render-scale divisor; `2` renders at half resolution. |
 

@@ -21,9 +21,10 @@ cd "$REPO_ROOT"
 # Canonical path: CMake records a resolved one, and comparing an unresolved
 # path against it made drop_stale_cache wipe the build dir on every run.
 BUILD_BASE="${BUILD_BASE:-$(cd "$REPO_ROOT/.." && pwd)/blender_build_android}"
-BUILD="$BUILD_BASE/build_android_$CONFIG"
-STAGE="$BUILD_BASE/android_apk_stage_$CONFIG"
-OUT="$STAGE/blender-$CONFIG.apk"
+FLAVOUR="${BLENDER_ANDROID_FLAVOUR:-}"
+BUILD="$BUILD_BASE/build_android_$CONFIG$FLAVOUR"
+STAGE="$BUILD_BASE/android_apk_stage_$CONFIG$FLAVOUR"
+OUT="$STAGE/blender-$CONFIG$FLAVOUR.apk"
 JNI="$STAGE/lib/arm64-v8a"
 BT="$ANDROID_HOME/build-tools/35.0.1"
 ADB="$ANDROID_HOME/platform-tools/adb"

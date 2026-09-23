@@ -163,6 +163,62 @@ add_definitions(-DWITH_GHOST_ANDROID)
 add_definitions(-DVK_USE_PLATFORM_ANDROID_KHR)
 
 # -----------------------------------------------------------------------------
+# Mesa Turnip through libadrenotools (optional)
+#
+# Neither the driver nor libadrenotools is harvested into lib/android_arm64:
+# both are GPU-specific and move fast, so they are built separately and pointed
+# at from here. Without ADRENOTOOLS_ROOT the loader in vk_backend.cc is compiled
+# out entirely and the vendor driver is the only option, which is the default.
+if(NOT DEFINED ADRENOTOOLS_ROOT AND DEFINED ENV{BLENDER_ANDROID_ADRENOTOOLS})
+  set(ADRENOTOOLS_ROOT "$ENV{BLENDER_ANDROID_ADRENOTOOLS}")
+endif()
+if(ADRENOTOOLS_ROOT)
+  # NO_CMAKE_FIND_ROOT_PATH: the root path is rewritten to the NDK sysroot for
+  # cross builds, which would hide a tree living outside it.
+  find_path(ADRENOTOOLS_INCLUDE_DIR
+    NAMES adrenotools/driver.h
+    HINTS ${ADRENOTOOLS_ROOT}
+    PATH_SUFFIXES include
+    NO_CMAKE_FIND_ROOT_PATH
+  )
+  # Suffixes cover both an installed prefix and an in-place CMake build tree,
+  # which is what upstream's own instructions leave behind.
+  find_library(ADRENOTOOLS_LIBRARY
+    NAMES adrenotools
+    HINTS ${ADRENOTOOLS_ROOT}
+    PATH_SUFFIXES lib lib/arm64-v8a build build/lib
+    NO_CMAKE_FIND_ROOT_PATH
+  )
+  # adrenotools calls into linkernsbypass to build the driver's linker
+  # namespace; it is a separate static library, so linking without it fails on
+  # android_create_namespace and friends.
+  find_library(LINKERNSBYPASS_LIBRARY
+    NAMES linkernsbypass
+    HINTS ${ADRENOTOOLS_ROOT}
+    PATH_SUFFIXES lib lib/arm64-v8a build build/lib
+                  build/lib/linkernsbypass lib/linkernsbypass
+    NO_CMAKE_FIND_ROOT_PATH
+  )
+  if(NOT ADRENOTOOLS_INCLUDE_DIR OR NOT ADRENOTOOLS_LIBRARY)
+    message(FATAL_ERROR
+      "ADRENOTOOLS_ROOT is set to ${ADRENOTOOLS_ROOT} but no usable build was "
+      "found there.\n"
+      "Expected adrenotools/driver.h under <root>/include and libadrenotools.a "
+      "under <root>/build or <root>/lib.\n"
+      "See build_files/android/BUILDING.md for how to build libadrenotools.")
+  endif()
+  include_directories(SYSTEM ${ADRENOTOOLS_INCLUDE_DIR})
+  # Onto VULKAN_LIBRARIES rather than PLATFORM_LINKLIBS: only the GPU module
+  # calls into this, and the loader replaces the Vulkan library it sits behind.
+  list(APPEND VULKAN_LIBRARIES ${ADRENOTOOLS_LIBRARY})
+  if(LINKERNSBYPASS_LIBRARY)
+    list(APPEND VULKAN_LIBRARIES ${LINKERNSBYPASS_LIBRARY})
+  endif()
+  add_definitions(-DWITH_ADRENOTOOLS)
+  message(STATUS "Android Turnip loader enabled: ${ADRENOTOOLS_LIBRARY}")
+endif()
+
+# -----------------------------------------------------------------------------
 # Cross-compiled build tools (makesdna, makesrna, datatoc, msgfmt, shader_tool).
 # These generate source at build time and must run on the host, so they are
 # built natively (macOS arm64 == Android arm64 data model, so DNA/RNA offsets
