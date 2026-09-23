@@ -10,6 +10,7 @@
 
 #include "MEM_guardedalloc.h"
 
+#include <climits>
 #include <cstdarg>
 #include <cstdlib>
 #include <cstring>
@@ -88,6 +89,22 @@ struct uiSearchboxData {
   /** Use the #UI_SEP_CHAR char for splitting shortcuts (good for operators, bad for data). */
   bool use_shortcut_sep;
   int prv_rows, prv_cols;
+  /**
+   * Scrolling the list by dragging it with a finger or stylus. That arrives as plain motion;
+   * the press and release go to the button, which reports them through #searchbox_drag_press
+   * and #searchbox_drag_consume_release. `drag_armed` is set only by a press inside the list,
+   * because `prev_press_type` names the last press ever made and so would let a mouse merely
+   * crossing the list scroll it.
+   */
+  bool drag_armed;
+  /** Whether the hand has moved far enough to be a drag rather than a tap. */
+  bool drag_active;
+  /** Last motion position, or INT_MIN between drags. Incremental, since the press position
+   * can still hold the previous press when the first motion of a new one arrives. */
+  int drag_last_y;
+  /** Movement not yet worth a row, and total travel, which tells a drag from a tap. */
+  int drag_accum;
+  int drag_travel;
   /**
    * Show the active icon and text after the last instance of this string.
    * Used so we can show leading text to menu items less prominently (not related to 'use_sep').
@@ -396,6 +413,110 @@ static ARegion *wm_searchbox_tooltip_init(
   return nullptr;
 }
 
+/**
+ * Scroll the list by dragging it, and say whether the drag took the event. It moves
+ * `items.offset` directly, one row of list per row of finger, rather than stepping the
+ * highlight through #searchbox_select(), which made the highlight race while the list
+ * lurched. Nothing moves until the hand travels half a row, so a tap still selects.
+ */
+static bool searchbox_touch_scroll(
+    bContext *C, ARegion *region, Button *but, uiSearchboxData *data, const wmEvent *event)
+{
+  if (!data->drag_armed || data->preview) {
+    return false;
+  }
+
+  if (data->drag_last_y == INT_MIN) {
+    data->drag_last_y = event->xy[1];
+    data->drag_accum = 0;
+    data->drag_travel = 0;
+    data->drag_active = false;
+    return false;
+  }
+
+  const int delta = event->xy[1] - data->drag_last_y;
+  data->drag_last_y = event->xy[1];
+  data->drag_travel += abs(delta);
+
+  rcti row;
+  searchbox_butrect(&row, data, 0);
+  const int row_h = BLI_rcti_size_y(&row);
+  if (row_h <= 0) {
+    return false;
+  }
+
+  if (!data->drag_active) {
+    /* Half a row rather than the few-pixel drag threshold: a finger wobbles on the way down,
+     * and a wobble counted as a drag would eat the release so the tap chose nothing. */
+    if (data->drag_travel < std::max(WM_event_drag_threshold(event), row_h / 2)) {
+      return false;
+    }
+    data->drag_active = true;
+    data->drag_accum = 0;
+  }
+
+  /* Content follows the finger: y is up, so dragging up brings later results into view. */
+  data->drag_accum += delta;
+  while (abs(data->drag_accum) >= row_h) {
+    const int direction = (data->drag_accum > 0) ? 1 : -1;
+    if (direction > 0) {
+      if (!data->items.more) {
+        /* Drained, so the hand does not have to give back what it pushed past the end. */
+        data->drag_accum = 0;
+        break;
+      }
+      data->items.offset++;
+    }
+    else {
+      if (data->items.offset == 0) {
+        data->drag_accum = 0;
+        break;
+      }
+      data->items.offset--;
+    }
+    data->drag_accum -= direction * row_h;
+    searchbox_update(C, region, but, false);
+  }
+
+  if (data->items.totitem == 0) {
+    data->active = -1;
+  }
+  else {
+    data->active = std::clamp(data->active, 0, data->items.totitem - 1);
+  }
+
+  ED_region_tag_redraw(region);
+  return true;
+}
+
+void searchbox_drag_press(ARegion *region)
+{
+  uiSearchboxData *data = static_cast<uiSearchboxData *>(region->regiondata);
+  if (data == nullptr) {
+    return;
+  }
+  data->drag_armed = true;
+  data->drag_active = false;
+  data->drag_accum = 0;
+  data->drag_travel = 0;
+  data->drag_last_y = INT_MIN;
+}
+
+bool searchbox_drag_consume_release(ARegion *region)
+{
+  uiSearchboxData *data = static_cast<uiSearchboxData *>(region->regiondata);
+  if (data == nullptr) {
+    return false;
+  }
+  const bool dragged = data->drag_active;
+  data->drag_armed = false;
+  data->drag_active = false;
+  data->drag_accum = 0;
+  data->drag_travel = 0;
+  data->drag_last_y = INT_MIN;
+  return dragged;
+}
+
 bool searchbox_event(
     bContext *C, ARegion *region, Button *but, ARegion *butregion, const wmEvent *event)
 {
@@ -444,6 +565,13 @@ bool searchbox_event(
       }
       break;
     case MOUSEMOVE: {
+      /* Before the hover-select below, or the finger would scroll the list and then select
+       * whatever slid under it. */
+      if (searchbox_touch_scroll(C, region, but, data, event)) {
+        handled = true;
+        break;
+      }
+
       /* Ignore the mouse event, in case the search popup is created underneath the cursor.
        * We always want the first result to be selected by default. See: #144168 */
       if (event->xy[0] == event->prev_xy[0] && event->xy[1] == event->prev_xy[1]) {
@@ -1042,6 +1170,11 @@ static ARegion *searchbox_create_generic_ex(bContext *C,
   ED_region_tag_redraw(region);
 
   /* prepare search data */
+  data->drag_armed = false;
+  data->drag_active = false;
+  data->drag_last_y = INT_MIN;
+  data->drag_accum = 0;
+  data->drag_travel = 0;
   if (data->preview) {
     data->items.maxitem = data->prv_rows * data->prv_cols;
   }

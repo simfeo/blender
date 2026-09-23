@@ -4242,6 +4242,20 @@ static int do_but_textedit(
         }
       }
 
+      /* A press inside the results arms a drag-to-scroll and the release ends it wherever it
+       * lands, so a finger leaving the box on the way up cannot leave the drag armed. */
+      bool ended_drag = false;
+      if (data->searchbox) {
+        if (ELEM(event->val, KM_PRESS, KM_DBL_CLICK)) {
+          if (inbox) {
+            searchbox_drag_press(data->searchbox);
+          }
+        }
+        else if (event->val == KM_RELEASE) {
+          ended_drag = searchbox_drag_consume_release(data->searchbox);
+        }
+      }
+
       /* for double click: we do a press again for when you first click on button
        * (selects all text, no cursor pos) */
       if (ELEM(event->val, KM_PRESS, KM_DBL_CLICK)) {
@@ -4302,7 +4316,10 @@ static int do_but_textedit(
         /* if we allow activation on key press,
          * it gives problems launching operators #35713. */
         if (event->val == KM_RELEASE) {
-          button_activate_state(C, but, BUTTON_STATE_EXIT);
+          /* A release that ends a drag lets go of the list rather than choosing from it. */
+          if (!ended_drag) {
+            button_activate_state(C, but, BUTTON_STATE_EXIT);
+          }
           retval = WM_UI_HANDLER_BREAK;
         }
       }
@@ -11759,6 +11776,108 @@ static int handle_menu_mmb_event(bContext *C,
   return retval;
 }
 
+#ifdef __ANDROID__
+/**
+ * Scroll a popup that does not fit, with a finger. A mouse reaches the rest of an over-long
+ * popup by hovering the arrow band or middle-mouse panning; a finger can do neither. So:
+ * - Drag anywhere in it to pan. The press is not consumed, so a tap still presses the item;
+ *   past the drag threshold it becomes a scroll and the release is swallowed.
+ * - Tap the arrow band to step, since nothing is under it while the block is clipped.
+ * Both are inert unless the block is clipped, so a popup that fits is unchanged.
+ */
+static int handle_menu_touch_scroll_event(bContext *C,
+                                          const wmEvent *event,
+                                          PopupBlockHandle *menu,
+                                          const bool inside)
+{
+  ARegion *region = menu->region;
+  Block *block = region->runtime->uiblocks.first();
+  if (block == nullptr) {
+    return WM_UI_HANDLER_CONTINUE;
+  }
+
+  const bool scrollable = (block->flag & (BLOCK_CLIPTOP | BLOCK_CLIPBOTTOM)) != 0;
+
+  if (event->type == LEFTMOUSE && event->val == KM_PRESS) {
+    menu->touch_scroll_armed = false;
+    menu->touch_scroll_panning = false;
+    menu->touch_scroll_arrow = 0;
+
+    if (!inside || !scrollable || menu->mmb_panning || menu->is_grab) {
+      return WM_UI_HANDLER_CONTINUE;
+    }
+    /* A button already editing text or dragging a value owns the gesture. */
+    if (Button *but = region_find_active_but(region)) {
+      if (button_modal_state(but->active->state)) {
+        return WM_UI_HANDLER_CONTINUE;
+      }
+    }
+
+    int mx = event->xy[0];
+    int my = event->xy[1];
+    window_to_block(region, block, &mx, &my);
+
+    menu->touch_scroll_armed = true;
+    menu->touch_scroll_start_y = event->xy[1];
+    menu->touch_scroll_last_y = event->xy[1];
+    menu->touch_scroll_arrow = menu_scroll_test(block, {mx, my});
+    return WM_UI_HANDLER_CONTINUE;
+  }
+
+  if (!menu->touch_scroll_armed) {
+    return WM_UI_HANDLER_CONTINUE;
+  }
+
+  if (event->type == MOUSEMOVE) {
+    if (!menu->touch_scroll_panning) {
+      if (abs(event->xy[1] - menu->touch_scroll_start_y) < WM_event_drag_threshold(event)) {
+        return WM_UI_HANDLER_CONTINUE;
+      }
+      /* Now a scroll, not a press: let go of the item under the finger. */
+      menu->touch_scroll_panning = true;
+      if (Button *but = region_find_active_but(region)) {
+        but->active->cancel = true;
+        button_activate_exit(C, but, but->active, false, false);
+      }
+    }
+
+    const int delta = event->xy[1] - menu->touch_scroll_last_y;
+    if (delta != 0) {
+      /* Content follows the finger, same sign as the middle mouse pan. */
+      menu_scroll_apply_offset_y(region, block, delta);
+      menu->touch_scroll_last_y = event->xy[1];
+    }
+    return WM_UI_HANDLER_BREAK;
+  }
+
+  if (event->type == LEFTMOUSE && event->val == KM_RELEASE) {
+    const bool panned = menu->touch_scroll_panning;
+    const char arrow = menu->touch_scroll_arrow;
+
+    menu->touch_scroll_armed = false;
+    menu->touch_scroll_panning = false;
+    menu->touch_scroll_arrow = 0;
+
+    if (panned) {
+      return WM_UI_HANDLER_BREAK;
+    }
+    if (arrow != 0 && scrollable) {
+      /* Several rows per tap: one row would take a dozen taps to cross the File menu. */
+      const float dy = (UI_UNIT_Y * 3.0f) / block->aspect;
+      if (arrow == 't' && (block->flag & BLOCK_CLIPTOP)) {
+        menu_scroll_apply_offset_y(region, block, -dy);
+      }
+      else if (arrow == 'b' && (block->flag & BLOCK_CLIPBOTTOM)) {
+        menu_scroll_apply_offset_y(region, block, dy);
+      }
+      return WM_UI_HANDLER_BREAK;
+    }
+  }
+
+  return WM_UI_HANDLER_CONTINUE;
+}
+#endif /* __ANDROID__ */
+
 static int handle_menu_event(bContext *C,
                              const wmEvent *event,
                              PopupBlockHandle *menu,
@@ -11833,6 +11952,11 @@ static int handle_menu_event(bContext *C,
 
       return retval;
     }
+  }
+#endif
+#ifdef __ANDROID__
+  if (retval == WM_UI_HANDLER_CONTINUE) {
+    retval = handle_menu_touch_scroll_event(C, event, menu, inside);
   }
 #endif
   if (retval == WM_UI_HANDLER_CONTINUE) {
