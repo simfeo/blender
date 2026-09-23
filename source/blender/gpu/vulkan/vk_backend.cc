@@ -746,11 +746,16 @@ void VKBackend::detect_workarounds(VKDevice &device)
 
   /* Disable vertex input dynamic state for Qualcomm devices (#153414).
    *
+   * The guard used to name GPU_OS_WIN, because upstream only ever saw this on Snapdragon
+   * laptops. Adreno reports GPU_OS_UNIX on Android, so the port ran the whole driver bug
+   * unguarded: attributes are fetched at the wrong stride, which repeats a batch's geometry
+   * across the viewport and then reads past the end of the buffer into uninitialized memory.
+   *
    * TODO: We should re-validate vertex input dynamic state as there are multiple vendors with
    * similar issues. It might be an oversight. Will wait for feedback from the driver developers
    * and perform some out of bounds error checks.
    */
-  if (GPU_type_matches(GPU_DEVICE_QUALCOMM, GPU_OS_WIN, GPU_DRIVER_ANY)) {
+  if (GPU_type_matches(GPU_DEVICE_QUALCOMM, GPU_OS_ANY, GPU_DRIVER_ANY)) {
     extensions.vertex_input_dynamic_state = false;
   }
 
