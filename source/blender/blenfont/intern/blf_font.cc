@@ -81,7 +81,6 @@ static ft_pix blf_font_height_max_ft_pix(FontBLF *font);
 static ft_pix blf_font_width_max_ft_pix(FontBLF *font);
 
 /* -------------------------------------------------------------------- */
-
 /** \name FreeType Caching
  * \{ */
 
@@ -992,14 +991,14 @@ size_t blf_font_width_to_strlen(
   const int width_i = width;
 
   while ((step.i < str_len) && str[step.i]) {
-    i_prev = step.i;
-    width_new = step.pen_x_right;
     if (!blf_glyph_step(font, gc, step, str, str_len)) {
       continue;
     }
     if (ft_pix_to_int(step.pen_x_right) >= width_i) {
       break;
     }
+    i_prev = step.i;
+    width_new = step.pen_x_right;
   }
 
   if (r_width) {

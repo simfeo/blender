@@ -157,16 +157,13 @@ static void ensure_ibuf_is_color_space(ImBuf *ibuf, bool make_float, const char 
     if (ibuf->byte_data() != nullptr) {
       IMB_free_byte_pixels(ibuf);
     }
-    /* Note: we do not use predivide to more closely match what
-     * compositor does, and to better preserve cases of pure emissive
-     * colors (alpha=0, RGB non black). */
     IMB_colormanagement_transform_float(ibuf->float_data_for_write(),
                                         ibuf->x,
                                         ibuf->y,
                                         ibuf->channels,
                                         from_colorspace,
                                         to_colorspace,
-                                        false);
+                                        true);
     IMB_colormanagement_assign_float_colorspace(ibuf, to_colorspace);
   }
 }
@@ -376,7 +373,7 @@ static bool seq_input_have_to_preprocess(const Strip *strip)
     return true;
   }
 
-  if (strip->modifiers.first) {
+  if (strip->modifiers.first_) {
     return true;
   }
 
@@ -669,7 +666,7 @@ static SeqResult input_preprocess(const RenderData *context,
   const bool do_scale_to_render_size = seq_need_scale_to_render_size(strip, is_proxy_image);
   const float image_scale_factor = do_scale_to_render_size ? preview_scale_factor : 1.0f;
 
-  if (strip->modifiers.first) {
+  if (strip->modifiers.first_) {
     result.image = IMB_makeSingleUser(result.image);
     float3x3 matrix = calc_strip_transform_matrix(scene,
                                                   strip,
@@ -789,7 +786,7 @@ static SeqResult seq_render_effect_strip_impl(const RenderData *context,
     return out;
   }
 
-  float fac = effect_fader_calc(scene, strip, timeline_frame);
+  float fac = effect_fader_calc(scene, strip, timeline_frame, state->is_current_frame);
 
   StripEarlyOut early_out = sh.early_out(strip, fac);
 
@@ -889,7 +886,7 @@ static ImBuf *seq_render_image_strip_view(
   }
 
   if (prefix[0] == '\0') {
-    ibuf = IMB_load_image_from_filepath(filepath, flag, strip->data->colorspace_settings.name);
+    ibuf = IMB_load_image_from_filepath(filepath, flag, &strip->data->colorspace_settings);
   }
   else {
     char filepath_view[FILE_MAX];
@@ -898,8 +895,7 @@ static ImBuf *seq_render_image_strip_view(
     {
       return nullptr;
     }
-    ibuf = IMB_load_image_from_filepath(
-        filepath_view, flag, strip->data->colorspace_settings.name);
+    ibuf = IMB_load_image_from_filepath(filepath_view, flag, &strip->data->colorspace_settings);
   }
 
   if (ibuf == nullptr) {
@@ -1042,7 +1038,7 @@ static ImBuf *seq_render_movie_strip_custom_file_proxy(const RenderData *context
       /* Sequencer takes care of colorspace conversion of the result. The input is the best to be
        * kept unchanged for the performance reasons. */
       proxy->anim = openanim(
-          filepath, ImBufFlags::Zero, 0, true, strip->data->colorspace_settings.name);
+          filepath, ImBufFlags::Zero, 0, true, &strip->data->colorspace_settings);
     }
     if (proxy->anim == nullptr) {
       return nullptr;
@@ -1135,11 +1131,11 @@ static ImBuf *seq_render_movie_strip(const RenderData *context,
     /* Opening individual multiview files is all-or-nothing. Fall back to the original filepath if
      * any view cannot be opened. */
     if (do_multiview_render && strip->views_format == R_IMF_VIEWS_INDIVIDUAL) {
-      bool all_readers_open = static_cast<bool>(readers[0]);
+      bool all_readers_open = bool(readers[0]);
       for (int view_id = 1; view_id < totfiles && all_readers_open; view_id++) {
         readers.append(movie_reader_cache_acquire_view(
             cache_scene, *context->scene, *strip, view_id, frame_index));
-        all_readers_open = static_cast<bool>(readers.last());
+        all_readers_open = bool(readers.last());
       }
       if (!all_readers_open) {
         readers.clear();
@@ -1658,7 +1654,7 @@ ImBuf *render_scene_strip_thumbnail(
     return nullptr;
   }
   Scene *scene = strip->scene;
-  if (scene == nullptr || scene == timeline_scene) {
+  if (ELEM(scene, nullptr, timeline_scene)) {
     return nullptr; /* No scene, or recursion with sequencer scene. */
   }
 
@@ -2141,6 +2137,7 @@ ImBuf *render_give_ibuf(const RenderData *context, float timeline_frame, int cha
       scene, channels, seqbasep, timeline_frame, chanshown);
 
   SeqRenderState state;
+  state.is_current_frame = timeline_frame == BKE_scene_frame_get(scene);
 
   if (!strips.is_empty() && !out) {
     std::scoped_lock lock(seq_render_mutex);
@@ -2182,6 +2179,7 @@ SeqResult seq_render_give_ibuf_seqbase(const RenderData *context,
 ImBuf *render_give_ibuf_direct(const RenderData *context, float timeline_frame, Strip *strip)
 {
   SeqRenderState state;
+  state.is_current_frame = timeline_frame == BKE_scene_frame_get(context->scene);
 
   movie_reader_cache_timestamp_bump();
 

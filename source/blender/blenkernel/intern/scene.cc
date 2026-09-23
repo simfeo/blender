@@ -80,6 +80,7 @@
 #include "BKE_node_legacy_types.hh"
 #include "BKE_node_runtime.hh"
 #include "BKE_paint.hh"
+#include "BKE_paint_types.hh"
 #include "BKE_pointcache.h"
 #include "BKE_preview_image.hh"
 #include "BKE_rigidbody.h"
@@ -191,6 +192,10 @@ static void scene_init_data(ID *id)
                      CurveMapSlopeType::PositiveNegative);
 
   scene->toolsettings = MEM_new<ToolSettings>(__func__);
+  /* Unlike other Paint structs, the `ImagePaintSettings` is default allocated, so it needs to be
+   * explicitly initialized when a new scene is created to ensure runtime data is in a consistent
+   * state. */
+  BKE_paint_init(nullptr, scene, PaintMode::Texture2D, false);
 
   scene->toolsettings->autokey_mode = U.autokey_mode;
 
@@ -241,11 +246,11 @@ static void scene_init_data(ID *id)
 
   /* multiview - stereo */
   BKE_scene_add_render_view(scene, STEREO_LEFT_NAME);
-  srv = static_cast<SceneRenderView *>(scene->r.views.first);
+  srv = scene->r.views.first();
   STRNCPY(srv->suffix, STEREO_LEFT_SUFFIX);
 
   BKE_scene_add_render_view(scene, STEREO_RIGHT_NAME);
-  srv = static_cast<SceneRenderView *>(scene->r.views.last);
+  srv = scene->r.views.last();
   STRNCPY(srv->suffix, STEREO_RIGHT_SUFFIX);
 
   /* color management */
@@ -253,7 +258,8 @@ static void scene_init_data(ID *id)
 
   BKE_color_managed_display_settings_init(&scene->display_settings);
   BKE_color_managed_view_settings_init(&scene->view_settings, &scene->display_settings, "AgX");
-  STRNCPY_UTF8(scene->sequencer_colorspace_settings.name, colorspace_name);
+  IMB_colormanagement_colorspace_settings_set(&scene->sequencer_colorspace_settings,
+                                              colorspace_name);
 
   BKE_image_format_init(&scene->r.im_format);
   BKE_image_format_init(&scene->r.bake.im_format);
@@ -310,8 +316,8 @@ static void scene_copy_data(Main *bmain,
     }
   }
   BLI_duplicatelist(&scene_dst->view_layers, &scene_src->view_layers);
-  for (ViewLayer *view_layer_src = static_cast<ViewLayer *>(scene_src->view_layers.first),
-                 *view_layer_dst = static_cast<ViewLayer *>(scene_dst->view_layers.first);
+  for (ViewLayer *view_layer_src = scene_src->view_layers.first(),
+                 *view_layer_dst = scene_dst->view_layers.first();
        view_layer_src;
        view_layer_src = view_layer_src->next, view_layer_dst = view_layer_dst->next)
   {
@@ -1011,7 +1017,7 @@ static bool strip_foreach_path_callback(Strip *strip, void *user_data)
     }
     else if ((strip->type == STRIP_TYPE_IMAGE) && se) {
       /* NOTE: An option not to loop over all strips could be useful? */
-      uint len = uint(MEM_allocN_len(se)) / uint(sizeof(*se));
+      uint len = uint(strip->data->stripdata_num);
       uint i;
 
       if (bpath_data->flag & BKE_BPATH_FOREACH_PATH_SKIP_MULTIFILE) {
@@ -1048,9 +1054,18 @@ static void scene_foreach_working_space_color(ID *id, const IDTypeForeachColorFu
 {
   Scene *scene = id_cast<Scene *>(id);
 
-  BKE_paint_settings_foreach_mode(scene->toolsettings, [&fn](Paint *paint) {
-    fn.single(paint->unified_paint_settings.color);
-    fn.single(paint->unified_paint_settings.secondary_color);
+  BKE_paint_settings_foreach_mode(scene->toolsettings, [&fn](Paint &paint) {
+    fn.single(paint.unified_paint_settings.color);
+    fn.single(paint.unified_paint_settings.secondary_color);
+  });
+}
+
+static void scene_foreach_asset_weak_reference(ID *id, FunctionRef<void(AssetWeakReference &)> fn)
+{
+  Scene *scene = id_cast<Scene *>(id);
+
+  BKE_paint_settings_foreach_mode(scene->toolsettings, [&fn](Paint &paint) {
+    BKE_paint_foreach_asset_weak_reference(paint, fn);
   });
 }
 
@@ -1106,7 +1121,7 @@ static void scene_blend_write_compositor_forward_compat(Scene &scene,
 
       composite_node->location[0] = node.location[0] - 20.0f;
       composite_node->location[1] = node.location[1];
-      group_output_first_input = static_cast<bNodeSocket *>(node.inputs.first);
+      group_output_first_input = node.inputs.first();
       break;
     }
   }
@@ -1128,7 +1143,7 @@ static void scene_blend_write_compositor_forward_compat(Scene &scene,
 
   BLO_Write_IDBuffer temp_embedded_id_buffer{temp_nodetree_copy->id, writer};
   bNodeTree *temp_nodetree = reinterpret_cast<bNodeTree *>(temp_embedded_id_buffer.get());
-  writer->write_struct_at_address(scene.nodetree, temp_nodetree);
+  writer->write_embedded_id_struct(scene.nodetree, temp_nodetree);
 
   /* Todo(#140111): Forward compatibility support will be removed in 6.0. Do not write an embedded
    * nodetree at `scene->nodetree` anymore. */
@@ -1145,7 +1160,7 @@ static void scene_blend_write_compositor_forward_compat(Scene &scene,
 static void scene_blend_write(BlendWriter *writer, ID *id, const void *id_address)
 {
   Scene *sce = id_cast<Scene *>(id);
-  const bool is_write_undo = BLO_write_is_undo(writer);
+  const bool is_write_undo = writer->is_undo();
 
   if (is_write_undo) {
     /* Clean up, important in undo case to reduce false detection of changed data-blocks. */
@@ -1325,7 +1340,7 @@ static void scene_blend_write(BlendWriter *writer, ID *id, const void *id_addres
     BLO_Write_IDBuffer temp_embedded_id_buffer{sce->master_collection->id, writer};
     Collection *temp_collection = reinterpret_cast<Collection *>(temp_embedded_id_buffer.get());
     BKE_collection_blend_write_prepare_nolib(writer, temp_collection);
-    writer->write_struct_at_address(sce->master_collection, temp_collection);
+    writer->write_embedded_id_struct(sce->master_collection, temp_collection);
     BKE_collection_blend_write_nolib(writer, temp_collection);
   }
 
@@ -1357,7 +1372,7 @@ static void link_recurs_seq(BlendDataReader *reader, ListBaseT<Strip> *lb)
       BLI_freelinkN(lb, &strip);
       BLO_read_data_reports(reader)->count.sequence_strips_skipped++;
     }
-    else if (strip.seqbase.first) {
+    else if (strip.seqbase.first()) {
       link_recurs_seq(reader, &strip.seqbase);
     }
   }
@@ -1668,6 +1683,7 @@ IDTypeInfo IDType_ID_SCE = {
     .foreach_cache = scene_foreach_cache,
     .foreach_path = scene_foreach_path,
     .foreach_working_space_color = scene_foreach_working_space_color,
+    .foreach_asset_weak_reference = scene_foreach_asset_weak_reference,
     .owner_pointer_get = nullptr,
 
     .blend_write = scene_blend_write,
@@ -2289,7 +2305,7 @@ int BKE_scene_base_iter_next(
         else {
           BLI_assert(BKE_view_layer_is_synced(*view_layer));
         }
-        *base = static_cast<Base *>(BKE_view_layer_object_bases_get(view_layer)->first);
+        *base = BKE_view_layer_object_bases_get(view_layer)->first();
         if (*base) {
           *ob = (*base)->object;
           iter->phase = F_SCENE;
@@ -2306,8 +2322,8 @@ int BKE_scene_base_iter_next(
               BLI_assert(BKE_view_layer_is_synced(*view_layer_set));
             }
             ListBaseT<Base> *object_bases = BKE_view_layer_object_bases_get(view_layer_set);
-            if (object_bases->first) {
-              *base = static_cast<Base *>(object_bases->first);
+            if (object_bases->first()) {
+              *base = object_bases->first();
               *ob = (*base)->object;
               iter->phase = F_SCENE;
               break;
@@ -2334,8 +2350,8 @@ int BKE_scene_base_iter_next(
                   BLI_assert(BKE_view_layer_is_synced(*view_layer_set));
                 }
                 ListBaseT<Base> *object_bases = BKE_view_layer_object_bases_get(view_layer_set);
-                if (object_bases->first) {
-                  *base = static_cast<Base *>(object_bases->first);
+                if (object_bases->first()) {
+                  *base = object_bases->first();
                   *ob = (*base)->object;
                   break;
                 }
@@ -2488,11 +2504,7 @@ const char *BKE_scene_find_marker_name(const Scene *scene, int frame)
   const TimeMarker *m1, *m2;
 
   /* search through markers for match */
-  for (m1 = static_cast<const TimeMarker *>(markers->first),
-      m2 = static_cast<const TimeMarker *>(markers->last);
-       m1 && m2;
-       m1 = m1->next, m2 = m2->prev)
-  {
+  for (m1 = markers->first(), m2 = markers->last(); m1 && m2; m1 = m1->next, m2 = m2->prev) {
     if (m1->frame == frame) {
       return m1->name;
     }
@@ -2689,7 +2701,7 @@ int BKE_scene_orientation_get_index_from_flag(Scene *scene, int flag)
 
 static bool check_rendered_viewport_visible(Main *bmain)
 {
-  wmWindowManager *wm = static_cast<wmWindowManager *>(bmain->wm.first);
+  wmWindowManager *wm = bmain->wm.first();
   for (const wmWindow &window : wm->windows) {
     const bScreen *screen = BKE_workspace_active_screen_get(window.workspace_hook);
     Scene *scene = window.scene;
@@ -2700,7 +2712,7 @@ static bool check_rendered_viewport_visible(Main *bmain)
     }
 
     for (ScrArea &area : screen->areabase) {
-      View3D *v3d = static_cast<View3D *>(area.spacedata.first);
+      View3D *v3d = area.spacedata.first_as<View3D>();
       if (area.spacetype != SPACE_VIEW3D) {
         continue;
       }
@@ -2734,7 +2746,7 @@ static void prepare_mesh_for_viewport_render(Main *bmain,
     {
       if (check_rendered_viewport_visible(bmain)) {
         Mesh *mesh = id_cast<Mesh *>(obedit->data);
-        BMesh *bm = mesh->runtime->edit_mesh->bm;
+        BMesh *bm = BKE_editmesh_bmesh_get_for_write(mesh);
         BMeshToMeshParams params{};
         params.calc_object_remap = true;
         params.update_shapekey_indices = true;
@@ -2986,7 +2998,7 @@ bool BKE_scene_remove_render_view(Scene *scene, SceneRenderView *srv)
   if (act == -1) {
     return false;
   }
-  if (scene->r.views.first == scene->r.views.last) {
+  if (scene->r.views.first() == scene->r.views.last()) {
     /* ensure 1 view is kept */
     return false;
   }
@@ -3038,8 +3050,8 @@ Base *_setlooper_base_step(const Main &bmain, Scene **sce_iter, ViewLayer *view_
     /* For the first loop we should get the layer from workspace when available. */
     BKE_view_layer_synced_ensure(bmain, *sce_iter, view_layer);
     ListBaseT<Base> *object_bases = BKE_view_layer_object_bases_get(view_layer);
-    if (object_bases->first) {
-      return static_cast<Base *>(object_bases->first);
+    if (object_bases->first()) {
+      return object_bases->first();
     }
     /* No base on this scene layer. */
     goto next_set;
@@ -3049,7 +3061,7 @@ Base *_setlooper_base_step(const Main &bmain, Scene **sce_iter, ViewLayer *view_
     /* Reached the end, get the next base in the set. */
     while ((*sce_iter = (*sce_iter)->set)) {
       ViewLayer *view_layer_set = BKE_view_layer_default_render(*sce_iter);
-      base = static_cast<Base *>(BKE_view_layer_object_bases_get(view_layer_set)->first);
+      base = BKE_view_layer_object_bases_get(view_layer_set)->first();
 
       if (base) {
         return base;
@@ -3309,7 +3321,7 @@ SceneRenderView *BKE_scene_multiview_render_view_findindex(const RenderData *rd,
     return nullptr;
   }
 
-  for (srv = static_cast<SceneRenderView *>(rd->views.first), nr = 0; srv; srv = srv->next) {
+  for (srv = rd->views.first(), nr = 0; srv; srv = srv->next) {
     if (BKE_scene_multiview_is_render_view_active(rd, srv)) {
       if (nr++ == view_id) {
         return srv;
@@ -3343,7 +3355,7 @@ int BKE_scene_multiview_view_id_get(const RenderData *rd, const char *viewname)
     return 0;
   }
 
-  for (srv = static_cast<SceneRenderView *>(rd->views.first), nr = 0; srv; srv = srv->next) {
+  for (srv = rd->views.first(), nr = 0; srv; srv = srv->next) {
     if (BKE_scene_multiview_is_render_view_active(rd, srv)) {
       if (STREQ(viewname, srv->name)) {
         return nr;

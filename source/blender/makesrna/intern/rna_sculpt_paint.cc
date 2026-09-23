@@ -109,7 +109,6 @@ const EnumPropertyItem rna_enum_symmetrize_direction_items[] = {
 #  include "BKE_collection.hh"
 #  include "BKE_colortools.hh"
 #  include "BKE_context.hh"
-#  include "BKE_gpencil_legacy.h"
 #  include "BKE_layer.hh"
 #  include "BKE_material.hh"
 #  include "BKE_object.hh"
@@ -448,6 +447,7 @@ static void rna_UvSculpt_curve_preset_set(PointerRNA *ptr, int value)
   scene->toolsettings->uvsculpt.curve_distance_falloff_preset = int8_t(value);
 }
 
+/* -------------------------------------------------------------------- */
 /** \name Paint mode settings
  * \{ */
 
@@ -610,7 +610,7 @@ static void rna_UnifiedPaintSettings_unprojected_size_set(PointerRNA *ptr, float
 static void rna_UnifiedPaintSettings_size_update(bContext *C, PointerRNA *ptr)
 {
   /* changing the unified size should invalidate the overlay but also update the brush */
-  BKE_paint_invalidate_overlay_all();
+  bke::paint::invalidate_overlay_all(*CTX_data_scene(C));
   rna_UnifiedPaintSettings_update(C, ptr);
 }
 

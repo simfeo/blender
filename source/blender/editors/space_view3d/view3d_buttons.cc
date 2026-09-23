@@ -76,7 +76,10 @@
 
 namespace blender {
 
-/* ******************* view3d space & buttons ************** */
+/* -------------------------------------------------------------------- */
+/** \name Transform Panel Types
+ * \{ */
+
 enum {
   B_TRANSFORM_PANEL_MEDIAN = 1008,
   B_TRANSFORM_PANEL_DIMS = 1009,
@@ -144,6 +147,8 @@ struct TransformProperties {
 
 #define TRANSFORM_MEDIAN_ARRAY_LEN (sizeof(TransformMedian) / sizeof(float))
 
+/** \} */
+
 static TransformProperties *v3d_transform_props_ensure(View3D *v3d);
 
 /* -------------------------------------------------------------------- */
@@ -161,15 +166,16 @@ static void *editmesh_partial_update_begin_fn(bContext * /*C*/,
     return nullptr;
   }
 
-  BMEditMesh *em = static_cast<BMEditMesh *>(arg1);
+  Object *ob = static_cast<Object *>(arg1);
+  BMesh *bm = BKE_editmesh_bmesh_get_for_write(ob);
 
   int verts_mask_count = 0;
   BMIter iter;
   BMVert *eve;
   int i;
 
-  BitVector<> verts_mask(em->bm->totvert);
-  BM_ITER_MESH_INDEX (eve, &iter, em->bm, BM_VERTS_OF_MESH, i) {
+  BitVector<> verts_mask(bm->totvert);
+  BM_ITER_MESH_INDEX (eve, &iter, bm, BM_VERTS_OF_MESH, i) {
     if (!BM_elem_flag_test(eve, BM_ELEM_SELECT)) {
       continue;
     }
@@ -181,7 +187,7 @@ static void *editmesh_partial_update_begin_fn(bContext * /*C*/,
   update_params.do_tessellate = true;
   update_params.do_normals = true;
   BMPartialUpdate *bmpinfo = BM_mesh_partial_create_from_verts_group_single(
-      *em->bm, update_params, verts_mask, verts_mask_count);
+      *bm, update_params, verts_mask, verts_mask_count);
 
   return bmpinfo;
 }
@@ -215,12 +221,18 @@ static void editmesh_partial_update_update_fn(bContext *C,
   }
   tfp->tag_for_update = false;
 
-  BMEditMesh *em = static_cast<BMEditMesh *>(arg1);
+  Object *ob = static_cast<Object *>(arg1);
+  BMEditMesh *em = BKE_editmesh_from_object(ob);
 
-  BKE_editmesh_looptris_and_normals_calc_with_partial(em, bmpinfo);
+  BKE_editmesh_looptris_and_normals_calc_with_partial(
+      em, BKE_editmesh_bmesh_get_for_write(ob), bmpinfo);
 }
 
 /** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Median Utilities
+ * \{ */
 
 /* Helper function to compute a median changed value,
  * when the value should be clamped in [0.0, 1.0].
@@ -306,6 +318,12 @@ static void apply_scale_factor_clamp(float *val,
   }
 }
 
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Transform Properties
+ * \{ */
+
 static TransformProperties *v3d_transform_props_ensure(View3D *v3d)
 {
   if (v3d->runtime.properties_storage == nullptr) {
@@ -320,6 +338,12 @@ static TransformProperties *v3d_transform_props_ensure(View3D *v3d)
   }
   return static_cast<TransformProperties *>(v3d->runtime.properties_storage);
 }
+
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Curves Selection Status
+ * \{ */
 
 struct CurvesPointSelectionStatus {
   TransformMedian_Curves median = {};
@@ -692,7 +716,205 @@ static CurvesSelectionStatus init_grease_pencil_selection_status(
   return status;
 }
 
-/* is used for both read and write... */
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Edit Vertex Buttons
+ * \{ */
+
+static void calc_median_bmesh(BMesh &bm, TransformMedian_Mesh &median, int &tot, int &totedgedata)
+{
+  BMVert *eve;
+  BMEdge *eed;
+  BMIter iter;
+
+  const int cd_vert_bweight_offset = CustomData_get_offset_named(
+      &bm.vdata, CD_PROP_FLOAT, "bevel_weight_vert");
+  const int cd_vert_crease_offset = CustomData_get_offset_named(
+      &bm.vdata, CD_PROP_FLOAT, "crease_vert");
+  const int cd_vert_skin_offset = CustomData_get_offset_named(
+      &bm.vdata, CD_PROP_FLOAT2, "skin_modifier_radius");
+  const int cd_edge_bweight_offset = CustomData_get_offset_named(
+      &bm.edata, CD_PROP_FLOAT, "bevel_weight_edge");
+  const int cd_edge_crease_offset = CustomData_get_offset_named(
+      &bm.edata, CD_PROP_FLOAT, "crease_edge");
+
+  if (bm.totvertsel) {
+    BM_ITER_MESH (eve, &iter, &bm, BM_VERTS_OF_MESH) {
+      if (BM_elem_flag_test(eve, BM_ELEM_SELECT)) {
+        tot++;
+        add_v3_v3(median.location, eve->co);
+
+        if (cd_vert_bweight_offset != -1) {
+          median.bv_weight += BM_ELEM_CD_GET_FLOAT(eve, cd_vert_bweight_offset);
+        }
+
+        if (cd_vert_crease_offset != -1) {
+          median.v_crease += BM_ELEM_CD_GET_FLOAT(eve, cd_vert_crease_offset);
+        }
+
+        if (cd_vert_skin_offset != -1) {
+          const float2 *radius = static_cast<const float2 *>(
+              BM_ELEM_CD_GET_VOID_P(eve, cd_vert_skin_offset));
+          add_v2_v2(median.skin, *radius);
+        }
+      }
+    }
+  }
+
+  if ((cd_edge_bweight_offset != -1) || (cd_edge_crease_offset != -1)) {
+    if (bm.totedgesel) {
+      BM_ITER_MESH (eed, &iter, &bm, BM_EDGES_OF_MESH) {
+        if (BM_elem_flag_test(eed, BM_ELEM_SELECT)) {
+          if (cd_edge_bweight_offset != -1) {
+            median.be_weight += BM_ELEM_CD_GET_FLOAT(eed, cd_edge_bweight_offset);
+          }
+
+          if (cd_edge_crease_offset != -1) {
+            median.e_crease += BM_ELEM_CD_GET_FLOAT(eed, cd_edge_crease_offset);
+          }
+
+          totedgedata++;
+        }
+      }
+    }
+  }
+  else {
+    totedgedata = bm.totedgesel;
+  }
+}
+
+static void apply_median_to_bmesh(BMesh &bm,
+                                  const TransformMedian_Mesh &median,
+                                  const TransformMedian_Mesh &ve_median,
+                                  const int tot,
+                                  const bool apply_vcos)
+{
+  BMIter iter;
+  BMVert *eve;
+  BMEdge *eed;
+
+  int cd_vert_bweight_offset = -1;
+  int cd_vert_crease_offset = -1;
+  int cd_vert_skin_offset = -1;
+  int cd_edge_bweight_offset = -1;
+  int cd_edge_crease_offset = -1;
+
+  float scale_bv_weight = 1.0f;
+  float scale_v_crease = 1.0f;
+  float scale_skin[2] = {1.0f, 1.0f};
+  float scale_be_weight = 1.0f;
+  float scale_e_crease = 1.0f;
+
+  /* Vertices */
+
+  if (apply_vcos || median.bv_weight || median.v_crease || median.skin[0] || median.skin[1]) {
+    if (median.bv_weight) {
+      if (!CustomData_has_layer_named(&bm.vdata, CD_PROP_FLOAT, "bevel_weight_vert")) {
+        BM_data_layer_add_named(&bm, &bm.vdata, CD_PROP_FLOAT, "bevel_weight_vert");
+      }
+      cd_vert_bweight_offset = CustomData_get_offset_named(
+          &bm.vdata, CD_PROP_FLOAT, "bevel_weight_vert");
+      BLI_assert(cd_vert_bweight_offset != -1);
+
+      scale_bv_weight = compute_scale_factor(ve_median.bv_weight, median.bv_weight);
+    }
+
+    if (median.v_crease) {
+      if (!CustomData_has_layer_named(&bm.vdata, CD_PROP_FLOAT, "crease_vert")) {
+        BM_data_layer_add_named(&bm, &bm.vdata, CD_PROP_FLOAT, "crease_vert");
+      }
+      cd_vert_crease_offset = CustomData_get_offset_named(&bm.vdata, CD_PROP_FLOAT, "crease_vert");
+      BLI_assert(cd_vert_crease_offset != -1);
+
+      scale_v_crease = compute_scale_factor(ve_median.v_crease, median.v_crease);
+    }
+
+    for (int i = 0; i < 2; i++) {
+      if (median.skin[i]) {
+        cd_vert_skin_offset = CustomData_get_offset_named(
+            &bm.vdata, CD_PROP_FLOAT2, "skin_modifier_radius");
+        BLI_assert(cd_vert_skin_offset != -1);
+
+        if (ve_median.skin[i] != median.skin[i]) {
+          scale_skin[i] = ve_median.skin[i] / (ve_median.skin[i] - median.skin[i]);
+        }
+      }
+    }
+
+    BM_ITER_MESH (eve, &iter, &bm, BM_VERTS_OF_MESH) {
+      if (BM_elem_flag_test(eve, BM_ELEM_SELECT)) {
+        if (apply_vcos) {
+          apply_raw_diff_v3(eve->co, tot, ve_median.location, median.location);
+        }
+
+        if (cd_vert_bweight_offset != -1) {
+          float *b_weight = static_cast<float *>(
+              BM_ELEM_CD_GET_VOID_P(eve, cd_vert_bweight_offset));
+          apply_scale_factor_clamp(b_weight, tot, ve_median.bv_weight, scale_bv_weight);
+        }
+
+        if (cd_vert_crease_offset != -1) {
+          float *crease = static_cast<float *>(BM_ELEM_CD_GET_VOID_P(eve, cd_vert_crease_offset));
+          apply_scale_factor_clamp(crease, tot, ve_median.v_crease, scale_v_crease);
+        }
+
+        if (cd_vert_skin_offset != -1) {
+          float2 *radius = static_cast<float2 *>(BM_ELEM_CD_GET_VOID_P(eve, cd_vert_skin_offset));
+
+          /* That one is not clamped to [0.0, 1.0]. */
+          for (int i = 0; i < 2; i++) {
+            if (median.skin[i] != 0.0f) {
+              apply_scale_factor(
+                  &(*radius)[i], tot, ve_median.skin[i], median.skin[i], scale_skin[i]);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /* Edges */
+
+  if (median.be_weight || median.e_crease) {
+    if (median.be_weight) {
+      if (!CustomData_has_layer_named(&bm.edata, CD_PROP_FLOAT, "bevel_weight_edge")) {
+        BM_data_layer_add_named(&bm, &bm.edata, CD_PROP_FLOAT, "bevel_weight_edge");
+      }
+      cd_edge_bweight_offset = CustomData_get_offset_named(
+          &bm.edata, CD_PROP_FLOAT, "bevel_weight_edge");
+      BLI_assert(cd_edge_bweight_offset != -1);
+
+      scale_be_weight = compute_scale_factor(ve_median.be_weight, median.be_weight);
+    }
+
+    if (median.e_crease) {
+      if (!CustomData_has_layer_named(&bm.edata, CD_PROP_FLOAT, "crease_edge")) {
+        BM_data_layer_add_named(&bm, &bm.edata, CD_PROP_FLOAT, "crease_edge");
+      }
+      cd_edge_crease_offset = CustomData_get_offset_named(&bm.edata, CD_PROP_FLOAT, "crease_edge");
+      BLI_assert(cd_edge_crease_offset != -1);
+
+      scale_e_crease = compute_scale_factor(ve_median.e_crease, median.e_crease);
+    }
+
+    BM_ITER_MESH (eed, &iter, &bm, BM_EDGES_OF_MESH) {
+      if (BM_elem_flag_test(eed, BM_ELEM_SELECT)) {
+        if (median.be_weight != 0.0f) {
+          float *b_weight = static_cast<float *>(
+              BM_ELEM_CD_GET_VOID_P(eed, cd_edge_bweight_offset));
+          apply_scale_factor_clamp(b_weight, tot, ve_median.be_weight, scale_be_weight);
+        }
+
+        if (median.e_crease != 0.0f) {
+          float *crease = static_cast<float *>(BM_ELEM_CD_GET_VOID_P(eed, cd_edge_crease_offset));
+          apply_scale_factor_clamp(crease, tot, ve_median.e_crease, scale_e_crease);
+        }
+      }
+    }
+  }
+}
+
 static void v3d_editvertex_buts(
     const bContext *C, ui::Layout *layout, View3D *v3d, Object *ob, float lim)
 {
@@ -709,72 +931,14 @@ static void v3d_editvertex_buts(
   tot = totedgedata = totcurvedata = totlattdata = totcurvebweight = 0;
 
   if (ob->type == OB_MESH) {
-    TransformMedian_Mesh *median = &median_basis.mesh;
+    TransformMedian_Mesh &median = median_basis.mesh;
     Mesh *mesh = id_cast<Mesh *>(ob->data);
-    BMEditMesh *em = mesh->runtime->edit_mesh.get();
-    BMesh *bm = em->bm;
-    BMVert *eve;
-    BMEdge *eed;
-    BMIter iter;
-
-    const int cd_vert_bweight_offset = CustomData_get_offset_named(
-        &bm->vdata, CD_PROP_FLOAT, "bevel_weight_vert");
-    const int cd_vert_crease_offset = CustomData_get_offset_named(
-        &bm->vdata, CD_PROP_FLOAT, "crease_vert");
-    const int cd_vert_skin_offset = CustomData_get_offset_named(
-        &bm->vdata, CD_PROP_FLOAT2, "skin_modifier_radius");
-    const int cd_edge_bweight_offset = CustomData_get_offset_named(
-        &bm->edata, CD_PROP_FLOAT, "bevel_weight_edge");
-    const int cd_edge_crease_offset = CustomData_get_offset_named(
-        &bm->edata, CD_PROP_FLOAT, "crease_edge");
-
-    has_skinradius = (cd_vert_skin_offset != -1);
-
-    if (bm->totvertsel) {
-      BM_ITER_MESH (eve, &iter, bm, BM_VERTS_OF_MESH) {
-        if (BM_elem_flag_test(eve, BM_ELEM_SELECT)) {
-          tot++;
-          add_v3_v3(median->location, eve->co);
-
-          if (cd_vert_bweight_offset != -1) {
-            median->bv_weight += BM_ELEM_CD_GET_FLOAT(eve, cd_vert_bweight_offset);
-          }
-
-          if (cd_vert_crease_offset != -1) {
-            median->v_crease += BM_ELEM_CD_GET_FLOAT(eve, cd_vert_crease_offset);
-          }
-
-          if (has_skinradius) {
-            const float2 *radius = static_cast<const float2 *>(
-                BM_ELEM_CD_GET_VOID_P(eve, cd_vert_skin_offset));
-            add_v2_v2(median->skin, *radius);
-          }
-        }
-      }
-    }
-
-    if ((cd_edge_bweight_offset != -1) || (cd_edge_crease_offset != -1)) {
-      if (bm->totedgesel) {
-        BM_ITER_MESH (eed, &iter, bm, BM_EDGES_OF_MESH) {
-          if (BM_elem_flag_test(eed, BM_ELEM_SELECT)) {
-            if (cd_edge_bweight_offset != -1) {
-              median->be_weight += BM_ELEM_CD_GET_FLOAT(eed, cd_edge_bweight_offset);
-            }
-
-            if (cd_edge_crease_offset != -1) {
-              median->e_crease += BM_ELEM_CD_GET_FLOAT(eed, cd_edge_crease_offset);
-            }
-
-            totedgedata++;
-          }
-        }
-      }
-    }
-    else {
-      totedgedata = bm->totedgesel;
-    }
+    BMesh *bm = BKE_editmesh_bmesh_get_for_write(mesh);
+    calc_median_bmesh(*bm, median, tot, totedgedata);
 
     has_meshdata = (tot || totedgedata);
+    has_skinradius = CustomData_has_layer_named(
+        &bm->vdata, CD_PROP_FLOAT2, "skin_modifier_radius");
   }
   else if (ELEM(ob->type, OB_CURVES_LEGACY, OB_SURF)) {
     TransformMedian_Curve *median = &median_basis.curve;
@@ -1392,12 +1556,12 @@ static void v3d_editvertex_buts(
 
     if (ob->type == OB_MESH) {
       Mesh *mesh = id_cast<Mesh *>(ob->data);
-      if (BMEditMesh *em = mesh->runtime->edit_mesh.get()) {
+      if (mesh->runtime->edit_mesh) {
         ui::BlockInteraction_CallbackData callback_data{};
         callback_data.begin_fn = editmesh_partial_update_begin_fn;
         callback_data.end_fn = editmesh_partial_update_end_fn;
         callback_data.update_fn = editmesh_partial_update_update_fn;
-        callback_data.arg1 = em;
+        callback_data.arg1 = ob;
         block_interaction_set(block, &callback_data);
       }
     }
@@ -1431,145 +1595,17 @@ static void v3d_editvertex_buts(
          median_basis.mesh.skin[0] || median_basis.mesh.skin[1] || median_basis.mesh.be_weight ||
          median_basis.mesh.e_crease))
     {
-      const TransformMedian_Mesh *median = &median_basis.mesh, *ve_median = &ve_median_basis.mesh;
+      const TransformMedian_Mesh &median = median_basis.mesh;
+      const TransformMedian_Mesh &ve_median = ve_median_basis.mesh;
       Mesh *mesh = id_cast<Mesh *>(ob->data);
-      BMEditMesh *em = mesh->runtime->edit_mesh.get();
-      BMesh *bm = em->bm;
-      BMIter iter;
-      BMVert *eve;
-      BMEdge *eed;
-
-      int cd_vert_bweight_offset = -1;
-      int cd_vert_crease_offset = -1;
-      int cd_vert_skin_offset = -1;
-      int cd_edge_bweight_offset = -1;
-      int cd_edge_crease_offset = -1;
-
-      float scale_bv_weight = 1.0f;
-      float scale_v_crease = 1.0f;
-      float scale_skin[2] = {1.0f, 1.0f};
-      float scale_be_weight = 1.0f;
-      float scale_e_crease = 1.0f;
-
-      /* Vertices */
-
-      if (apply_vcos || median->bv_weight || median->v_crease || median->skin[0] ||
-          median->skin[1])
-      {
-        if (median->bv_weight) {
-          if (!CustomData_has_layer_named(&bm->vdata, CD_PROP_FLOAT, "bevel_weight_vert")) {
-            BM_data_layer_add_named(bm, &bm->vdata, CD_PROP_FLOAT, "bevel_weight_vert");
-          }
-          cd_vert_bweight_offset = CustomData_get_offset_named(
-              &bm->vdata, CD_PROP_FLOAT, "bevel_weight_vert");
-          BLI_assert(cd_vert_bweight_offset != -1);
-
-          scale_bv_weight = compute_scale_factor(ve_median->bv_weight, median->bv_weight);
-        }
-
-        if (median->v_crease) {
-          if (!CustomData_has_layer_named(&bm->vdata, CD_PROP_FLOAT, "crease_vert")) {
-            BM_data_layer_add_named(bm, &bm->vdata, CD_PROP_FLOAT, "crease_vert");
-          }
-          cd_vert_crease_offset = CustomData_get_offset_named(
-              &bm->vdata, CD_PROP_FLOAT, "crease_vert");
-          BLI_assert(cd_vert_crease_offset != -1);
-
-          scale_v_crease = compute_scale_factor(ve_median->v_crease, median->v_crease);
-        }
-
-        for (int i = 0; i < 2; i++) {
-          if (median->skin[i]) {
-            cd_vert_skin_offset = CustomData_get_offset_named(
-                &bm->vdata, CD_PROP_FLOAT2, "skin_modifier_radius");
-            BLI_assert(cd_vert_skin_offset != -1);
-
-            if (ve_median->skin[i] != median->skin[i]) {
-              scale_skin[i] = ve_median->skin[i] / (ve_median->skin[i] - median->skin[i]);
-            }
-          }
-        }
-
-        BM_ITER_MESH (eve, &iter, bm, BM_VERTS_OF_MESH) {
-          if (BM_elem_flag_test(eve, BM_ELEM_SELECT)) {
-            if (apply_vcos) {
-              apply_raw_diff_v3(eve->co, tot, ve_median->location, median->location);
-            }
-
-            if (cd_vert_bweight_offset != -1) {
-              float *b_weight = static_cast<float *>(
-                  BM_ELEM_CD_GET_VOID_P(eve, cd_vert_bweight_offset));
-              apply_scale_factor_clamp(b_weight, tot, ve_median->bv_weight, scale_bv_weight);
-            }
-
-            if (cd_vert_crease_offset != -1) {
-              float *crease = static_cast<float *>(
-                  BM_ELEM_CD_GET_VOID_P(eve, cd_vert_crease_offset));
-              apply_scale_factor_clamp(crease, tot, ve_median->v_crease, scale_v_crease);
-            }
-
-            if (cd_vert_skin_offset != -1) {
-              float2 *radius = static_cast<float2 *>(
-                  BM_ELEM_CD_GET_VOID_P(eve, cd_vert_skin_offset));
-
-              /* That one is not clamped to [0.0, 1.0]. */
-              for (int i = 0; i < 2; i++) {
-                if (median->skin[i] != 0.0f) {
-                  apply_scale_factor(
-                      &(*radius)[i], tot, ve_median->skin[i], median->skin[i], scale_skin[i]);
-                }
-              }
-            }
-          }
-        }
-      }
+      BMesh *bm = BKE_editmesh_bmesh_get_for_write(mesh);
+      apply_median_to_bmesh(*bm, median, ve_median, tot, apply_vcos);
 
       if (apply_vcos) {
         /* Tell the update callback to run. */
         tfp->tag_for_update = true;
       }
 
-      /* Edges */
-
-      if (median->be_weight || median->e_crease) {
-        if (median->be_weight) {
-          if (!CustomData_has_layer_named(&bm->edata, CD_PROP_FLOAT, "bevel_weight_edge")) {
-            BM_data_layer_add_named(bm, &bm->edata, CD_PROP_FLOAT, "bevel_weight_edge");
-          }
-          cd_edge_bweight_offset = CustomData_get_offset_named(
-              &bm->edata, CD_PROP_FLOAT, "bevel_weight_edge");
-          BLI_assert(cd_edge_bweight_offset != -1);
-
-          scale_be_weight = compute_scale_factor(ve_median->be_weight, median->be_weight);
-        }
-
-        if (median->e_crease) {
-          if (!CustomData_has_layer_named(&bm->edata, CD_PROP_FLOAT, "crease_edge")) {
-            BM_data_layer_add_named(bm, &bm->edata, CD_PROP_FLOAT, "crease_edge");
-          }
-          cd_edge_crease_offset = CustomData_get_offset_named(
-              &bm->edata, CD_PROP_FLOAT, "crease_edge");
-          BLI_assert(cd_edge_crease_offset != -1);
-
-          scale_e_crease = compute_scale_factor(ve_median->e_crease, median->e_crease);
-        }
-
-        BM_ITER_MESH (eed, &iter, bm, BM_EDGES_OF_MESH) {
-          if (BM_elem_flag_test(eed, BM_ELEM_SELECT)) {
-            if (median->be_weight != 0.0f) {
-              float *b_weight = static_cast<float *>(
-                  BM_ELEM_CD_GET_VOID_P(eed, cd_edge_bweight_offset));
-              apply_scale_factor_clamp(b_weight, tot, ve_median->be_weight, scale_be_weight);
-            }
-
-            if (median->e_crease != 0.0f) {
-              float *crease = static_cast<float *>(
-                  BM_ELEM_CD_GET_VOID_P(eed, cd_edge_crease_offset));
-              apply_scale_factor_clamp(crease, tot, ve_median->e_crease, scale_e_crease);
-            }
-          }
-        }
-      }
       /* We basically want the same update as in #EDBM_update(), so keep in sync. */
       WM_main_add_notifier(NC_GEOM | ND_DATA, &mesh->id);
     }
@@ -1721,6 +1757,12 @@ static void v3d_editvertex_buts(
 
 #undef TRANSFORM_MEDIAN_ARRAY_LEN
 
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Object Dimension Buttons
+ * \{ */
+
 static void v3d_object_dimension_buts(bContext *C, ui::Layout *layout, View3D *v3d, Object *ob)
 {
   ui::Block *block = (layout) ? layout->block() : nullptr;
@@ -1795,6 +1837,12 @@ static void v3d_object_dimension_buts(bContext *C, ui::Layout *layout, View3D *v
     RNA_property_update(C, &obptr, prop);
   }
 }
+
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Vertex Group Panel
+ * \{ */
 
 #define B_VGRP_PNL_EDIT_SINGLE 8 /* or greater */
 
@@ -1893,7 +1941,7 @@ static void view3d_panel_vgroup(const bContext *C, Panel *panel)
     const int vgroup_num = defbase->count();
     tfp->vertex_weights.resize(vgroup_num);
 
-    for (i = 0, dg = static_cast<bDeformGroup *>(defbase->first); dg; i++, dg = dg->next) {
+    for (i = 0, dg = defbase->first(); dg; i++, dg = dg->next) {
       bool locked = (dg->flag & DG_LOCK_WEIGHT) != 0;
       if (vgroup_validmap[i]) {
         MDeformWeight *dw = BKE_defvert_find_index(dv, i);
@@ -2012,7 +2060,13 @@ static void view3d_panel_vgroup(const bContext *C, Panel *panel)
   }
 }
 
-static void v3d_transform_butsR(ui::Layout &layout, PointerRNA *ptr)
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Transform Buttons
+ * \{ */
+
+static void v3d_transform_butsR(const bContext *C, ui::Layout &layout, PointerRNA *ptr)
 {
   ui::Layout *split = &layout.split(0.8f, false);
 
@@ -2092,7 +2146,10 @@ static void v3d_transform_butsR(ui::Layout &layout, PointerRNA *ptr)
                    ICON_DECORATE_UNLOCKED);
       break;
   }
-  layout.prop(ptr, "rotation_mode", UI_ITEM_NONE, "", ICON_NONE);
+
+  ui::Layout &row = layout.row(/*align=*/true);
+  row.prop(ptr, "rotation_mode", UI_ITEM_NONE, "", ICON_NONE);
+  row.op_menu_enum(C, "ANIM_OT_rotation_mode_convert", "mode", "", ICON_DOWNARROW_HLT);
 
   split = &layout.split(0.8f, false);
   colsub = &split->column(true);
@@ -2104,7 +2161,7 @@ static void v3d_transform_butsR(ui::Layout &layout, PointerRNA *ptr)
       ptr, "lock_scale", ui::ITEM_R_TOGGLE | ui::ITEM_R_ICON_ONLY, "", ICON_DECORATE_UNLOCKED);
 }
 
-static void v3d_posearmature_buts(ui::Layout &layout, Object *ob)
+static void v3d_posearmature_buts(const bContext *C, ui::Layout &layout, Object *ob)
 {
   bPoseChannel *pchan = BKE_pose_channel_active_if_bonecoll_visible(ob);
 
@@ -2120,7 +2177,7 @@ static void v3d_posearmature_buts(ui::Layout &layout, Object *ob)
   /* XXX: RNA buts show data in native types (i.e. quaternion, 4-component axis/angle, etc.)
    * but old-school UI shows in eulers always. Do we want to be able to still display in Eulers?
    * Maybe needs RNA/UI options to display rotations as different types. */
-  v3d_transform_butsR(col, &pchanptr);
+  v3d_transform_butsR(C, col, &pchanptr);
 }
 
 static void v3d_editarmature_buts(ui::Layout &layout, Object *ob)
@@ -2200,6 +2257,12 @@ static void v3d_editmetaball_buts(ui::Layout &layout, Object *ob)
   }
 }
 
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Transform Panel
+ * \{ */
+
 static void do_view3d_region_buttons(bContext *C, void * /*index*/, int event)
 {
   const Main *bmain = CTX_data_main(C);
@@ -2263,20 +2326,25 @@ static void view3d_panel_transform(const bContext *C, Panel *panel)
     }
   }
   else if (ob->mode & OB_MODE_POSE) {
-    v3d_posearmature_buts(col, ob);
+    v3d_posearmature_buts(C, col, ob);
   }
   else {
     PointerRNA obptr = RNA_id_pointer_create(&ob->id);
-    v3d_transform_butsR(col, &obptr);
+    v3d_transform_butsR(C, col, &obptr);
 
     /* Dimensions and editmode are mostly the same check. */
-    if (OB_TYPE_SUPPORT_EDITMODE(ob->type) || ELEM(ob->type, OB_VOLUME, OB_CURVES, OB_POINTCLOUD))
-    {
+    if (OB_TYPE_SUPPORT_EDITMODE(ob->type) || ELEM(ob->type, OB_VOLUME)) {
       View3D *v3d = CTX_wm_view3d(C);
       v3d_object_dimension_buts(nullptr, &col, v3d, ob);
     }
   }
 }
+
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Curve Data Panel
+ * \{ */
 
 static bool view3d_panel_curve_data_poll(const bContext *C, PanelType * /*pt*/)
 {
@@ -2766,7 +2834,7 @@ static void view3d_panel_curve_data(const bContext *C, Panel *panel)
   auto add_labeled_field =
       [&](const StringRef label, const bool active, FunctionRef<ui::Button *()> add_button) {
         ui::Layout &row = bcol.row(true);
-        ui::Layout &split = row.split(0.4, true);
+        ui::Layout &split = row.split(ui::Layout::PROPERTY_SPLIT_FACTOR, true);
         ui::Layout &col = split.column(true);
         col.alignment_set(ui::LayoutAlign::Right);
         col.label(label, ICON_NONE);
@@ -2969,6 +3037,12 @@ static void view3d_panel_curve_data(const bContext *C, Panel *panel)
   }
 }
 
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Registration
+ * \{ */
+
 void view3d_buttons_register(ARegionType *art)
 {
   PanelType *pt;
@@ -3002,6 +3076,12 @@ void view3d_buttons_register(ARegionType *art)
   BLI_addtail(&art->paneltypes, pt);
 }
 
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Object Mode Pie or Toggle Operator
+ * \{ */
+
 static wmOperatorStatus view3d_object_mode_menu_exec(bContext *C, wmOperator *op)
 {
   Object *ob = CTX_data_active_object(C);
@@ -3029,5 +3109,7 @@ void VIEW3D_OT_object_mode_pie_or_toggle(wmOperatorType *ot)
   /* flags */
   ot->flag = 0;
 }
+
+/** \} */
 
 }  // namespace blender

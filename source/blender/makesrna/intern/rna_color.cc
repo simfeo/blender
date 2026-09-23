@@ -32,7 +32,12 @@ const EnumPropertyItem rna_enum_color_space_convert_default_items[] = {
     {0, nullptr, 0, nullptr, nullptr},
 };
 
-}
+const EnumPropertyItem rna_enum_color_space_interop_id_default_items[] = {
+    {-1, "NONE", 0, "None", "The color space has no interop ID"},
+    {0, nullptr, 0, nullptr, nullptr},
+};
+
+}  // namespace blender
 
 #ifdef RNA_RUNTIME
 
@@ -236,7 +241,7 @@ static std::optional<std::string> rna_ColorRamp_path(const PointerRNA *ptr)
         bNodeTree *ntree = id_cast<bNodeTree *>(id);
         bNode *node;
 
-        for (node = static_cast<bNode *>(ntree->nodes.first); node; node = node->next) {
+        for (node = ntree->nodes.first(); node; node = node->next) {
           if (ELEM(node->type_legacy, SH_NODE_VALTORGB, TEX_NODE_VALTORGB)) {
             if (node->storage == ptr->data) {
               /* all node color ramp properties called 'color_ramp'
@@ -304,7 +309,7 @@ static std::optional<std::string> rna_ColorRampElement_path(const PointerRNA *pt
         bNodeTree *ntree = id_cast<bNodeTree *>(id);
         bNode *node;
 
-        for (node = static_cast<bNode *>(ntree->nodes.first); node; node = node->next) {
+        for (node = ntree->nodes.first(); node; node = node->next) {
           if (ELEM(node->type_legacy, SH_NODE_VALTORGB, TEX_NODE_VALTORGB)) {
             ramp_ptr = RNA_pointer_create_discrete(id, RNA_ColorRamp, node->storage);
             COLRAMP_GETPATH;
@@ -317,7 +322,7 @@ static std::optional<std::string> rna_ColorRampElement_path(const PointerRNA *pt
         LinkData *link;
 
         BKE_linestyle_modifier_list_color_ramps(id_cast<FreestyleLineStyle *>(id), &listbase);
-        for (link = static_cast<LinkData *>(listbase.first); link; link = link->next) {
+        for (link = listbase.first(); link; link = link->next) {
           ramp_ptr = RNA_pointer_create_discrete(id, RNA_ColorRamp, link->data);
           COLRAMP_GETPATH;
         }
@@ -360,7 +365,7 @@ static void rna_ColorRamp_update(Main *bmain, Scene * /*scene*/, PointerRNA *ptr
         bNodeTree *ntree = id_cast<bNodeTree *>(id);
         bNode *node;
 
-        for (node = static_cast<bNode *>(ntree->nodes.first); node; node = node->next) {
+        for (node = ntree->nodes.first(); node; node = node->next) {
           if (ELEM(node->type_legacy, SH_NODE_VALTORGB, TEX_NODE_VALTORGB)) {
             BKE_ntree_update_tag_node_property(ntree, node);
             BKE_main_ensure_invariants(*bmain, ntree->id);
@@ -545,9 +550,7 @@ static void rna_ColorManagedDisplaySettings_display_device_update(Main *bmain,
     WM_main_add_notifier(NC_SCENE | ND_SEQUENCER, nullptr);
 
     /* Color management can be baked into shaders, need to refresh. */
-    for (Material *ma = static_cast<Material *>(bmain->materials.first); ma;
-         ma = static_cast<Material *>(ma->id.next))
-    {
+    for (Material *ma = bmain->materials.first(); ma; ma = static_cast<Material *>(ma->id.next)) {
       DEG_id_tag_update(&ma->id, ID_RECALC_SYNC_TO_EVAL);
     }
   }
@@ -723,7 +726,7 @@ static void rna_ColorManagedColorspaceSettings_is_data_set(PointerRNA *ptr, bool
       ptr->data);
   if (value) {
     const char *data_name = IMB_colormanagement_role_colorspace_name_get(COLOR_ROLE_DATA);
-    STRNCPY_UTF8(colorspace->name, data_name);
+    IMB_colormanagement_colorspace_settings_set(colorspace, data_name);
   }
 }
 
@@ -742,8 +745,38 @@ static void rna_ColorManagedColorspaceSettings_colorspace_set(PointerRNA *ptr, i
   const char *name = IMB_colormanagement_colorspace_get_indexed_name(value);
 
   if (name && name[0]) {
-    STRNCPY_UTF8(colorspace->name, name);
+    IMB_colormanagement_colorspace_settings_set(colorspace, name);
   }
+}
+
+static int rna_ColorManagedColorspaceSettings_interop_id_get(PointerRNA *ptr)
+{
+  ColorManagedColorspaceSettings *colorspace = static_cast<ColorManagedColorspaceSettings *>(
+      ptr->data);
+  return IMB_colormanagement_colorspace_get_interop_id_index(colorspace->name,
+                                                             colorspace->interop_id);
+}
+
+static void rna_ColorManagedColorspaceSettings_interop_id_set(PointerRNA *ptr, int value)
+{
+  ColorManagedColorspaceSettings *colorspace = static_cast<ColorManagedColorspaceSettings *>(
+      ptr->data);
+  IMB_colormanagement_colorspace_interop_id_set(colorspace->name, colorspace->interop_id, value);
+}
+
+static const EnumPropertyItem *rna_ColorManagedColorspaceSettings_interop_id_itemf(
+    bContext * /*C*/, PointerRNA * /*ptr*/, PropertyRNA * /*prop*/, bool *r_free)
+{
+  EnumPropertyItem *items = nullptr;
+  int totitem = 0;
+
+  RNA_enum_items_add(&items, &totitem, rna_enum_color_space_interop_id_default_items);
+  IMB_colormanagement_interop_id_items_add(&items, &totitem);
+  RNA_enum_item_end(&items, &totitem);
+
+  *r_free = true;
+
+  return items;
 }
 
 static const EnumPropertyItem *rna_ColorManagedColorspaceSettings_colorspace_itemf(
@@ -931,6 +964,7 @@ static void rna_def_curvemap_points_api(BlenderRNA *brna, PropertyRNA *cprop)
       func, "value", 0.0f, -FLT_MAX, FLT_MAX, "Value", "Value of point", -FLT_MAX, FLT_MAX);
   RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
   parm = RNA_def_pointer(func, "point", "CurveMapPoint", "", "New point");
+  RNA_def_parameter_flags(parm, PROP_NEVER_NULL, ParameterFlag(0));
   RNA_def_function_return(func, parm);
 
   func = RNA_def_function(srna, "remove", "rna_CurveMap_remove_point");
@@ -1144,6 +1178,7 @@ static void rna_def_color_ramp_element_api(BlenderRNA *brna, PropertyRNA *cprop)
   RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
   /* return type */
   parm = RNA_def_pointer(func, "element", "ColorRampElement", "", "New element");
+  RNA_def_parameter_flags(parm, PROP_NEVER_NULL, ParameterFlag(0));
   RNA_def_function_return(func, parm);
 
   func = RNA_def_function(srna, "remove", "rna_ColorRampElement_remove");
@@ -1561,6 +1596,20 @@ static void rna_def_colormanage(BlenderRNA *brna)
   RNA_def_property_translation_context(prop, BLT_I18NCONTEXT_COLOR_MANAGEMENT);
   RNA_def_property_update(prop, NC_WINDOW, "rna_ColorManagedColorspaceSettings_reload_update");
 
+  prop = RNA_def_property(srna, "interop_id", PROP_ENUM, PROP_NONE);
+  RNA_def_property_flag(prop, PROP_ENUM_NO_CONTEXT);
+  RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
+  RNA_def_property_enum_items(prop, rna_enum_color_space_interop_id_default_items);
+  RNA_def_property_enum_funcs(prop,
+                              "rna_ColorManagedColorspaceSettings_interop_id_get",
+                              "rna_ColorManagedColorspaceSettings_interop_id_set",
+                              "rna_ColorManagedColorspaceSettings_interop_id_itemf");
+  RNA_def_property_ui_text(prop,
+                           "Interop ID",
+                           "Identifier of the color space that works across OpenColorIO "
+                           "configurations, as defined by the ASWF Color Interop Forum");
+  RNA_def_property_update(prop, NC_WINDOW, "rna_ColorManagedColorspaceSettings_reload_update");
+
   prop = RNA_def_property(srna, "is_data", PROP_BOOLEAN, PROP_NONE);
   RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
   RNA_def_property_boolean_funcs(prop,
@@ -1587,6 +1636,20 @@ static void rna_def_colormanage(BlenderRNA *brna)
                               "rna_ColorManagedColorspaceSettings_colorspace_itemf");
   RNA_def_property_ui_text(prop, "Color Space", "Color space that the sequencer operates in");
   RNA_def_property_translation_context(prop, BLT_I18NCONTEXT_COLOR_MANAGEMENT);
+  RNA_def_property_update(prop, NC_WINDOW, "rna_ColorManagedColorspaceSettings_reload_update");
+
+  prop = RNA_def_property(srna, "interop_id", PROP_ENUM, PROP_NONE);
+  RNA_def_property_flag(prop, PROP_ENUM_NO_CONTEXT);
+  RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
+  RNA_def_property_enum_items(prop, rna_enum_color_space_interop_id_default_items);
+  RNA_def_property_enum_funcs(prop,
+                              "rna_ColorManagedColorspaceSettings_interop_id_get",
+                              "rna_ColorManagedColorspaceSettings_interop_id_set",
+                              "rna_ColorManagedColorspaceSettings_interop_id_itemf");
+  RNA_def_property_ui_text(prop,
+                           "Interop ID",
+                           "Identifier of the color space that works across OpenColorIO "
+                           "configurations, as defined by the ASWF Color Interop Forum");
   RNA_def_property_update(prop, NC_WINDOW, "rna_ColorManagedColorspaceSettings_reload_update");
 }
 

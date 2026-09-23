@@ -861,7 +861,7 @@ static void init_TransDataContainers(TransInfo *t, Object *obact, Span<Object *>
                                 0;
       }
 
-      if (object_mode & OB_MODE_EDIT) {
+      if (object_mode & OB_MODE_EDIT || object_mode & OB_MODE_PAINT_GREASE_PENCIL) {
         tc->obedit = objects[i];
         /* Check needed for UVs. */
         if ((t->flag & T_2D_EDIT) == 0) {
@@ -1019,21 +1019,19 @@ static TransConvertTypeInfo *convert_type_get(const TransInfo *t, Object **r_obj
   {
     return &TransConvertType_Particle;
   }
-  if (ob && ((ob->mode & OB_MODE_ALL_PAINT) || (ob->mode & OB_MODE_SCULPT_CURVES))) {
+  if (ob && ((ob->mode & OB_MODE_ALL_PAINT_MESH) || (ob->mode & OB_MODE_SCULPT_CURVES))) {
     if ((t->options & CTX_PAINT_CURVE) && !ELEM(t->mode, TFM_SHEAR, TFM_SHRINKFATTEN)) {
       return &TransConvertType_PaintCurve;
     }
     return nullptr;
   }
-  if (ob && (ob->mode & OB_MODE_ALL_PAINT_GPENCIL)) {
-    /* In Grease Pencil all transformations must be canceled if not Object or Edit mode.
-     * Exception: Grease Pencil sculpt mode allows for paint curves
-     * which need to be able to be transformed. */
-    if ((ob->mode & OB_MODE_SCULPT_GREASE_PENCIL) && (t->options & CTX_PAINT_CURVE) &&
-        !ELEM(t->mode, TFM_SHEAR, TFM_SHRINKFATTEN))
-    {
-      return &TransConvertType_PaintCurve;
-    }
+  if (ob && ELEM(ob->mode,
+                 OB_MODE_VERTEX_GREASE_PENCIL,
+                 OB_MODE_SCULPT_GREASE_PENCIL,
+                 OB_MODE_WEIGHT_GREASE_PENCIL))
+  {
+    /* Draw and Edit mode handle transformations via #TransConverType_GreasePencil, avoid
+     * transformations otherwise. */
     return nullptr;
   }
   return &TransConvertType_Object;
@@ -1122,7 +1120,8 @@ void create_trans_data(bContext *C, TransInfo *t)
 void transform_convert_clip_mirror_modifier_apply(TransDataContainer *tc)
 {
   Object *ob = tc->obedit;
-  ModifierData *md = static_cast<ModifierData *>(ob->modifiers.first);
+  ModifierData *md = ob->modifiers.first();
+  tc->has_mirror_clipping = false;
 
   for (; md; md = md->next) {
     if ((md->type == eModifierType_Mirror) && (md->mode & eModifierMode_Realtime)) {
@@ -1192,6 +1191,7 @@ void transform_convert_clip_mirror_modifier_apply(TransDataContainer *tc)
             mul_m4_v3(imtx, loc);
           }
           copy_v3_v3(td->loc, loc);
+          tc->has_mirror_clipping = true;
         }
       }
     }
@@ -1222,7 +1222,7 @@ void animrecord_check_state(TransInfo *t, ID *id)
      * we need to add a new NLA track+strip to allow a clean pass to occur. */
     if ((sad) && (sad->flag & ANIMPLAY_FLAG_JUMPED)) {
       AnimData *adt = BKE_animdata_from_id(id);
-      const bool is_first = (adt) && (adt->nla_tracks.first == nullptr);
+      const bool is_first = (adt) && (adt->nla_tracks.first_ == nullptr);
 
       /* Perform push-down manually with some differences
        * NOTE: #BKE_nla_action_pushdown() sync warning. */

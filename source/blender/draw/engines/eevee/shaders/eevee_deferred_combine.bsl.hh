@@ -10,8 +10,8 @@
 #include "eevee_gbuffer_read.bsl.hh"
 #include "eevee_hiz.bsl.hh"
 #include "eevee_renderpass.bsl.hh"
-#include "gpu_shader_fullscreen_lib.glsl"
-#include "gpu_shader_shared_exponent_lib.glsl"
+#include "gpu_shader_fullscreen.bsl.hh"
+#include "gpu_shader_shared_exponent.bsl.hh"
 
 namespace eevee::deferred {
 
@@ -32,31 +32,16 @@ struct Combine {
   [[specialization_constant(true)]] bool use_split_radiance;
 
   /* Inputs. */
-  [[sampler(2)]] usampler2D direct_radiance_1_tx;
-  [[sampler(4)]] usampler2D direct_radiance_2_tx;
-  [[sampler(5)]] usampler2D direct_radiance_3_tx;
-  [[sampler(6)]] sampler2D indirect_radiance_1_tx;
-  [[sampler(7)]] sampler2D indirect_radiance_2_tx;
-  [[sampler(8)]] sampler2D indirect_radiance_3_tx;
+  [[sampler(2)]] usampler2DArray direct_radiance_txs;
+  [[sampler(4)]] sampler2D indirect_radiance_1_tx;
+  [[sampler(5)]] sampler2D indirect_radiance_2_tx;
+  [[sampler(6)]] sampler2D indirect_radiance_3_tx;
 
   [[image(5, read_write, SFLOAT_16_16_16_16)]] image2D radiance_feedback_img;
 
   float3 load_radiance_direct(int2 texel, uchar i) const
   {
-    uint data = 0u;
-    switch (i) {
-      case 0:
-        data = texelFetch(direct_radiance_1_tx, texel, 0).r;
-        break;
-      case 1:
-        data = texelFetch(direct_radiance_2_tx, texel, 0).r;
-        break;
-      case 2:
-        data = texelFetch(direct_radiance_3_tx, texel, 0).r;
-        break;
-      default:
-        break;
-    }
+    uint data = texelFetch(direct_radiance_txs, int3(texel, i), 0).r;
     return rgb9e5_decode(data);
   }
 
@@ -115,19 +100,23 @@ void combine_frag([[resource_table]] Combine &srt,
   const uint3 bin_indices = gbuf.header.bin_index_per_layer();
 
   float sum_weight = 0.0f;
-  float3 diffuse_color = float3(0.0f);
-  float3 diffuse_direct = float3(0.0f);
+  float3 diffuse_color =
+      render_passes.load_color(texel, uni.uniform_buf.render_pass.diffuse_color_id).rgb;
+  float3 diffuse_direct =
+      render_passes.load_color(texel, uni.uniform_buf.render_pass.diffuse_light_id).rgb;
   float3 diffuse_indirect = float3(0.0f);
-  float3 specular_color = float3(0.0f);
-  float3 specular_direct = float3(0.0f);
+  float3 specular_color =
+      render_passes.load_color(texel, uni.uniform_buf.render_pass.specular_color_id).rgb;
+  float3 specular_direct =
+      render_passes.load_color(texel, uni.uniform_buf.render_pass.specular_light_id).rgb;
   float3 specular_indirect = float3(0.0f);
-  float3 out_direct = float3(0.0f);
+  float3 out_direct = diffuse_direct + specular_direct;
   float3 out_indirect = float3(0.0f);
   float3 average_normal = float3(0.0f);
   /* Denoising render pass data. */
   float average_roughness = 0.0f;
-  float3 diffuse_albedo = float3(0.0f);
-  float3 specular_albedo = float3(0.0f);
+  float3 diffuse_albedo = diffuse_color;
+  float3 specular_albedo = specular_color;
 
   /* Unroll needed for gbuf.layer access. */
   for (int i = 0; i < 3 /* GBUFFER_LAYER_MAX */; i++) [[unroll]] {

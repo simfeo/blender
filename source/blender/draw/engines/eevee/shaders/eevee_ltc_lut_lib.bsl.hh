@@ -7,9 +7,9 @@
 #include "eevee_bxdf_types.bsl.hh"
 #include "eevee_utility_tx.bsl.hh"
 #include "gpu_shader_compat.hh"
-#include "gpu_shader_math_matrix_construct_lib.glsl"
-#include "gpu_shader_math_vector_lib.glsl"
-#include "gpu_shader_utildefines_lib.glsl"
+#include "gpu_shader_math_matrix_construct.bsl.hh"
+#include "gpu_shader_math_vector.bsl.hh"
+#include "gpu_shader_utildefines.bsl.hh"
 
 namespace eevee {
 
@@ -41,7 +41,7 @@ float3x3 unpack_isotropic_matrix(float4 v)
 struct LTCData {
   /* Inverse LTC matrix. */
   float3x3 Minv;
-  /* LTC lobe attenuation is scaled by this value. */
+  /* LTC lobe attenuation is scaled by 1 minus value. */
   float attenuation_factor;
   /* Type of form factor computation applied during LTC evaluation . */
   LTCFormFactorType form_factor_type;
@@ -105,14 +105,13 @@ struct LTCData {
 
     /* Rotate into orthonormal basis around N. */
     /* TODO(not_mark): re-enable, and update tests as this causes precision change. */
-    /* float3x3 T = from_incident_vector(N, V);
-    Minv = Minv * transpose(T); */
+    // float3x3 T = from_incident_vector(N, V);
+    // Minv = Minv * transpose(T);
 
     LTCData ltc_data;
     ltc_data.Minv = Minv;
     ltc_data.form_factor_type = LTCFormFactorType::OneSidedCosineSphereClipped;
     /* LTC attenuation linearly disappears from roughness 0.15 to 0.375. */
-    /* TODO(not_mark): use attenuation_factor to control ltc bleed. */
     ltc_data.attenuation_factor = saturate((roughness - 0.15f) * 2.5f);
     return ltc_data;
   }
@@ -124,13 +123,13 @@ struct LTCData {
   {
     /* Rotate into orthonormal basis around N. */
     /* TODO(not_mark): re-enable, and update tests as this causes precision change. */
-    /* float3x3 T = from_incident_vector(N, V);
-    float3x3 Minv = transpose(T); */
+    // float3x3 T = from_incident_vector(N, V);
+    // float3x3 Minv = transpose(T);
     float3x3 Minv = mat3x3_identity();
 
     LTCData ltc_data;
     ltc_data.Minv = Minv;
-    ltc_data.attenuation_factor = 0.0;
+    ltc_data.attenuation_factor = 1.0f;
     ltc_data.form_factor_type = LTCFormFactorType::OneSidedCosineSphereClipped;
     return ltc_data;
   }

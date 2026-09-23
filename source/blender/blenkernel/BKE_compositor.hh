@@ -8,15 +8,17 @@
 
 #pragma once
 
+#include <optional>
 #include <string>
 
 #include "BLI_compute_context.hh"
-#include "BLI_index_range.hh"
 #include "BLI_map.hh"
 #include "BLI_mutex.hh"
 #include "BLI_set.hh"
 #include "BLI_string_ref.hh"
 #include "BLI_vector.hh"
+
+#include "BKE_compute_context_cache_fwd.hh"
 
 namespace blender {
 
@@ -29,11 +31,16 @@ struct Main;
 struct ViewLayer;
 struct LibraryForeachIDData;
 struct ImBuf;
+struct bNode;
 struct bContext;
 struct SceneCompositorEffect;
 struct DepsNodeHandle;
 struct bNodeTree;
 struct PointerRNA;
+
+namespace bke {
+class bNodeTreeZone;
+}
 
 namespace bke::compositor {
 
@@ -66,8 +73,9 @@ struct Cache {
   /* Clear all caches. */
   ~Cache();
 
-  /* Get the frame cache corresponding to the given frame number and view. */
-  const ImBuf *get_frame(int frame_number, int view_identifier);
+  /* Get the frame cache corresponding to the given frame number and view. The returned image
+   * buffer should be freed by the caller. Returns a nullptr if no cached frame exists. */
+  ImBuf *get_frame(int frame_number, int view_identifier);
 
   /* Add a new frame cache entry. If the new entry would surpass the memory cache limit, frames
    * will be evicted to make room. */
@@ -76,9 +84,15 @@ struct Cache {
   /* Clears the frames cache. */
   void clear_frames();
 
+  /* Stores an inclusive range of frames. */
+  struct FrameRange {
+    int start;
+    int end;
+  };
+
   /* Computes a list of every contiguous segment of cached frames. Can be used to draw which frame
    * ranges are cached. */
-  Vector<IndexRange> compute_frame_ranges();
+  Vector<FrameRange> compute_frame_ranges();
 
  private:
   /* Delete one entry from the frames cache given the current frame number. If a cached frame exist
@@ -195,12 +209,21 @@ void add_depsgraph_relations(Scene &scene,
  * Compute Contexts.
  */
 
-/* Computes the hash of the compositor active compute context. The active compute context is the
- * context that the user last interacted with, see root_node_group.active_viewer_key for more
- * information. */
-ComputeContextHash compute_active_compute_context_hash(const Scene &scene);
-ComputeContextHash compute_active_compute_context_hash(const Scene &scene,
-                                                       const bNodeTree &root_node_group);
+/* Get the compute context of the zone that the given node lies inside given the compute context of
+ * the owner tree or zone. If the node does not lie inside a zone, the given compute context is
+ * simply returned. The compute context is assumed to be that of a viewer node, so compute contexts
+ * will be constructed using inspection index for repeat zone for instance. */
+const ComputeContext &get_zone_viewer_compute_context(
+    const bNode &node,
+    const bke::bNodeTreeZone *zone,
+    const ComputeContext &compute_context,
+    bke::ComputeContextCache &compute_context_cache);
+
+/* Computes the hash of the compute context of the active viewer node. If no active viewer node
+ * exists, a nullopt is returned. */
+std::optional<ComputeContextHash> compute_viewer_compute_context_hash(const Scene &scene);
+std::optional<ComputeContextHash> compute_viewer_compute_context_hash(
+    const Scene &scene, const bNodeTree &root_node_group);
 
 }  // namespace bke::compositor
 }  // namespace blender

@@ -56,10 +56,10 @@ def gather_primitives(
     """
     primitives = []
 
-    blender_primitives, addional_materials_udim = __gather_cache_primitives(
+    blender_primitives, additional_materials_udim = __gather_cache_primitives(
         materials, blender_data, uuid_for_skined_data, vertex_groups, modifiers, export_settings)
 
-    for internal_primitive, udim_material in zip(blender_primitives, addional_materials_udim):
+    for internal_primitive, udim_material in zip(blender_primitives, additional_materials_udim):
 
         if udim_material is None:  # classic case, not an udim material
             # We already call this function, in order to retrieve uvmap info, if any
@@ -148,7 +148,7 @@ def __gather_cache_primitives(
 
     if type(blender_data).__name__ == "PointCloud":
         # Point clouds
-        blender_primitives = pointcloud.gather_point_cloud(blender_data, export_settings)
+        blender_primitives = pointcloud.gather_point_cloud(blender_data, materials, export_settings)
         additional_materials_udim = [None] * len(blender_primitives)
         shared_attributes = None
 

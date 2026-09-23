@@ -9,6 +9,7 @@
 /* Allow using deprecated functionality for .blend file I/O. */
 #define DNA_DEPRECATED_ALLOW
 
+#include <array>
 #include <cstring>
 
 #include "DNA_collection_types.h"
@@ -28,11 +29,11 @@
 #include "BLI_string_utf8.hh"
 #include "BLI_utildefines.hh"
 
+#include "BKE_annotations.h"
 #include "BKE_asset.hh"
 #include "BKE_compositor.hh"
 #include "BKE_context.hh"
 #include "BKE_global.hh"
-#include "BKE_gpencil_legacy.h"
 #include "BKE_idprop.hh"
 #include "BKE_layer.hh"
 #include "BKE_lib_id.hh"
@@ -91,8 +92,8 @@ bool ED_view3d_area_user_region(const ScrArea *area, const View3D *v3d, ARegion 
   RegionView3D *rv3d = nullptr;
   ARegion *region_unlock_user = nullptr;
   ARegion *region_unlock = nullptr;
-  const ListBaseT<ARegion> *region_list = (v3d == area->spacedata.first) ? &area->regionbase :
-                                                                           &v3d->regionbase;
+  const ListBaseT<ARegion> *region_list = (v3d == area->spacedata.first_) ? &area->regionbase :
+                                                                            &v3d->regionbase;
 
   BLI_assert(v3d->spacetype == SPACE_VIEW3D);
 
@@ -182,7 +183,7 @@ void ED_view3d_stop_render_preview(wmWindowManager *wm, ARegion *region)
 
 void ED_view3d_shade_update(Main *bmain, View3D *v3d, ScrArea *area)
 {
-  wmWindowManager *wm = static_cast<wmWindowManager *>(bmain->wm.first);
+  wmWindowManager *wm = bmain->wm.first();
 
   if (v3d->shading.type != OB_RENDER) {
     for (ARegion &region : area->regionbase) {
@@ -294,7 +295,7 @@ static void view3d_init(wmWindowManager * /*wm*/, ScrArea * /*area*/) {}
 static void view3d_exit(wmWindowManager * /*wm*/, ScrArea *area)
 {
   BLI_assert(area->spacetype == SPACE_VIEW3D);
-  View3D *v3d = static_cast<View3D *>(area->spacedata.first);
+  View3D *v3d = area->spacedata.first_as<View3D>();
   ED_view3d_local_stats_free(v3d);
 }
 
@@ -618,7 +619,7 @@ static void view3d_main_region_listener(const wmRegionListenerParams *params)
   ARegion *region = params->region;
   const wmNotifier *wmn = params->notifier;
   const Scene *scene = params->scene;
-  View3D *v3d = static_cast<View3D *>(area->spacedata.first);
+  View3D *v3d = area->spacedata.first_as<View3D>();
   RegionView3D *rv3d = static_cast<RegionView3D *>(region->regiondata);
   wmGizmoMap *gzmap = region->runtime->gizmo_map;
 
@@ -856,8 +857,7 @@ static void view3d_main_region_listener(const wmRegionListenerParams *params)
         }
         else if (wmn->subtype == NS_VIEW3D_SHADING) {
 #ifdef WITH_XR_OPENXR
-          ED_view3d_xr_shading_update(
-              static_cast<wmWindowManager *>(G_MAIN->wm.first), v3d, scene);
+          ED_view3d_xr_shading_update(G_MAIN->wm.first(), v3d, scene);
 #endif
 
           ViewLayer *view_layer = WM_window_get_active_view_layer(window);
@@ -1197,13 +1197,11 @@ static void view3d_buttons_region_init(wmWindowManager *wm, ARegion *region)
   WM_event_add_keymap_handler(&region->runtime->handlers, keymap);
 }
 
-void ED_view3d_buttons_region_layout_ex(const bContext *C,
-                                        ARegion *region,
-                                        const char *category_override)
+std::array<const char *, 4> ED_view3d_buttons_contexts(const bContext *C)
 {
   const enum eContextObjectMode mode = CTX_data_mode_enum(C);
 
-  const char *contexts_base[4] = {nullptr};
+  std::array<const char *, 4> contexts_base = {nullptr};
   contexts_base[0] = CTX_data_mode_string(C);
 
   const char **contexts = &contexts_base[1];
@@ -1240,7 +1238,7 @@ void ED_view3d_buttons_region_layout_ex(const bContext *C,
       ARRAY_SET_ITEMS(contexts, ".grease_pencil_paint");
       break;
     case CTX_MODE_SCULPT_GREASE_PENCIL:
-      ARRAY_SET_ITEMS(contexts, ".paint_common", ".grease_pencil_sculpt");
+      ARRAY_SET_ITEMS(contexts, ".grease_pencil_sculpt");
       break;
     case CTX_MODE_WEIGHT_GREASE_PENCIL:
       ARRAY_SET_ITEMS(contexts, ".greasepencil_weight");
@@ -1311,6 +1309,15 @@ void ED_view3d_buttons_region_layout_ex(const bContext *C,
       break;
   }
 
+  return contexts_base;
+}
+
+void ED_view3d_buttons_region_layout_ex(const bContext *C,
+                                        ARegion *region,
+                                        const char *category_override)
+{
+  std::array<const char *, 4> contexts = ED_view3d_buttons_contexts(C);
+
   ListBaseT<PanelType> *paneltypes = &region->runtime->type->paneltypes;
 
   /* Allow drawing 3D view toolbar from non 3D view space type. */
@@ -1320,8 +1327,12 @@ void ED_view3d_buttons_region_layout_ex(const bContext *C,
     paneltypes = &art->paneltypes;
   }
 
-  ED_region_panels_layout_ex(
-      C, region, paneltypes, wm::OpCallContext::InvokeRegionWin, contexts_base, category_override);
+  ED_region_panels_layout_ex(C,
+                             region,
+                             paneltypes,
+                             wm::OpCallContext::InvokeRegionWin,
+                             contexts.data(),
+                             category_override);
 }
 
 static void view3d_buttons_region_layout(const bContext *C, ARegion *region)
@@ -1483,7 +1494,7 @@ static void space_view3d_listener(const wmSpaceTypeListenerParams *params)
 {
   ScrArea *area = params->area;
   const wmNotifier *wmn = params->notifier;
-  View3D *v3d = static_cast<View3D *>(area->spacedata.first);
+  View3D *v3d = area->spacedata.first_as<View3D>();
 
   /* context changes */
   switch (wmn->category) {
@@ -1522,7 +1533,7 @@ static void space_view3d_listener(const wmSpaceTypeListenerParams *params)
 
 static void space_view3d_refresh(const bContext *C, ScrArea *area)
 {
-  View3D *v3d = static_cast<View3D *>(area->spacedata.first);
+  View3D *v3d = area->spacedata.first_as<View3D>();
   ED_view3d_local_stats_free(v3d);
 
   if (v3d->localvd && v3d->localvd->runtime.flag & V3D_RUNTIME_LOCAL_MAYBE_EMPTY) {
@@ -1559,8 +1570,8 @@ static void view3d_id_remap_v3d(ScrArea *area,
       ID_REMAP_RESULT_SOURCE_UNASSIGNED)
   {
     /* 3D view might be inactive, in that case needs to use slink->regionbase */
-    ListBaseT<ARegion> *regionbase = (slink == area->spacedata.first) ? &area->regionbase :
-                                                                        &slink->regionbase;
+    ListBaseT<ARegion> *regionbase = (slink == area->spacedata.first_) ? &area->regionbase :
+                                                                         &slink->regionbase;
     for (ARegion &region : *regionbase) {
       if (region.regiontype == RGN_TYPE_WINDOW) {
         RegionView3D *rv3d = is_local ? (static_cast<RegionView3D *>(region.regiondata))->localvd :
@@ -1620,7 +1631,7 @@ static void view3d_space_blend_read_data(BlendDataReader *reader, SpaceLink *sl)
   v3d->runtime = View3D_Runtime{};
 
   if (BLO_read_struct_nonnull(reader, bGPdata, &v3d->gpd)) {
-    BKE_gpencil_blend_read_data(reader, v3d->gpd);
+    BKE_annotations_blend_read_data(reader, v3d->gpd);
   }
   BLO_read_struct(reader, RegionView3D, &v3d->localvd);
 
@@ -1640,10 +1651,15 @@ static void view3d_space_blend_read_data(BlendDataReader *reader, SpaceLink *sl)
 static void view3d_space_blend_write(BlendWriter *writer, SpaceLink *sl)
 {
   View3D *v3d = reinterpret_cast<View3D *>(sl);
-  writer->write_struct(v3d);
+  writer->write_struct(v3d, [](BlendStructWriter<View3D> &struct_writer) {
+    struct_writer.shallow_data.runtime = {};
+  });
 
   if (v3d->localvd) {
-    writer->write_struct(v3d->localvd);
+    writer->write_struct(v3d->localvd, [](BlendStructWriter<View3D> &struct_writer) {
+      View3D &shallow_v3d = struct_writer.shallow_data;
+      memset((void *)&shallow_v3d.runtime, 0, sizeof(shallow_v3d.runtime));
+    });
   }
 
   BKE_screen_view3d_shading_blend_write(writer, &v3d->shading);
@@ -1699,6 +1715,7 @@ void ED_spacetype_view3d()
   /* regions: list-view/buttons */
   art = MEM_new_zeroed<ARegionType>("spacetype view3d buttons region");
   art->regionid = RGN_TYPE_UI;
+  art->flag = ARegionTypeFlag::UsePanelCategoriesSearch;
   art->prefsizex = UI_SIDEBAR_PANEL_WIDTH;
   art->keymapflag = ED_KEYMAP_UI | ED_KEYMAP_FRAMES;
   art->listener = view3d_buttons_region_listener;

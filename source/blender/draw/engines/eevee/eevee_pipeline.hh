@@ -287,11 +287,12 @@ struct DeferredLayerBase {
 
   PassMain::Sub *get_gbuffer_subpass(blender::Material *blender_mat, GPUMaterial *gpumat)
   {
-    const bool has_shader_to_rgba = GPU_material_flag_get(gpumat, GPU_MATFLAG_SHADER_TO_RGBA);
+    const bool is_hybrid = GPU_material_flag_get(gpumat, GPU_MATFLAG_SHADER_TO_RGBA) ||
+                           GPU_material_flag_get(gpumat, GPU_MATFLAG_LIGHTING);
     const bool has_raycast = GPU_material_flag_get(gpumat, GPU_MATFLAG_RAYCAST);
     const bool double_sided = !(blender_mat->blend_flag & MA_BL_CULL_BACKFACE);
 
-    return gbuffer_subpasses_[has_shader_to_rgba][has_raycast][double_sided];
+    return gbuffer_subpasses_[is_hybrid][has_raycast][double_sided];
   }
 
   gpu::Texture *radiance_behind_tx_ = nullptr;
@@ -380,13 +381,8 @@ class DeferredLayer : DeferredLayerBase {
    * BSDF color and do additive blending for each of the lighting step.
    *
    * NOTE: Not to be confused with the render passes.
-   * NOTE: Using array of texture instead of texture array to allow to use TextureFromPool.
    */
-  TextureFromPool direct_radiance_txs_[3] = {
-      {"direct_radiance_1"}, {"direct_radiance_2"}, {"direct_radiance_3"}};
-  /* NOTE: Only used when `use_split_radiance` is true. */
-  TextureFromPool indirect_radiance_txs_[3] = {
-      {"indirect_radiance_1"}, {"indirect_radiance_2"}, {"indirect_radiance_3"}};
+  TextureFromPool direct_radiance_txs_ = {"direct_radiance"};
   /* Used when there is no indirect radiance buffer. */
   Texture dummy_black = {"dummy_black"};
   /* Reference to ray-tracing results. */
@@ -743,7 +739,9 @@ class CapturePipeline {
  public:
   CapturePipeline(Instance &inst) : inst_(inst) {};
 
-  PassMain::Sub *surface_material_add(blender::Material *blender_mat, GPUMaterial *gpumat);
+  PassMain::Sub *surface_material_add(Object *ob,
+                                      blender::Material *blender_mat,
+                                      GPUMaterial *gpumat);
 
   void sync();
   void render(View &view);
@@ -944,7 +942,7 @@ class PipelineModule {
       case MAT_PIPE_SHADOW:
         return shadow.surface_material_add(blender_mat, gpumat);
       case MAT_PIPE_CAPTURE:
-        return capture.surface_material_add(blender_mat, gpumat);
+        return capture.surface_material_add(ob, blender_mat, gpumat);
 
       case MAT_PIPE_VOLUME_OCCUPANCY:
       case MAT_PIPE_VOLUME_MATERIAL:

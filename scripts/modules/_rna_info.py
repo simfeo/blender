@@ -356,7 +356,7 @@ class InfoPropertyRNA:
             items_static = tuple(rna_prop.enum_items_static)
             self.enum_items[:] = [(item.identifier, item.name, item.description) for item in items]
             self.is_enum_flag = rna_prop.is_enum_flag
-            # Prioritize static items as this is never going to be allocated data and is therefor
+            # Prioritize static items as this is never going to be allocated data and is therefore
             # will be a stable match to compare against.
             item = (items_static or items)
             if item:
@@ -559,7 +559,7 @@ class InfoPropertyRNA:
         # Pointer and collection properties can be `None` unless
         # `is_never_none` is set.  For arguments, check `default_str`
         # since any parameter defaulting to `None` must accept it.
-        if as_arg and self.default_str == "None":
+        if as_arg and self.default_str == "None" and not self.is_never_none:
             type_str += " | None"
         elif not as_arg and self.type == "pointer" and not self.is_never_none:
             type_str += " | None"

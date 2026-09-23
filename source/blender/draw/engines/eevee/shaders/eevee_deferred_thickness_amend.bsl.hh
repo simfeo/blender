@@ -15,7 +15,7 @@
 #include "eevee_light_lib.bsl.hh"
 #include "eevee_sampling_lib.bsl.hh"
 #include "eevee_shadow_tracing.bsl.hh"
-#include "gpu_shader_fullscreen_lib.glsl"
+#include "gpu_shader_fullscreen.bsl.hh"
 
 namespace eevee::thickness {
 
@@ -36,7 +36,7 @@ struct FromShadowEvalCtx {
       return;
     }
 
-    LightVector lv = light_vector_get(light, is_directional, P);
+    LightVector lv = LightVector::get(light, is_directional, P);
     float attenuation = light_attenuation_surface(light, is_directional, lv);
     attenuation *= light_attenuation_facing(light, lv.L, lv.dist, -Ng, true);
 

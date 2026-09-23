@@ -102,16 +102,6 @@ BLOCKLIST_METAL_RT = [
     'hair_linear_close_up.blend',
 ]
 
-if platform.system() == "Darwin":
-    version, _, _ = platform.mac_ver()
-    major_version = version.split(".")[0]
-    if int(major_version) < 13:
-        BLOCKLIST_METAL += [
-            # MNEE only works on Metal with macOS >= 13
-            "underwater_caustics.blend",
-        ]
-
-
 BLOCKLIST_HIPRT = [
     # Light leaking fireflies due to HIP-RT intersection precision issue.
     "normal_mapping_light_leak.blend",
@@ -361,6 +351,11 @@ def main():
     # OSL blackbody output is a little different.
     if (test_dir_name in {'colorspace'}):
         report.set_fail_threshold(0.05)
+    # Keeping Gaussian splats rendered exactly the same on CPU and GPU is
+    # tricky due to stochastic nature of the algorithm.
+    if (test_dir_name in {'gsplat'}):
+        report.set_fail_threshold(0.05)
+        report.set_fail_percent(4)
 
     ok = report.run(args.testdir, args.blender, get_arguments, batch=args.batch)
 

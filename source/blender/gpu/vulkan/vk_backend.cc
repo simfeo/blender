@@ -30,6 +30,7 @@
 #include "CLG_log.h"
 
 #include "GPU_capabilities.hh"
+#include "GPU_framebuffer.hh"
 #include "gpu_capabilities_private.hh"
 #include "gpu_platform_private.hh"
 
@@ -159,10 +160,8 @@ static Vector<StringRefNull> missing_capabilities_get(VkPhysicalDevice vk_physic
   /* Check device features. */
   VkPhysicalDeviceVulkan12Features features_12 = {
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
-  VkPhysicalDeviceVulkan11Features features_11 = {
-      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, &features_12};
   VkPhysicalDeviceFeatures2 features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-                                        &features_11};
+                                        &features_12};
 
   vkGetPhysicalDeviceFeatures2(vk_physical_device, &features);
 
@@ -199,9 +198,6 @@ static Vector<StringRefNull> missing_capabilities_get(VkPhysicalDevice vk_physic
   if (features.features.drawIndirectFirstInstance == VK_FALSE) {
     missing_capabilities.append("draw indirect first instance");
   }
-  if (features_11.shaderDrawParameters == VK_FALSE) {
-    missing_capabilities.append("shader draw parameters");
-  }
   if (features_12.timelineSemaphore == VK_FALSE) {
     missing_capabilities.append("timeline semaphores");
   }
@@ -225,8 +221,8 @@ static Vector<StringRefNull> missing_capabilities_get(VkPhysicalDevice vk_physic
     missing_capabilities.append(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
   }
   /* VK_KHR_dynamic_rendering (core in Vulkan 1.3) is not required: when absent the
-   * backend falls back to classic render passes. Provoking vertex is likewise
-   * optional (only the flat-shading vertex convention differs without it). */
+   * backend falls back to classic render passes. Provoking vertex and separate
+   * depth/stencil layouts are likewise optional. */
 
   return missing_capabilities;
 }
@@ -369,16 +365,22 @@ static bool vk_instance_create_for_platform_checks(VkInstance *r_instance)
     return false;
   }
 
-  /* Initialize an vulkan 1.2 instance. */
+  /* Initialize an vulkan 1.1 instance. */
   VkApplicationInfo vk_application_info = {VK_STRUCTURE_TYPE_APPLICATION_INFO};
   vk_application_info.pApplicationName = "Blender";
   vk_application_info.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
   vk_application_info.pEngineName = "Blender";
   vk_application_info.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-  vk_application_info.apiVersion = VK_API_VERSION_1_2;
+  vk_application_info.apiVersion = VK_API_VERSION_1_1;
+
+  const char *vk_instance_extensions[] = {
+      VK_KHR_SURFACE_EXTENSION_NAME, /* Required dependency for VK_KHR_swapchain. */
+  };
 
   VkInstanceCreateInfo vk_instance_info = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
   vk_instance_info.pApplicationInfo = &vk_application_info;
+  vk_instance_info.ppEnabledExtensionNames = vk_instance_extensions;
+  vk_instance_info.enabledExtensionCount = 1;
 
   *r_instance = VK_NULL_HANDLE;
   vkCreateInstance(&vk_instance_info, nullptr, r_instance);
@@ -392,7 +394,7 @@ bool VKBackend::is_supported()
 
   VkInstance vk_instance = VK_NULL_HANDLE;
   if (!vk_instance_create_for_platform_checks(&vk_instance)) {
-    CLOG_WARN(&LOG, "Unable to initialize a Vulkan 1.2 instance.");
+    CLOG_WARN(&LOG, "Unable to initialize a Vulkan 1.1 instance.");
     return false;
   }
   volkLoadInstanceOnly(vk_instance);
@@ -499,7 +501,7 @@ void VKBackend::supported_devices_print(FILE *fp)
   size_t w_id = strlen(col_id);
   for (const Row &row : rows) {
     char buf[16];
-    w_index = std::max(w_index, BLI_snprintf_rlen(buf, sizeof(buf), "%d", row.index));
+    w_index = std::max(w_index, SNPRINTF_RLEN(buf, "%d", row.index));
     w_id = std::max(w_id, row.identifier.size());
   }
 
@@ -635,8 +637,7 @@ void VKBackend::detect_workarounds(VKDevice &device)
 
     /* Force workarounds and disable extensions. */
     workarounds.not_aligned_pixel_formats = true;
-    extensions.shader_output_layer = false;
-    extensions.shader_output_viewport_index = false;
+    extensions.shader_viewport_index_layer = false;
     extensions.fragment_shader_barycentric = false;
     extensions.dynamic_rendering = true;
     extensions.dynamic_rendering_local_read = false;
@@ -647,10 +648,12 @@ void VKBackend::detect_workarounds(VKDevice &device)
     extensions.extended_dynamic_state = false;
     extensions.multi_draw_indirect = false;
     extensions.provoking_vertex = false;
+    extensions.spirv_1_4 = false;
     GCaps.ray_query_support = false;
     GCaps.stencil_export_support = false;
     GCaps.texture_pool_workaround = true;
     GCaps.vertex_pipeline_stores_and_atomics_support = false;
+    GCaps.multi_viewport_support = false;
 
     device.workarounds_ = workarounds;
     device.extensions_ = extensions;
@@ -661,10 +664,9 @@ void VKBackend::detect_workarounds(VKDevice &device)
     GCaps.texture_pool_workaround = true;
   }
 
-  extensions.shader_output_layer =
-      device.physical_device_vulkan_12_features_get().shaderOutputLayer;
-  extensions.shader_output_viewport_index =
-      device.physical_device_vulkan_12_features_get().shaderOutputViewportIndex;
+  extensions.shader_viewport_index_layer = device.supports_extension(
+      VK_EXT_SHADER_VIEWPORT_INDEX_LAYER_EXTENSION_NAME);
+  extensions.spirv_1_4 = device.supports_extension(VK_KHR_SPIRV_1_4_EXTENSION_NAME);
   extensions.wide_lines = device.physical_device_features_get().wideLines;
   extensions.multi_viewport = device.physical_device_features_get().multiViewport;
   extensions.fragment_shader_barycentric = device.supports_extension(
@@ -687,9 +689,6 @@ void VKBackend::detect_workarounds(VKDevice &device)
   extensions.dynamic_rendering_unused_attachments =
       extensions.dynamic_rendering &&
       device.supports_extension(VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME);
-  extensions.logic_ops = device.physical_device_features_get().logicOp;
-  extensions.provoking_vertex = device.supports_extension(
-      VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME);
   extensions.maintenance4 = device.supports_extension(VK_KHR_MAINTENANCE_4_EXTENSION_NAME);
   extensions.memory_priority = device.supports_extension(VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME);
   extensions.pageable_device_local_memory = device.supports_extension(
@@ -723,6 +722,9 @@ void VKBackend::detect_workarounds(VKDevice &device)
   {
     workarounds.not_aligned_pixel_formats = true;
   }
+
+  extensions.shader_clip_distance = device.physical_device_features_get().shaderClipDistance ==
+                                    VK_TRUE;
 
   /* During testing graphics pipeline library feature it was detected that it would crash on
    * official AMD drivers.
@@ -784,26 +786,16 @@ void VKBackend::detect_workarounds(VKDevice &device)
     GPUIntelGpuArch gpu_arch = GPU_platform_get_intel_arch(
         device.physical_device_properties_get().deviceID);
 
-    /* Intel Gen9 iGPUs (Intel 7th to 10th Gen Processor Graphics driver) show a black screen at
-     * application startup when using VK_EXT_vertex_input_dynamic_state.
-     *
-     * See #147721
-     */
     if (gpu_arch == GPUIntelGpuArch::Gen9AndOlder) {
+      /* Intel Gen9 iGPUs (Intel 7th to 10th Gen Processor Graphics driver) show a black screen at
+       * application startup when using VK_EXT_vertex_input_dynamic_state.
+       *
+       * See #147721
+       */
       extensions.vertex_input_dynamic_state = false;
-    }
 
-    /* Using the texture pool causes varying issues on older Intel iGPUs.
-     * Note: Gen12 iGPUs are partly covered by the Intel 11th to 14th Gen Processor Graphics driver
-     * and the Intel Arc Graphics driver (the latter handles Arrow Lake and Meteor Lake).
-     * - Visual corruptions can be seen on Gen9 and older iGPUs (Intel 7th to 10th Gen Processor
-     * Graphics driver; #147721).
-     * - When using the image cache, visual artifacts can be seen on Gen11 and Gen12 iGPUs
-     * (#156496) and Gen12 dGPUs (#160002).
-     * - When using the texture pool without the image cache, memory leaks happen on Gen11 and
-     * Gen12 GPUs (#157777).
-     */
-    if (gpu_arch <= GPUIntelGpuArch::Gen12) {
+      /* Using the texture pool causes visual corruptions on Gen9 and older iGPUs (Intel 7th to
+       * 10th Gen Processor Graphics driver; #147721). */
       GCaps.texture_pool_workaround = true;
     }
   }
@@ -985,7 +977,7 @@ Fence *VKBackend::fence_alloc()
   return new VKFence();
 }
 
-WorkInFlight *VKBackend::work_in_flight_alloc(unsigned int max_in_flight)
+WorkInFlight *VKBackend::work_in_flight_alloc(uint max_in_flight)
 {
   return new VKWorkInFlight(max_in_flight);
 }
@@ -1114,6 +1106,9 @@ void VKBackend::capabilities_init(VKDevice &device)
       device.physical_device_acceleration_structure_properties_get().maxGeometryCount > 0 &&
       device.physical_device_acceleration_structure_properties_get().maxPrimitiveCount > 0 &&
       device.physical_device_acceleration_structure_properties_get().maxInstanceCount > 0;
+
+  GCaps.multi_viewport_support = device.physical_device_features_get().multiViewport &&
+                                 limits.maxViewports >= GPU_MAX_VIEWPORTS;
 
   GCaps.srgb_write_view_support = true;
 

@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup shdnodes
+ */
+
 #include "node_shader_util.hh"
 
 #include "IMB_colormanagement.hh"
@@ -144,7 +148,8 @@ static int node_shader_gpu_volume_principled(GPUMaterial *mat,
                         color,
                         temperature,
                         spectrummap,
-                        GPU_constant(&layer));
+                        GPU_constant(&layer),
+                        GPU_shading_data());
 }
 
 #undef SOCK_COLOR_ID

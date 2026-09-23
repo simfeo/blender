@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup bke
+ */
+
 #include <fmt/format.h>
 
 #include "BLI_listbase.hh"
@@ -43,6 +47,7 @@
 #include "NOD_geometry_nodes_srna.hh"
 #include "NOD_node_declaration.hh"
 #include "NOD_scene_compositor_effect_inputs_srna.hh"
+#include "NOD_shader.h"
 #include "NOD_socket.hh"
 #include "NOD_socket_declarations.hh"
 #include "NOD_sync_sockets.hh"
@@ -402,6 +407,15 @@ struct NodeTreeRelations {
     return *all_trees_;
   }
 };
+
+enum class ShaderNodeAncestorFlags {
+  None = 0u,
+  ShaderMaterialOutput = 1u << 0,
+  ShaderToRGB = 1u << 1,
+  LightAccumulation = 1u << 2,
+  LightAccumulationColor = 1u << 3,
+};
+ENUM_OPERATORS(ShaderNodeAncestorFlags);
 
 struct TreeUpdateResult {
   bool interface_changed = false;
@@ -850,25 +864,6 @@ class NodeTreeMainUpdater {
     }
   }
 
-  struct InternalLink {
-    bNodeSocket *from;
-    bNodeSocket *to;
-    int multi_input_sort_id = 0;
-
-    friend bool operator==(const InternalLink &a, const InternalLink &b) = default;
-  };
-
-  const bNodeLink *first_non_dangling_link(const bNodeTree & /*ntree*/,
-                                           const Span<const bNodeLink *> links) const
-  {
-    for (const bNodeLink *link : links) {
-      if (!link->fromnode->is_dangling_reroute()) {
-        return link;
-      }
-    }
-    return nullptr;
-  }
-
   void update_internal_links(bNodeTree &ntree)
   {
     bke::node_tree_runtime::AllowUsingOutdatedInfo allow_outdated_info{ntree};
@@ -878,7 +873,7 @@ class NodeTreeMainUpdater {
         continue;
       }
       /* Find all expected internal links. */
-      Vector<InternalLink> expected_internal_links;
+      Vector<bNodeInternalLink> expected_internal_links;
       for (const bNodeSocket *output_socket : node->output_sockets()) {
         if (!output_socket->is_available()) {
           continue;
@@ -893,14 +888,8 @@ class NodeTreeMainUpdater {
           continue;
         }
 
-        const Span<const bNodeLink *> connected_links = input_socket->directly_linked_links();
-        const bNodeLink *connected_link = first_non_dangling_link(ntree, connected_links);
-
-        const int index = connected_link ? connected_link->multi_input_sort_id :
-                                           std::max<int>(0, connected_links.size() - 1);
-        expected_internal_links.append(InternalLink{const_cast<bNodeSocket *>(input_socket),
-                                                    const_cast<bNodeSocket *>(output_socket),
-                                                    index});
+        expected_internal_links.append(bNodeInternalLink{
+            const_cast<bNodeSocket *>(input_socket), const_cast<bNodeSocket *>(output_socket)});
       }
 
       /* Rebuilt internal links if they have changed. */
@@ -912,9 +901,8 @@ class NodeTreeMainUpdater {
       const bool all_expected_internal_links_exist = std::all_of(
           node->runtime->internal_links.begin(),
           node->runtime->internal_links.end(),
-          [&](const bNodeLink &link) {
-            const InternalLink internal_link{link.fromsock, link.tosock, link.multi_input_sort_id};
-            return expected_internal_links.as_span().contains(internal_link);
+          [&](const bNodeInternalLink &link) {
+            return expected_internal_links.as_span().contains(link);
           });
 
       if (all_expected_internal_links_exist) {
@@ -963,20 +951,10 @@ class NodeTreeMainUpdater {
 
   void update_internal_links_in_node(bNodeTree &ntree,
                                      bNode &node,
-                                     Span<InternalLink> internal_links)
+                                     Span<bNodeInternalLink> internal_links)
   {
     node.runtime->internal_links.clear();
-    node.runtime->internal_links.reserve(internal_links.size());
-    for (const InternalLink &internal_link : internal_links) {
-      bNodeLink link{};
-      link.fromnode = &node;
-      link.fromsock = internal_link.from;
-      link.tonode = &node;
-      link.tosock = internal_link.to;
-      link.multi_input_sort_id = internal_link.multi_input_sort_id;
-      link.flag |= NODE_LINK_VALID;
-      node.runtime->internal_links.append(link);
-    }
+    node.runtime->internal_links.extend(internal_links);
     BKE_ntree_update_tag_node_internal_link(&ntree, &node);
   }
 
@@ -1522,6 +1500,97 @@ class NodeTreeMainUpdater {
     }
   }
 
+  void shader_tree_tag_by_ancestor(bNodeTree &ntree)
+  {
+    for (bNode &node : ntree.nodes) {
+      node.runtime->tmp_flag = 0;
+    }
+
+    bNode *output_node = ntreeShaderOutputNode(&ntree, SHD_OUTPUT_EEVEE);
+    if (!output_node) {
+      return;
+    }
+
+    for (const bNodeSocket *socket :
+         output_node->input_by_identifier("Surface"_ustr)->logically_linked_sockets())
+    {
+      socket->owner_node().runtime->tmp_flag |= short(
+          ShaderNodeAncestorFlags::ShaderMaterialOutput);
+    }
+
+    auto tag_by_ancestor = [](bNode *node, bNode * /*to_node*/, void * /*userdata*/) -> bool {
+      for (const bNodeSocket *socket : node->output_sockets()) {
+        for (const bNodeSocket *linked_socket : socket->logically_linked_sockets()) {
+          node->runtime->tmp_flag |= linked_socket->owner_node().runtime->tmp_flag;
+          if (linked_socket->owner_node().type_legacy == SH_NODE_LIGHT_ACCUMULATION &&
+              ELEM(StringRefNull(linked_socket->name), "Diffuse Color", "Glossy Color"))
+          {
+            node->runtime->tmp_flag |= short(ShaderNodeAncestorFlags::LightAccumulationColor);
+          }
+        }
+      }
+
+      if (node->type_legacy == SH_NODE_SHADERTORGB) {
+        node->runtime->tmp_flag |= short(ShaderNodeAncestorFlags::ShaderToRGB);
+      }
+      else if (node->type_legacy == SH_NODE_LIGHT_ACCUMULATION) {
+        node->runtime->tmp_flag |= short(ShaderNodeAncestorFlags::LightAccumulation);
+      }
+
+      return true;
+    };
+
+    bke::node_chain_iterator_backwards(&ntree, output_node, tag_by_ancestor, nullptr, 0);
+  }
+
+  const char *shader_tree_link_error(bNodeLink &link)
+  {
+    bNode &node = *link.fromnode;
+    ShaderNodeAncestorFlags flags = ShaderNodeAncestorFlags(link.fromnode->runtime->tmp_flag);
+    switch (node.type_legacy) {
+      case SH_NODE_LIGHT_ACCUMULATION:
+        if (bool(flags & ShaderNodeAncestorFlags::ShaderToRGB)) {
+          return TIP_("Shader To RGB can't evaluate Light Accumulation nodes");
+        }
+        break;
+      case SH_NODE_ATTRIBUTE:
+        if (static_cast<NodeShaderAttribute *>(node.storage)->type != SHD_ATTRIBUTE_LIGHT) {
+          break;
+        }
+        ATTR_FALLTHROUGH;
+      case SH_NODE_VECT_TRANSFORM: {
+        NodeShaderVectTransform *nodeprop = static_cast<NodeShaderVectTransform *>(node.storage);
+        if (!ELEM(SHD_VECT_TRANSFORM_SPACE_LIGHT, nodeprop->convert_from, nodeprop->convert_to)) {
+          break;
+        }
+      }
+        ATTR_FALLTHROUGH;
+      case SH_NODE_LIGHT_INFO:
+      case SH_NODE_LIGHT_EVALUATION:
+      case SH_NODE_SHADOW_RAYCAST:
+        if (bool(flags & ShaderNodeAncestorFlags::ShaderMaterialOutput)) {
+          if (!bool(flags & ShaderNodeAncestorFlags::LightAccumulation)) {
+            return TIP_(
+                "Lighting nodes must be connected to the Light sockets of a Light Accumulation "
+                "node before reaching the Material Output");
+          }
+          if (bool(flags & ShaderNodeAncestorFlags::LightAccumulationColor) &&
+              (link.tonode->type_legacy != SH_NODE_LIGHT_ACCUMULATION ||
+               ELEM(StringRefNull(link.tosock->name), "Diffuse Color", "Glossy Color")))
+          {
+            return TIP_(
+                "Lighting nodes can't be connected to the Color sockets of a Light Accumulation "
+                "node");
+          }
+        }
+        break;
+      default:
+        break;
+    }
+
+    return nullptr;
+  }
+
   void update_link_validation(bNodeTree &ntree)
   {
     const bNodeTreeZones *fallback_zones = nullptr;
@@ -1529,6 +1598,10 @@ class NodeTreeMainUpdater {
         ntree.runtime->last_valid_zones)
     {
       fallback_zones = ntree.runtime->last_valid_zones.get();
+    }
+
+    if (ntree.type == NTREE_SHADER) {
+      this->shader_tree_tag_by_ancestor(ntree);
     }
 
     for (bNodeLink &link : ntree.links) {
@@ -1593,6 +1666,13 @@ class NodeTreeMainUpdater {
         link.flag &= ~NODE_LINK_VALID;
         ntree.runtime->link_errors.add(NodeLinkKey{link}, NodeLinkError{error});
         continue;
+      }
+      if (ntree.type == NTREE_SHADER) {
+        if (const char *error = this->shader_tree_link_error(link)) {
+          link.flag &= ~NODE_LINK_VALID;
+          ntree.runtime->link_errors.add(NodeLinkKey{link}, NodeLinkError{error});
+          continue;
+        }
       }
     }
   }
@@ -2149,9 +2229,9 @@ class NodeTreeMainUpdater {
       }
       bNodeTreeInterfacePanel *panel = reinterpret_cast<bNodeTreeInterfacePanel *>(item);
       if (bNodeTreeInterfaceSocket *toggle_socket = panel->header_toggle_socket()) {
-        if (!STREQ(panel->name, toggle_socket->name)) {
-          MEM_SAFE_DELETE(toggle_socket->name);
-          toggle_socket->name = BLI_strdup_null(panel->name);
+        if (!STREQ(panel->name_, toggle_socket->name_)) {
+          MEM_SAFE_DELETE(toggle_socket->name_);
+          toggle_socket->name_ = BLI_strdup_null(panel->name_);
           changed = true;
         }
       }

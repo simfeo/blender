@@ -684,7 +684,7 @@ Block *popup_block_refresh(bContext *C, PopupBlockHandle *handle, ARegion *butre
   const BlockHandleCreateFunc handle_create_func = handle->popup_create_vars.handle_create_func;
   void *arg = handle->popup_create_vars.arg;
 
-  Block *block_old = static_cast<Block *>(region->runtime->uiblocks.first);
+  Block *block_old = region->runtime->uiblocks.first();
 
   handle->refresh = (block_old != nullptr);
 
@@ -946,6 +946,7 @@ PopupBlockHandle *popup_block_create(bContext *C,
   /* store context for operator */
   handle->ctx_area = CTX_wm_area(C);
   handle->ctx_region = CTX_wm_region(C);
+  handle->ctx_region_popup = CTX_wm_region_popup(C);
   handle->can_refresh = can_refresh;
 
   /* store vars to refresh popup (RGN_REFRESH_UI) */

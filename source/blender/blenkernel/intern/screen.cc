@@ -28,6 +28,7 @@
 #include "DNA_view3d_types.h"
 
 #include "BLI_listbase.hh"
+#include "BLI_math_matrix_c.hh"
 #include "BLI_math_rotation_c.hh"
 #include "BLI_math_vector_c.hh"
 #include "BLI_rect.hh"
@@ -127,8 +128,8 @@ static void screen_copy_data(Main * /*bmain*/,
   screen_dst->regionbase.clear_no_delete();
 
   {
-    ScrVert *sv_dst = static_cast<ScrVert *>(screen_dst->vertbase.first);
-    ScrVert *sv_src = static_cast<ScrVert *>(screen_src->vertbase.first);
+    ScrVert *sv_dst = screen_dst->vertbase.first();
+    ScrVert *sv_src = screen_src->vertbase.first();
     for (; sv_dst && sv_src; sv_dst = sv_dst->next, sv_src = sv_src->next) {
       sv_src->newv = sv_dst;
     }
@@ -140,8 +141,8 @@ static void screen_copy_data(Main * /*bmain*/,
   }
 
   {
-    ScrArea *area_dst = static_cast<ScrArea *>(screen_dst->areabase.first);
-    ScrArea *area_src = static_cast<ScrArea *>(screen_src->areabase.first);
+    ScrArea *area_dst = screen_dst->areabase.first();
+    ScrArea *area_src = screen_src->areabase.first();
     for (; area_dst && area_src; area_dst = area_dst->next, area_src = area_src->next) {
       area_dst->v1 = area_dst->v1->newv;
       area_dst->v2 = area_dst->v2->newv;
@@ -211,8 +212,21 @@ static void screen_blend_write(BlendWriter *writer, ID *id, const void *id_addre
 
   /* write LibData */
   /* in 2.50+ files, the file identifier for screens is patched, forward compatibility */
-  writer->write_struct_at_address_by_id_with_filecode(
-      ID_SCRN, dna::sdna_struct_id_get<bScreen>(), id_address, screen);
+  writer->write_id_struct(
+      ID_SCRN, id_address, screen, [](BlendStructWriter<bScreen> &struct_writer) {
+        bScreen &shallow_screen = struct_writer.shallow_data;
+        shallow_screen.do_draw = 0;
+        shallow_screen.do_refresh = 0;
+        shallow_screen.do_draw_gesture = 0;
+        shallow_screen.do_draw_paintcursor = 0;
+        shallow_screen.do_draw_drag = 0;
+        shallow_screen.skip_handling = 0;
+        shallow_screen.scrubbing = 0;
+        shallow_screen.active_region = nullptr;
+        shallow_screen.animtimer = nullptr;
+        shallow_screen.context = nullptr;
+        shallow_screen.tool_tip = nullptr;
+      });
   BKE_id_blend_write(writer, &screen->id);
 
   BKE_previewimg_blend_write(writer, screen->preview);
@@ -225,7 +239,7 @@ bool BKE_screen_blend_read_data(BlendDataReader *reader, bScreen *screen)
 {
   bool success = true;
 
-  screen->regionbase.first = screen->regionbase.last = nullptr;
+  screen->regionbase.first_ = screen->regionbase.last_ = nullptr;
   screen->context = nullptr;
   screen->active_region = nullptr;
   screen->animtimer = nullptr; /* saved in rare cases */
@@ -276,6 +290,7 @@ IDTypeInfo IDType_ID_SCR = {
     .foreach_cache = nullptr,
     .foreach_path = nullptr,
     .foreach_working_space_color = nullptr,
+    .foreach_asset_weak_reference = nullptr,
     .owner_pointer_get = nullptr,
 
     .blend_write = screen_blend_write,
@@ -396,6 +411,17 @@ bool BKE_regiontype_uses_category_tabs(const ARegionType *region_type)
 
   return bool(region_type->flag & ARegionTypeFlag::UsePanelCategoryTabs);
 }
+
+bool BKE_regiontype_uses_panel_categories_search(const ARegionType *region_type)
+{
+  return bool(region_type->flag & ARegionTypeFlag::UsePanelCategoriesSearch);
+}
+
+bool BKE_region_panel_categories_search_filter_visible(const ARegion *region)
+{
+  return BKE_regiontype_uses_panel_categories_search(region->runtime->type) &&
+         region->flag & RGN_FLAG_SEARCH_FILTER_SHOW;
+};
 
 /** \} */
 
@@ -545,7 +571,7 @@ ARegion *BKE_spacedata_find_region_type(const SpaceLink *slink,
                                         const ScrArea *area,
                                         int region_type)
 {
-  const bool is_slink_active = slink == area->spacedata.first;
+  const bool is_slink_active = slink == area->spacedata.first();
   const ListBaseT<ARegion> *regionbase = (is_slink_active) ? &area->regionbase :
                                                              &slink->regionbase;
   ARegion *region = nullptr;
@@ -1078,8 +1104,8 @@ ARegion *BKE_screen_find_region_in_space(const bScreen *screen,
   for (ScrArea &area : screen->areabase) {
     for (SpaceLink &slink : area.spacedata) {
       if (&slink == sl) {
-        ListBaseT<ARegion> *regionbase = (&slink == area.spacedata.first) ? &area.regionbase :
-                                                                            &slink.regionbase;
+        ListBaseT<ARegion> *regionbase = (&slink == area.spacedata.first()) ? &area.regionbase :
+                                                                              &slink.regionbase;
         return BKE_region_find_in_listbase_by_type(regionbase, region_type);
       }
     }
@@ -1329,11 +1355,54 @@ void BKE_screen_view3d_shading_blend_read_data(BlendDataReader *reader, View3DSh
   }
 }
 
+static void zero_regionview3d_runtime_fields(RegionView3D &rv3d)
+{
+  /* Some values like winmat/viewmat/viewinv/persmat/persinv/is_persp/pixsize are derived but are
+   * not zeroed. They can be read before they are recomputed when a file is newly loaded,
+   * especially when running Blender in background mode. */
+  zero_v4(rv3d.viewcamtexcofac);
+  zero_m4(rv3d.viewmatob);
+  zero_m4(rv3d.persmatob);
+  memset(rv3d.clip_local, 0, sizeof(rv3d.clip_local));
+  zero_m4(rv3d.twmat);
+  zero_v3(rv3d.tw_axis_min);
+  zero_v3(rv3d.tw_axis_max);
+  zero_m3(rv3d.tw_axis_matrix);
+  rv3d.twdrawflag = 0;
+  rv3d.rflag &= ~(RV3D_NAVIGATING | RV3D_GPULIGHT_UPDATE | RV3D_PAINTING);
+  rv3d.runtime_viewlock = {};
+  rv3d.ndof_rot_angle = 0;
+  zero_v3(rv3d.ndof_rot_axis);
+  rv3d.view_render = nullptr;
+  rv3d.sms = nullptr;
+  rv3d.smooth_timer = nullptr;
+}
+
 static void write_region(BlendWriter *writer, ARegion *region, int spacetype)
 {
-  ARegion region_copy = *region;
-  region_copy.runtime = nullptr;
-  writer->write_struct_at_address(region, &region_copy);
+  writer->write_struct(region, [](BlendStructWriter<ARegion> &struct_writer) {
+    ARegion &shallow_region = struct_writer.shallow_data;
+    shallow_region.runtime = nullptr;
+    shallow_region.flag &= ~(RGN_FLAG_TOO_SMALL | RGN_FLAG_POLL_FAILED | RGN_FLAG_SIZE_CLAMP_X |
+                             RGN_FLAG_SIZE_CLAMP_Y | RGN_FLAG_SEARCH_FILTER_ACTIVE |
+                             RGN_FLAG_SEARCH_FILTER_UPDATE);
+    shallow_region.v2d.sms = nullptr;
+    shallow_region.v2d.smooth_timer = nullptr;
+    shallow_region.v2d.scroll_ui = {};
+    shallow_region.v2d.flag &= ~V2D_IS_NAVIGATING;
+    /* Matches #direct_link_region. */
+    shallow_region.v2d.alpha_hor = 255;
+    shallow_region.v2d.alpha_vert = 255;
+    /* For some region types, #View2D.tot is pure runtime data. */
+    if (ELEM(shallow_region.regiontype,
+             RGN_TYPE_HEADER,
+             RGN_TYPE_TOOL_HEADER,
+             RGN_TYPE_FOOTER,
+             RGN_TYPE_ASSET_SHELF_HEADER))
+    {
+      shallow_region.v2d.tot = shallow_region.v2d.cur;
+    }
+  });
 
   if (region->regiondata) {
     if (region->flag & RGN_FLAG_TEMP_REGIONDATA) {
@@ -1349,10 +1418,15 @@ static void write_region(BlendWriter *writer, ARegion *region, int spacetype)
       case SPACE_VIEW3D:
         if (region->regiontype == RGN_TYPE_WINDOW) {
           RegionView3D *rv3d = static_cast<RegionView3D *>(region->regiondata);
-          writer->write_struct(rv3d);
+          writer->write_struct(rv3d, [](BlendStructWriter<RegionView3D> &struct_writer) {
+            zero_regionview3d_runtime_fields(struct_writer.shallow_data);
+          });
 
           if (rv3d->localvd) {
-            writer->write_struct(rv3d->localvd);
+            writer->write_struct(rv3d->localvd,
+                                 [](BlendStructWriter<RegionView3D> &struct_writer) {
+                                   zero_regionview3d_runtime_fields(struct_writer.shallow_data);
+                                 });
           }
           if (rv3d->clipbb) {
             writer->write_struct(rv3d->clipbb);
@@ -1380,10 +1454,10 @@ static void write_uilist(BlendWriter *writer, uiList *ui_list)
 static void write_panel_list(BlendWriter *writer, ListBaseT<Panel> *lb)
 {
   for (Panel &panel : *lb) {
-    Panel panel_copy = panel;
-    panel_copy.runtime_flag = 0;
-    panel_copy.runtime = nullptr;
-    writer->write_struct_at_address(&panel, &panel_copy);
+    writer->write_struct(&panel, [](BlendStructWriter<Panel> &struct_writer) {
+      struct_writer.shallow_data.runtime_flag = 0;
+      struct_writer.shallow_data.runtime = nullptr;
+    });
     writer->write_struct_list(&panel.layout_panel_states);
     for (LayoutPanelState &state : panel.layout_panel_states) {
       writer->write_string(state.idname);
@@ -1407,7 +1481,10 @@ static void write_area(BlendWriter *writer, ScrArea *area)
     }
 
     for (uiPreview &ui_preview : region.ui_previews) {
-      writer->write_struct(&ui_preview);
+      writer->write_struct(&ui_preview, [](BlendStructWriter<uiPreview> &struct_writer) {
+        struct_writer.shallow_data.tag = {};
+        struct_writer.shallow_data.id_session_uid = 0;
+      });
     }
 
     for (uiViewStateLink &view_state : region.view_states) {
@@ -1438,7 +1515,17 @@ void BKE_screen_area_map_blend_write(BlendWriter *writer, ScrAreaMap *area_map)
   for (ScrArea &area : area_map->areabase) {
     area.butspacetype = area.spacetype; /* Just for compatibility, will be reset below. */
 
-    writer->write_struct(&area);
+    writer->write_struct(&area, [](BlendStructWriter<ScrArea> &struct_writer) {
+      ScrArea &shallow_area = struct_writer.shallow_data;
+      shallow_area.type = nullptr;
+      shallow_area.do_refresh = 0;
+      shallow_area.region_active_win = -1;
+      shallow_area.flag &= ~(AREA_FLAG_REGION_SIZE_UPDATE | AREA_FLAG_ACTIVE_TOOL_UPDATE |
+                             AREA_FLAG_ACTIONZONES_UPDATE);
+      shallow_area.handlers.clear_no_delete();
+      shallow_area.actionzones.clear_no_delete();
+      shallow_area.runtime = {};
+    });
 
     writer->write_struct(area.global);
 
@@ -1617,15 +1704,14 @@ static void direct_link_area(BlendDataReader *reader, ScrArea *area)
 
   /* accident can happen when read/save new file with older version */
   /* 2.50: we now always add spacedata for info */
-  if (area->spacedata.first == nullptr) {
+  if (area->spacedata.first() == nullptr) {
     SpaceInfo *sinfo = MEM_new<SpaceInfo>("spaceinfo");
     area->spacetype = sinfo->spacetype = SPACE_INFO;
     BLI_addtail(&area->spacedata, sinfo);
   }
   /* add local view3d too */
   else if (area->spacetype == SPACE_VIEW3D) {
-    BKE_screen_view3d_do_versions_250(static_cast<View3D *>(area->spacedata.first),
-                                      &area->regionbase);
+    BKE_screen_view3d_do_versions_250(area->spacedata.first_as<View3D>(), &area->regionbase);
   }
 
   for (SpaceLink &sl : area->spacedata) {
@@ -1705,8 +1791,8 @@ void BKE_screen_area_blend_read_after_liblink(BlendLibReader *reader, ID *parent
 {
   for (SpaceLink &sl : area->spacedata) {
     SpaceType *space_type = BKE_spacetype_from_id(sl.spacetype);
-    ListBaseT<ARegion> *regionbase = (&sl == area->spacedata.first) ? &area->regionbase :
-                                                                      &sl.regionbase;
+    ListBaseT<ARegion> *regionbase = (&sl == area->spacedata.first()) ? &area->regionbase :
+                                                                        &sl.regionbase;
 
     /* We cannot restore the region type without a valid space type. So delete all regions to make
      * sure no data is kept around that can't be restored safely (like the type dependent

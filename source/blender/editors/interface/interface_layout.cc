@@ -47,6 +47,7 @@
 #include "WM_types.hh"
 
 #include "buttons/interface_label.hh"
+#include "buttons/interface_label_markdown.hh"
 #include "buttons/interface_textbox.hh"
 #include "interface_intern.hh"
 
@@ -76,8 +77,6 @@ struct ButtonItem;
     return {}; \
   } \
   (void)0
-
-#define UI_ITEM_PROP_SEP_DIVIDE 0.4f
 
 /* uiLayoutRoot */
 
@@ -2158,7 +2157,7 @@ void Layout::prop(PointerRNA *ptr,
     }
     else {
       Layout *layout_split =
-          &(layout_row ? layout_row : layout)->split(UI_ITEM_PROP_SEP_DIVIDE, true);
+          &(layout_row ? layout_row : layout)->split(Layout::PROPERTY_SPLIT_FACTOR, true);
       bool label_added = false;
       Layout *layout_sub = &layout_split->column(true);
       layout_sub->space_ = 0;
@@ -2835,38 +2834,11 @@ void Layout::textbox_with_state(PointerRNA *ptr,
 
   this->row(true).alignment_set(LayoutAlign::Expand);
 
-  const float line_height = fontstyle_height_max(UI_FSTYLE_WIDGET);
-
-  /** Ensure minimum value is set. */
-  textbox_state->visible_lines = std::max(textbox_state->visible_lines,
-                                          textbox_minimum_visible_lines);
-
   int w, h;
   item_rna_size(block->curlayout, "", ICON_NONE, ptr, prop, -1, false, false, &w, &h);
-  Button *but = uiDefButR_prop(
-      block,
-      ButtonType::TextBox,
-      RNA_property_ui_name(prop),
-      0,
-      0,
-      w,
-      std::max<int>(UI_UNIT_Y,
-                    std::round(line_height * textbox_state->visible_lines) +
-                        (textbox_vertical_padding() * 2.0f)),
-      ptr,
-      prop,
-      0,
-      0,
-      0,
-      std::nullopt);
-  ButtonTextBox *textbox = static_cast<ButtonTextBox *>(but);
-  textbox->state = textbox_state;
+  Button *but = uiDefButTextBoxR(block, ptr, propname, textbox_state, 0, 0, w);
   if (placeholder) {
     button_placeholder_set(but, *placeholder);
-  }
-
-  if (RNA_property_flag(prop) & PROP_TEXTEDIT_UPDATE) {
-    button_flag_enable(but, BUT_TEXTEDIT_UPDATE);
   }
   block_layout_set_current(block, this);
 }
@@ -3392,8 +3364,28 @@ void Layout::label_multiline(StringRefNull text, int icon, FontStyleAlign align,
   this->root_->use_dynamic_height = true;
   ButtonLabel *label = static_cast<ButtonLabel *>(button);
   label->text_align = align;
-  label->is_multiline = true;
+  label->label_type = ButtonLabelType::Multiline;
   label->max_lines = max_lines;
+  if (this->red_alert()) {
+    button_flag_enable(button, BUT_REDALERT);
+  }
+}
+
+void Layout::label_markdown(const StringRef text)
+{
+  if (G.debug_value == 4002) {
+    label_markdown_dev_config(*this);
+  }
+
+  block_layout_set_current(this->block(), this);
+  /* Must be >0 for it to work on horizontal layouts. */
+  const int dummy_width = 1;
+  ButtonLabel *button = static_cast<ButtonLabel *>(uiDefBut(
+      this->block(), ButtonType::Label, text, 0, 0, dummy_width, 0, nullptr, 0, 0, std::nullopt));
+  this->root_->use_dynamic_height = true;
+  button->label_type = ButtonLabelType::Markdown;
+  button->emboss = EmbossType::None;
+  button->drawflag |= BUT_NO_TEXT_PADDING;
   if (this->red_alert()) {
     button_flag_enable(button, BUT_REDALERT);
   }
@@ -3482,7 +3474,7 @@ PropertySplitWrapper uiItemPropertySplitWrapperCreate(Layout *parent_layout)
   PropertySplitWrapper split_wrapper = {nullptr};
 
   Layout *layout_row = &parent_layout->row(true);
-  Layout *layout_split = &layout_row->split(UI_ITEM_PROP_SEP_DIVIDE, true);
+  Layout *layout_split = &layout_row->split(Layout::PROPERTY_SPLIT_FACTOR, true);
 
   split_wrapper.label_column = &layout_split->column(true);
   split_wrapper.label_column->alignment_set(LayoutAlign::Right);
@@ -5813,6 +5805,9 @@ void Layout::resolve_dynamic_height()
         if (button_label_is_multiline(sub_bitem->but)) {
           resolve_label_multiline(static_cast<ButtonLabel *>(sub_bitem->but));
         }
+        else if (button_label_is_markdown(sub_bitem->but)) {
+          label_markdown_resolve(static_cast<ButtonLabel *>(sub_bitem->but));
+        }
       }
       else {
         static_cast<Layout *>(subitem)->resolve_dynamic_height();
@@ -6083,6 +6078,10 @@ int2 block_layout_resolve(Block *block)
   }
 
   block->layouts.clear_no_delete();
+
+  /* Link hit-targets need final button positions from layout resolve. */
+  label_markdown_create_link_buttons(block);
+
   return block_size;
 }
 bool block_layout_needs_resolving(const Block *block)

@@ -167,7 +167,7 @@ static void write_movieTracks(BlendWriter *writer, ListBaseT<MovieTrackingTrack>
 {
   MovieTrackingTrack *track;
 
-  track = static_cast<MovieTrackingTrack *>(tracks->first);
+  track = tracks->first();
   while (track) {
     writer->write_struct(track);
 
@@ -209,7 +209,9 @@ static void movieclip_blend_write(BlendWriter *writer, ID *id, const void *id_ad
 
   MovieTracking *tracking = &clip->tracking;
 
-  writer->write_id_struct(id_address, clip);
+  writer->write_id_struct(id_address, clip, [](BlendStructWriter<MovieClip> &struct_writer) {
+    struct_writer.shallow_data.runtime = {};
+  });
   BKE_id_blend_write(writer, &clip->id);
 
   for (MovieTrackingObject &object : tracking->objects) {
@@ -309,6 +311,7 @@ IDTypeInfo IDType_ID_MC = {
     .foreach_cache = movie_clip_foreach_cache,
     .foreach_path = movie_clip_foreach_path,
     .foreach_working_space_color = nullptr,
+    .foreach_asset_weak_reference = nullptr,
     .owner_pointer_get = nullptr,
 
     .blend_write = movieclip_blend_write,
@@ -461,7 +464,7 @@ static ImBuf *movieclip_load_sequence_file(MovieClip *clip,
   ImBuf *ibuf;
   char filepath[FILE_MAX];
   bool use_proxy = false;
-  char *colorspace;
+  ColorManagedColorspaceSettings *colorspace_settings;
 
   use_proxy = (flag & MCLIP_USE_PROXY) && user->render_size != MCLIP_PROXY_RENDER_SIZE_FULL;
   if (use_proxy) {
@@ -474,21 +477,21 @@ static ImBuf *movieclip_load_sequence_file(MovieClip *clip,
      * But image sequences are built in the display space.
      */
     if (clip->source == MCLIP_SRC_MOVIE) {
-      colorspace = clip->colorspace_settings.name;
+      colorspace_settings = &clip->colorspace_settings;
     }
     else {
-      colorspace = nullptr;
+      colorspace_settings = nullptr;
     }
   }
   else {
     get_sequence_filepath(clip, framenr, filepath);
-    colorspace = clip->colorspace_settings.name;
+    colorspace_settings = &clip->colorspace_settings;
   }
 
   ImBufFlags loadflag = ImBufFlags::ByteData | ImBufFlags::AlphaDetect | ImBufFlags::Metadata;
 
   /* read ibuf */
-  ibuf = IMB_load_image_from_filepath(filepath, loadflag, colorspace);
+  ibuf = IMB_load_image_from_filepath(filepath, loadflag, colorspace_settings);
 
   return ibuf;
 }
@@ -502,8 +505,7 @@ static void movieclip_open_anim_file(MovieClip *clip)
     BLI_path_abs(filepath_abs, ID_BLEND_PATH_FROM_GLOBAL(&clip->id));
 
     /* FIXME: make several stream accessible in image editor, too */
-    clip->anim = openanim(
-        filepath_abs, ImBufFlags::Zero, 0, false, clip->colorspace_settings.name);
+    clip->anim = openanim(filepath_abs, ImBufFlags::Zero, 0, false, &clip->colorspace_settings);
 
     if (clip->anim) {
       if (clip->flag & MCLIP_USE_PROXY_CUSTOM_DIR) {
@@ -906,9 +908,7 @@ MovieClip *BKE_movieclip_file_add_exists_ex(Main *bmain, const char *filepath, b
   BLI_path_abs(filepath_abs, BKE_main_blendfile_path(bmain));
 
   /* first search an identical filepath */
-  for (clip = static_cast<MovieClip *>(bmain->movieclips.first); clip;
-       clip = static_cast<MovieClip *>(clip->id.next))
-  {
+  for (clip = bmain->movieclips.first(); clip; clip = static_cast<MovieClip *>(clip->id.next)) {
     STRNCPY(filepath_test, clip->filepath);
     BLI_path_abs(filepath_test, ID_BLEND_PATH(bmain, &clip->id));
 
@@ -1556,7 +1556,7 @@ static void free_buffers(MovieClip *clip)
   }
 
   MovieClip_RuntimeGPUTexture *tex;
-  for (tex = static_cast<MovieClip_RuntimeGPUTexture *>(clip->runtime.gputextures.first); tex;
+  for (tex = clip->runtime.gputextures.first(); tex;
        tex = static_cast<MovieClip_RuntimeGPUTexture *>(tex->next))
   {
     if (tex->gputexture != nullptr) {
@@ -1913,7 +1913,7 @@ static gpu::Texture **movieclip_get_gputexture_ptr(MovieClip *clip, MovieClipUse
 {
   /* Check if we have an existing entry for that clip user. */
   MovieClip_RuntimeGPUTexture *tex;
-  for (tex = static_cast<MovieClip_RuntimeGPUTexture *>(clip->runtime.gputextures.first); tex;
+  for (tex = clip->runtime.gputextures.first(); tex;
        tex = static_cast<MovieClip_RuntimeGPUTexture *>(tex->next))
   {
     if (memcmp(&tex->user, cuser, sizeof(MovieClipUser)) == 0) {

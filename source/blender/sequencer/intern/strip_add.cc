@@ -19,6 +19,7 @@
 #include "DNA_scene_types.h"
 #include "DNA_sequence_types.h"
 #include "DNA_sound_types.h"
+#include "DNA_userdef_types.h"
 
 #include "BLI_math_base.hh"
 #include "BLI_path_utils.hh"
@@ -59,6 +60,11 @@
 #include "utils.hh"
 
 namespace blender::seq {
+
+int default_strip_length(const double scene_fps)
+{
+  return std::max(1, int(std::round(U.sequencer_default_strip_length * scene_fps)));
+}
 
 void add_load_data_init(LoadData *load_data,
                         const char *name,
@@ -219,9 +225,8 @@ void add_image_init_alpha_mode(Main *bmain, Scene *scene, Strip *strip)
 
     /* Initialize input color space. */
     if (strip->type == STRIP_TYPE_IMAGE) {
-      ibuf = IMB_load_image_from_filepath(filepath,
-                                          ImBufFlags::Test | ImBufFlags::AlphaDetect,
-                                          strip->data->colorspace_settings.name);
+      ibuf = IMB_load_image_from_filepath(
+          filepath, ImBufFlags::Test | ImBufFlags::AlphaDetect, &strip->data->colorspace_settings);
 
       /* Byte images are default to straight alpha, however sequencer
        * works in pre-multiply space, so mark strip to be pre-multiplied first. */
@@ -244,6 +249,7 @@ Strip *add_image_strip(Main *bmain, Scene *scene, ListBaseT<Strip> *seqbase, Loa
   strip->content_length_set(load_data->image.count);
   StripData *data = strip->data;
   data->stripdata = MEM_new_array<StripElem>(load_data->image.count, "stripelem");
+  data->stripdata_num = load_data->image.count;
 
   if (strip->content_length() == 1) {
     strip->flag |= SEQ_SINGLE_FRAME_CONTENT;
@@ -265,7 +271,7 @@ Strip *add_image_strip(Main *bmain, Scene *scene, ListBaseT<Strip> *seqbase, Loa
   BLI_path_abs(file_path, ID_BLEND_PATH(bmain, &scene->id));
 
   ImBuf *ibuf = IMB_load_image_from_filepath(
-      file_path, ImBufFlags::ByteData, strip->data->colorspace_settings.name);
+      file_path, ImBufFlags::ByteData, &strip->data->colorspace_settings);
   if (ibuf != nullptr) {
     /* Set image resolution. Assume that all images in sequence are same size. This fields are only
      * informative. */
@@ -328,6 +334,7 @@ Strip *add_sound_strip(Main *bmain, Scene *scene, ListBaseT<Strip> *seqbase, Loa
   StripData *data = strip->data;
   /* We only need 1 element to store the filename. */
   StripElem *se = data->stripdata = MEM_new<StripElem>("stripelem");
+  data->stripdata_num = 1;
   BLI_path_split_dir_file(
       load_data->path, data->dirpath, sizeof(data->dirpath), se->filename, sizeof(se->filename));
 
@@ -390,7 +397,7 @@ Strip *add_movie_strip(Main *bmain, Scene *scene, ListBaseT<Strip> *seqbase, Loa
   STRNCPY(filepath, load_data->path);
   BLI_path_abs(filepath, ID_BLEND_PATH(bmain, &scene->id));
 
-  char colorspace[/*MAX_COLORSPACE_NAME*/ 64] = "\0";
+  ColorManagedColorspaceSettings colorspace_settings;
   bool is_multiview_loaded = false;
   const int totfiles = load_data->use_multiview ?
                            seq_multiview_num_files_get(scene, load_data->views_format) :
@@ -414,7 +421,8 @@ Strip *add_movie_strip(Main *bmain, Scene *scene, ListBaseT<Strip> *seqbase, Loa
         seq_multiview_name(scene, i, prefix, ext, filepath_view, sizeof(filepath_view));
         /* Sequencer takes care of colorspace conversion of the result. The input is the best to be
          * kept unchanged for the performance reasons. */
-        anim_arr[j].reset(openanim(filepath_view, ImBufFlags::Zero, 0, true, colorspace));
+        anim_arr[j].reset(
+            openanim(filepath_view, ImBufFlags::Zero, 0, true, &colorspace_settings));
 
         if (anim_arr[j]) {
           seq_anim_add_suffix(scene, anim_arr[j].get(), i);
@@ -429,7 +437,7 @@ Strip *add_movie_strip(Main *bmain, Scene *scene, ListBaseT<Strip> *seqbase, Loa
     /* Sequencer takes care of colorspace conversion of the result. The input is the best to be
      * kept unchanged for the performance reasons. */
     anim_arr[0].reset(
-        openanim(filepath, ImBufFlags::Zero, load_data->stream_index, true, colorspace));
+        openanim(filepath, ImBufFlags::Zero, load_data->stream_index, true, &colorspace_settings));
   }
 
   if (anim_arr[0] == nullptr && !load_data->allow_invalid_file) {
@@ -493,12 +501,13 @@ Strip *add_movie_strip(Main *bmain, Scene *scene, ListBaseT<Strip> *seqbase, Loa
     strip->flag |= SEQ_AUTO_PLAYBACK_RATE;
   }
 
-  STRNCPY_UTF8(strip->data->colorspace_settings.name, colorspace);
+  strip->data->colorspace_settings = colorspace_settings;
 
   StripData *data = strip->data;
   /* We only need 1 element for MOVIE strips. */
   StripElem *se;
   data->stripdata = se = MEM_new<StripElem>("stripelem");
+  data->stripdata_num = 1;
   data->stripdata->orig_width = orig_width;
   data->stripdata->orig_height = orig_height;
   data->stripdata->orig_fps = video_fps;
@@ -538,13 +547,11 @@ static void add_reload_new_file_impl(
 
   switch (strip->type) {
     case STRIP_TYPE_IMAGE: {
-      /* Hack? */
-      int olen = MEM_allocN_len(strip->data->stripdata) / sizeof(StripElem);
-
-      olen -= strip->anim_startofs;
-      olen -= strip->anim_endofs;
-      olen = std::max(olen, 0);
-      strip->content_length_set(olen);
+      int new_len = strip->data->stripdata_num;
+      new_len -= strip->anim_startofs;
+      new_len -= strip->anim_endofs;
+      new_len = std::max(new_len, 0);
+      strip->content_length_set(new_len);
       break;
     }
     case STRIP_TYPE_MOVIE: {

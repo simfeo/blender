@@ -2820,7 +2820,8 @@ class WM_OT_batch_rename(Operator):
             ('ACTION_CLIP', "Action Clips", "", 'ACTION', 17),
             None,
             ('SCENE', "Scenes", "", 'SCENE_DATA', 18),
-            ('BRUSH', "Brushes", "", 'BRUSH_DATA', 19),
+            ('MARKER', "Markers", "", 'TIME', 19),
+            ('BRUSH', "Brushes", "", 'BRUSH_DATA', 20),
         ),
         translation_context=i18n_contexts.id_id,
         description="Type of data to rename",
@@ -2874,6 +2875,23 @@ class WM_OT_batch_rename(Operator):
             if action.is_editable
         ))
 
+    @staticmethod
+    def _markers_from_context(context, space_type, only_selected):
+        from contextlib import nullcontext
+        if space_type == 'SEQUENCE_EDITOR':
+            context_manager = context.temp_override(scene=context.sequencer_scene)
+        else:
+            context_manager = nullcontext()
+
+        with context_manager:
+            return context.selected_markers if only_selected else context.markers
+
+    @staticmethod
+    def _markers_label(markers):
+        if markers and markers[0].id_data.id_type == 'ACTION':
+            return iface_("Pose Marker(s)")
+        return iface_("Timeline Marker(s)")
+
     @classmethod
     def _data_from_context(cls, context, data_type, only_selected, *, check_context=False):
         def _is_editable(data):
@@ -2893,7 +2911,7 @@ class WM_OT_batch_rename(Operator):
                 data = (
                     context.selected_strips
                     if only_selected else
-                    scene.sequence_editor.strips_all,
+                    context.sequencer_scene.sequence_editor.strips_all,
                     "name",
                     iface_("Strip(s)"),
                 )
@@ -3044,6 +3062,13 @@ class WM_OT_batch_rename(Operator):
                     ),
                     "name",
                     iface_("Scene(s)"),
+                )
+            elif data_type == 'MARKER':
+                markers = cls._markers_from_context(context, space_type, only_selected)
+                data = (
+                    markers,
+                    "name",
+                    cls._markers_label(markers)
                 )
             elif data_type == 'BRUSH':
                 data = (
@@ -3686,25 +3711,77 @@ class WM_OT_drop_blend_file(Operator):
         subtype='FILE_PATH',
         options={'SKIP_SAVE'},
     )
+    use_scripts: BoolProperty(
+        name="Trusted Source",
+        options={'SKIP_SAVE'},
+        description="Allow .blend file to execute scripts automatically, default available from system preferences"
+    )
+
+    @classmethod
+    def _is_autoexec(cls, filepath, *, skip_overrides):
+        """
+        Return true when the directory of ``filepath`` isn't excluded,
+        ``skip_overrides`` ignores the preference & command line override
+        which otherwise give the default for "Trusted Source".
+        """
+        return bpy.path.is_autoexec(
+            filepath,
+            skip_overrides=skip_overrides,
+            canonicalize=True,
+            strip_filename=True,
+        )
+
+    def draw(self, context):
+        layout = self.layout
+        filepath = self.filepath
+
+        layout.label(text=bpy.path.basename(filepath), icon='QUESTION')
+
+        col = layout.column()
+        col.operator_context = 'INVOKE_DEFAULT'
+        # Return activates "Open", the primary action of this popup.
+        col.active_default = True
+        props = col.operator("wm.open_mainfile", text="Open", icon='FILE_FOLDER')
+        props.filepath = filepath
+        props.display_file_selector = False
+        props.use_scripts = self.use_scripts
+
+        # Excluded paths can't be trusted, unless the command line overrides the preference.
+        is_untrusted = (
+            context.preferences.filepaths.use_scripts_auto_execute and
+            bpy.app.autoexec_override is None and
+            not self._is_autoexec(filepath, skip_overrides=True)
+        )
+
+        col = layout.column()
+        if not is_untrusted:
+            col.prop(self, "use_scripts")
+        else:
+            col.enabled = False
+            col.prop(self, "use_scripts", text="Trusted Source [Untrusted Path]")
+
+        layout.separator(type='LINE')
+
+        col = layout.column()
+        col.operator_context = 'INVOKE_DEFAULT'
+        # Use the confirm template so pressing these closes the popup,
+        # the popup is kept open otherwise (see `BLOCK_KEEP_OPEN`).
+        col.template_popup_confirm(
+            "wm.link", text="Link...", icon='LINK_BLEND', cancel_text="",
+        ).filepath = filepath
+        col.template_popup_confirm(
+            "wm.append", text="Append...", icon='APPEND_BLEND', cancel_text="",
+        ).filepath = filepath
+
+    def execute(self, context):
+        # Needed so the popup draws this operators UI.
+        return {'CANCELLED'}
 
     def invoke(self, context, _event):
-        context.window_manager.popup_menu(self.draw_menu, title=bpy.path.basename(self.filepath), icon='QUESTION')
-        return {'FINISHED'}
-
-    def draw_menu(self, menu, _context):
-        layout = menu.layout
-
-        col = layout.column()
-        col.operator_context = 'INVOKE_DEFAULT'
-        props = col.operator("wm.open_mainfile", text="Open", icon='FILE_FOLDER')
-        props.filepath = self.filepath
-        props.display_file_selector = False
-
-        layout.separator()
-        col = layout.column()
-        col.operator_context = 'INVOKE_DEFAULT'
-        col.operator("wm.link", text="Link...", icon='LINK_BLEND').filepath = self.filepath
-        col.operator("wm.append", text="Append...", icon='APPEND_BLEND').filepath = self.filepath
+        # Match the file selector.
+        self.use_scripts = self._is_autoexec(self.filepath, skip_overrides=False)
+        # The popup shows this operators own UI, keeping it alive while it's open.
+        return context.window_manager.invoke_popup(self, auto_keymap=True)
 
 
 classes = (

@@ -78,7 +78,7 @@ NODE_DEFINE(Object)
 
   SOCKET_NODE(geometry, "Geometry", Geometry::get_node_base_type());
   SOCKET_TRANSFORM(tfm, "Transform", transform_identity());
-  SOCKET_UINT(visibility, "Visibility", PATH_RAY_VISIBILITY_ALL);
+  SOCKET_UINT(visibility, "Visibility", PATH_RAY_VISIBILITY_OBJECT_ALL);
   SOCKET_COLOR(color, "Color", zero_float3());
   SOCKET_FLOAT(alpha, "Alpha", 0.0f);
   SOCKET_UINT(random_id, "Random ID", 0);
@@ -298,7 +298,7 @@ bool Object::is_traceable() const
 
 uint Object::visibility_for_tracing() const
 {
-  assert((visibility & ~uint(PATH_RAY_VISIBILITY_ALL)) == 0);
+  assert((visibility & ~uint(PATH_RAY_VISIBILITY_OBJECT_ALL)) == 0);
   return SHADOW_CATCHER_OBJECT_VISIBILITY(is_shadow_catcher, visibility);
 }
 
@@ -583,7 +583,6 @@ void ObjectManager::device_update_object_transform(UpdateObjectTransformState *s
 
   kobject.tfm = tfm;
   kobject.itfm = itfm;
-  kobject.volume_density = object_volume_density(tfm, geom);
   kobject.color[0] = color.x;
   kobject.color[1] = color.y;
   kobject.color[2] = color.z;
@@ -593,7 +592,6 @@ void ObjectManager::device_update_object_transform(UpdateObjectTransformState *s
   kobject.particle_index = particle_index;
   kobject.motion_offset = 0;
   kobject.position_offset = ATTR_STD_NOT_FOUND;
-  kobject.normal_offset = ATTR_STD_NOT_FOUND;
   kobject.ao_distance = ob->ao_distance;
   kobject.receiver_light_set = ob->receiver_light_set >= LIGHT_LINK_SET_MAX ?
                                    0 :
@@ -619,6 +617,17 @@ void ObjectManager::device_update_object_transform(UpdateObjectTransformState *s
     }
   }
   else if (geom->is_pointcloud()) {
+    const PointCloud *pointcloud = static_cast<PointCloud *>(geom);
+    if (pointcloud->primitive_type() & PRIMITIVE_GSPLAT) {
+      /* NOTE: scale, rotation, and radiance base attributes are required.
+       * The value here does not really matter as it'll be overwritten by a proper offset. Keep the
+       * initialization to allow catching logical errors with asserts. */
+      kobject.gsplat.scale_offset_and_flag = ATTR_STD_NOT_FOUND;
+      kobject.gsplat.rotation_offset_and_flag = ATTR_STD_NOT_FOUND;
+      kobject.gsplat.radiance_base_offset_and_flag = ATTR_STD_NOT_FOUND;
+
+      kobject.gsplat.radiance_spherical_harmonics_rest_offset = ATTR_STD_NOT_FOUND;
+    }
     const Attribute *attr_P = geom->attributes.find(ATTR_STD_POSITION);
     if (attr_P->has_motion()) {
       flag |= SD_OBJECT_HAS_VERTEX_MOTION;
@@ -629,7 +638,7 @@ void ObjectManager::device_update_object_transform(UpdateObjectTransformState *s
     if (volume->attributes.find(ATTR_STD_VOLUME_VELOCITY) && volume->get_velocity_scale() != 0.0f)
     {
       flag |= SD_OBJECT_HAS_VOLUME_MOTION;
-      kobject.velocity_scale = volume->get_velocity_scale();
+      kobject.mesh_volume.volume_velocity_scale = volume->get_velocity_scale();
     }
   }
   else if (geom->is_mesh()) {
@@ -707,9 +716,11 @@ void ObjectManager::device_update_object_transform(UpdateObjectTransformState *s
   kobject.num_geom_steps = geom->get_motion_steps();
   kobject.num_tfm_steps = ob->motion.size();
   kobject.numverts = object_num_motion_verts(geom);
-  kobject.numprims = (geom->is_mesh() || geom->is_volume()) ?
-                         static_cast<Mesh *>(geom)->num_triangles() :
-                         0;
+  if (geom->is_mesh() || geom->is_volume()) {
+    kobject.mesh_volume.volume_density = object_volume_density(tfm, geom);
+    kobject.mesh_volume.num_prims = static_cast<Mesh *>(geom)->num_triangles();
+    kobject.mesh_volume.normal_offset = ATTR_STD_NOT_FOUND;
+  }
   kobject.attribute_map_offset = 0;
 
   if (ob->asset_name_is_modified() || update_all) {
@@ -1081,6 +1092,46 @@ void ObjectManager::device_update_flags(Device * /*unused*/,
   dscene->object_flag.clear_modified();
 }
 
+/* NOTE: Only use for attributes that are guaranteed to exist.
+ * Otherwise it is not possible to encode offset and motion flag. */
+static bool update_gsplat_std_point_attribute_offset_and_flag(const DeviceScene &dscene,
+                                                              const PointCloud &pointcloud,
+                                                              const size_t attr_map_offset,
+                                                              const AttributeStandard std,
+                                                              int &kobject_offset_and_flag)
+{
+  const Attribute *attribute = pointcloud.attributes.find(std);
+  const int offset =
+      find_attribute(dscene.attributes_map.data(), attr_map_offset, PRIMITIVE_GSPLAT, std).offset;
+
+  /* The function is only working correctly for attributes that are required.
+   * Also check that the most significant bit is not set, as it will be lost during encoding. */
+  assert(offset != ATTR_STD_NOT_FOUND);
+  assert((uint(offset) >> 31U) == 0);
+
+  const int offset_and_flag = (offset << 1) | (attribute ? attribute->has_motion() : 0);
+
+  if (kobject_offset_and_flag == offset_and_flag) {
+    return false;
+  }
+  kobject_offset_and_flag = offset_and_flag;
+  return true;
+}
+
+static bool update_gsplat_std_point_attribute_offset(const DeviceScene &dscene,
+                                                     const size_t attr_map_offset,
+                                                     const AttributeStandard std,
+                                                     int &kobject_offset)
+{
+  const int offset =
+      find_attribute(dscene.attributes_map.data(), attr_map_offset, PRIMITIVE_GSPLAT, std).offset;
+  if (kobject_offset == offset) {
+    return false;
+  }
+  kobject_offset = offset;
+  return true;
+}
+
 void ObjectManager::device_update_geom_offsets(Device * /*unused*/,
                                                DeviceScene *dscene,
                                                Scene *scene)
@@ -1111,8 +1162,8 @@ void ObjectManager::device_update_geom_offsets(Device * /*unused*/,
 
     /* Cached attribute offsets for quick lookup. */
     int position_offset = ATTR_STD_NOT_FOUND;
-    int normal_offset = ATTR_STD_NOT_FOUND;
     if (geom->is_mesh() || geom->is_volume()) {
+      int normal_offset = ATTR_STD_NOT_FOUND;
       position_offset = find_attribute(dscene->attributes_map.data(),
                                        attr_map_offset,
                                        PRIMITIVE_TRIANGLE,
@@ -1135,6 +1186,10 @@ void ObjectManager::device_update_geom_offsets(Device * /*unused*/,
              static_cast<Mesh *>(geom)->num_triangles() == 0);
       assert(normal_offset != ATTR_STD_NOT_FOUND ||
              static_cast<Mesh *>(geom)->num_triangles() == 0);
+      if (kobject.mesh_volume.normal_offset != normal_offset) {
+        kobject.mesh_volume.normal_offset = normal_offset;
+        update = true;
+      }
     }
     else if (geom->is_hair()) {
       position_offset = find_attribute(dscene->attributes_map.data(),
@@ -1145,20 +1200,42 @@ void ObjectManager::device_update_geom_offsets(Device * /*unused*/,
       assert(position_offset != ATTR_STD_NOT_FOUND || static_cast<Hair *>(geom)->num_keys() == 0);
     }
     else if (geom->is_pointcloud()) {
+      const PointCloud *pointcloud = static_cast<const PointCloud *>(geom);
       position_offset = find_attribute(dscene->attributes_map.data(),
                                        attr_map_offset,
                                        PRIMITIVE_POINT,
                                        ATTR_STD_POSITION)
                             .offset;
-      assert(position_offset != ATTR_STD_NOT_FOUND ||
-             static_cast<PointCloud *>(geom)->num_points() == 0);
+      assert(position_offset != ATTR_STD_NOT_FOUND || pointcloud->num_points() == 0);
+      if (pointcloud->primitive_type() & PRIMITIVE_GSPLAT) {
+        update |= update_gsplat_std_point_attribute_offset_and_flag(
+            *dscene,
+            *pointcloud,
+            attr_map_offset,
+            ATTR_STD_GSPLAT_RADIANCE_BASE,
+            kobject.gsplat.radiance_base_offset_and_flag);
+        update |= update_gsplat_std_point_attribute_offset_and_flag(
+            *dscene,
+            *pointcloud,
+            attr_map_offset,
+            ATTR_STD_GSPLAT_SCALE,
+            kobject.gsplat.scale_offset_and_flag);
+        update |= update_gsplat_std_point_attribute_offset_and_flag(
+            *dscene,
+            *pointcloud,
+            attr_map_offset,
+            ATTR_STD_GSPLAT_ROTATION,
+            kobject.gsplat.rotation_offset_and_flag);
+
+        update |= update_gsplat_std_point_attribute_offset(
+            *dscene,
+            attr_map_offset,
+            ATTR_STD_GSPLAT_RADIANCE_SPHERICAL_HARMONICS_REST,
+            kobject.gsplat.radiance_spherical_harmonics_rest_offset);
+      }
     }
     if (kobject.position_offset != position_offset) {
       kobject.position_offset = position_offset;
-      update = true;
-    }
-    if (kobject.normal_offset != normal_offset) {
-      kobject.normal_offset = normal_offset;
       update = true;
     }
 
@@ -1233,6 +1310,13 @@ void ObjectManager::apply_static_transforms(DeviceScene *dscene, Scene *scene, P
        * represented by control points and radius alone. */
       float scale;
       apply = apply && transform_uniform_scale(object->tfm, scale);
+    }
+
+    /* Applying transform on Gaussian splats is not trivial as in general case it requires
+     * non-trivial math for rotating spherical harmonics. */
+    if (geom->is_pointcloud()) {
+      const PointCloud *pointcloud = static_cast<const PointCloud *>(geom);
+      apply = apply && ((pointcloud->primitive_type() & PRIMITIVE_GSPLAT) == 0);
     }
 
     if (apply) {

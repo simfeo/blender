@@ -9,6 +9,7 @@
 #include "BLI_resource_scope.hh"
 
 #include "BKE_compositor.hh"
+#include "BKE_compute_contexts.hh"
 #include "BKE_idprop.hh"
 #include "BKE_node_runtime.hh"
 
@@ -46,8 +47,8 @@ class CompositorEffectContext : public CompositorContext {
   ImBuf *output_;
   float factor_;
 
-  /* The hash of the active compute context. */
-  const ComputeContextHash active_compute_context_hash_;
+  /* The hash of the compute context of the active viewer if one exists. */
+  const std::optional<ComputeContextHash> viewer_compute_context_hash_;
 
  public:
   CompositorEffectContext(compositor::StaticCacheManager &cache_manager,
@@ -64,14 +65,14 @@ class CompositorEffectContext : public CompositorContext {
         input_2_(input_2),
         output_(output),
         factor_(factor),
-        active_compute_context_hash_(bke::compositor::compute_active_compute_context_hash(
+        viewer_compute_context_hash_(bke::compositor::compute_viewer_compute_context_hash(
             *render_data_.scene, *node_group_))
   {
   }
 
-  const ComputeContextHash &get_active_compute_context_hash() const override
+  const std::optional<ComputeContextHash> &get_viewer_compute_context_hash() const override
   {
-    return active_compute_context_hash_;
+    return viewer_compute_context_hash_;
   }
 
   compositor::Domain get_compositing_domain() const override
@@ -90,8 +91,7 @@ class CompositorEffectContext : public CompositorContext {
     const bNodeTree &node_group = *DEG_get_evaluated<bNodeTree>(render_data_.depsgraph,
                                                                 node_group_);
     const bke::DataBlockComputeContext compute_context(nullptr, this->get_scene().id);
-    NodeGroupOperation node_group_operation(
-        *this, node_group, this->needed_outputs(), compute_context);
+    NodeGroupOperation node_group_operation(*this, node_group, compute_context);
     set_output_refcount(node_group, node_group_operation);
 
     node_group.ensure_topology_cache();

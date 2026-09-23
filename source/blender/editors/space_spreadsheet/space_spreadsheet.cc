@@ -203,7 +203,7 @@ ID *get_current_id(const SpaceSpreadsheet *sspreadsheet)
     return nullptr;
   }
   ViewerPathElem *root_context = static_cast<ViewerPathElem *>(
-      sspreadsheet->geometry_id.viewer_path.path.first);
+      sspreadsheet->geometry_id.viewer_path.path.first_);
   if (root_context->type != VIEWER_PATH_ELEM_TYPE_ID) {
     return nullptr;
   }
@@ -526,7 +526,7 @@ static void spreadsheet_main_region_listener(const wmRegionListenerParams *param
 {
   ARegion *region = params->region;
   const wmNotifier *wmn = params->notifier;
-  SpaceSpreadsheet *sspreadsheet = static_cast<SpaceSpreadsheet *>(params->area->spacedata.first);
+  SpaceSpreadsheet *sspreadsheet = params->area->spacedata.first_as<SpaceSpreadsheet>();
 
   switch (wmn->category) {
     case NC_SCENE: {
@@ -586,7 +586,7 @@ static void spreadsheet_header_region_listener(const wmRegionListenerParams *par
 {
   ARegion *region = params->region;
   const wmNotifier *wmn = params->notifier;
-  SpaceSpreadsheet *sspreadsheet = static_cast<SpaceSpreadsheet *>(params->area->spacedata.first);
+  SpaceSpreadsheet *sspreadsheet = params->area->spacedata.first_as<SpaceSpreadsheet>();
 
   switch (wmn->category) {
     case NC_SCENE: {
@@ -738,7 +738,10 @@ static void spreadsheet_blend_read_data(BlendDataReader *reader, SpaceLink *sl)
 
 static void spreadsheet_blend_write(BlendWriter *writer, SpaceLink *sl)
 {
-  writer->write_struct_cast<SpaceSpreadsheet>(sl);
+  writer->write_struct_cast<SpaceSpreadsheet>(
+      sl, [](BlendStructWriter<SpaceSpreadsheet> &struct_writer) {
+        struct_writer.shallow_data.runtime = nullptr;
+      });
   SpaceSpreadsheet *sspreadsheet = reinterpret_cast<SpaceSpreadsheet *>(sl);
 
   for (SpreadsheetRowFilter &row_filter : sspreadsheet->row_filters) {
@@ -756,7 +759,7 @@ static void spreadsheet_blend_write(BlendWriter *writer, SpaceLink *sl)
 
 static void spreadsheet_cursor(wmWindow *win, ScrArea *area, ARegion *region)
 {
-  SpaceSpreadsheet &sspreadsheet = *static_cast<SpaceSpreadsheet *>(area->spacedata.first);
+  SpaceSpreadsheet &sspreadsheet = *area->spacedata.first_as<SpaceSpreadsheet>();
 
   const int2 cursor_re{win->runtime->eventstate->xy[0] - region->winrct.xmin,
                        win->runtime->eventstate->xy[1] - region->winrct.ymin};
@@ -835,6 +838,7 @@ void register_spacetype()
   /* regions: right panel buttons */
   art = MEM_new_zeroed<ARegionType>("spacetype spreadsheet right region");
   art->regionid = RGN_TYPE_UI;
+  art->flag = ARegionTypeFlag::UsePanelCategoriesSearch;
   art->prefsizex = UI_SIDEBAR_PANEL_WIDTH;
   art->keymapflag = ED_KEYMAP_UI | ED_KEYMAP_FRAMES;
   art->lock = REGION_DRAW_LOCK_ALL;

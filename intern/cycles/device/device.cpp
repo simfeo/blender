@@ -281,7 +281,7 @@ vector<DeviceInfo> Device::available_devices(const uint mask)
       {
         device_optix_info(cuda_devices(), optix_devices());
         for (DeviceInfo &info : optix_devices()) {
-          info.meets_driver_requirement = meets_nvidia_driver_requirement;
+          info.meets_driver_requirement &= meets_nvidia_driver_requirement;
         }
       }
       else {
@@ -508,7 +508,7 @@ DeviceInfo Device::get_multi_device(const vector<DeviceInfo> &subdevices,
 
     /* Accumulate device info. */
     info.has_nanovdb &= device.has_nanovdb;
-    info.has_mnee_ &= device.has_mnee();
+    info.has_mnee_ &= device.has_mnee_;
     info.has_osl &= device.has_osl;
     info.has_guiding &= device.has_guiding;
     info.has_profiling &= device.has_profiling;
@@ -779,7 +779,6 @@ GPUDevice::Mem *GPUDevice::generic_alloc(device_memory &mem, const size_t pitch_
   if ((!mem.move_to_host && (size + headroom) < free) || (mem.type == MEM_DEVICE_ONLY)) {
     mem_alloc_result = alloc_device(device_pointer, size);
     if (mem_alloc_result) {
-      device_mem_in_use += size;
       status = " in device memory";
     }
   }
@@ -889,7 +888,6 @@ void GPUDevice::generic_free(device_memory &mem)
   else {
     /* Free device memory. */
     free_device((void *)mem.device_pointer);
-    device_mem_in_use -= mem.device_size;
   }
 
   stats.mem_free(mem.device_size);

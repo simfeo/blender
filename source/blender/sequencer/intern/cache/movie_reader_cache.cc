@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup sequencer
+ */
+
 #include "movie_reader_cache.hh"
 
 #include <atomic>
@@ -16,7 +20,6 @@
 
 #include "BLI_mutex.hh"
 #include "BLI_path_utils.hh"
-#include "BLI_string.hh"
 #include "BLI_vector.hh"
 
 #include "BKE_main.hh"
@@ -25,6 +28,7 @@
 
 #include "SEQ_sequencer.hh"
 
+#include "IMB_colormanagement.hh"
 #include "IMB_imbuf.hh"
 
 #include "MOV_read.hh"
@@ -38,6 +42,20 @@ namespace blender::seq {
  * scene renders inherit it without concurrent renders (e.g. prefetch) changing it. */
 static std::atomic<uint64_t> next_timestamp = 0;
 static thread_local uint64_t current_timestamp = 0;
+
+/* Give each rendering thread a unique owner id. Concurrent renders must not share the same movie
+ * reader because it holds a single decode position. Attempt to reuse same reader could lead to
+ * forcing seek for each decode yielding poor performance. */
+static std::atomic<int> next_owner = 0;
+static thread_local int current_owner = 0;
+
+static uint64_t current_owner_get()
+{
+  if (current_owner == 0) {
+    current_owner = next_owner.fetch_add(1, std::memory_order_relaxed) + 1;
+  }
+  return current_owner;
+}
 
 struct MovieReaderKey {
   std::string source_filepath;
@@ -56,6 +74,7 @@ struct MovieReaderCacheEntry {
   MovieReader *reader = nullptr;
   int frame_index = -1;
   uint64_t timestamp = 0;
+  uint64_t owner = 0;
   bool is_accessed = false;
   bool invalidated = false;
 
@@ -66,7 +85,7 @@ struct MovieReaderCacheEntry {
 };
 
 struct MovieReaderCache {
-  static constexpr int64_t max_entries = 8;
+  static constexpr int64_t max_entries = 16;
   static constexpr uint64_t stale_after_timestamps = 8;
   static constexpr int backward_seek_penalty = 32;
 
@@ -175,8 +194,9 @@ MovieReaderAccessor MovieReaderCache::acquire(const MovieReaderKey &key,
   MovieReaderCacheEntry *best = nullptr;
   int best_score = std::numeric_limits<int>::max();
 
+  const uint64_t owner = current_owner_get();
   for (const std::unique_ptr<MovieReaderCacheEntry> &candidate : entries_) {
-    if (candidate->is_accessed || candidate->invalidated ||
+    if (candidate->is_accessed || candidate->invalidated || candidate->owner != owner ||
         candidate->timestamp == timestamp_counter_ || !(candidate->key == key))
     {
       continue;
@@ -195,6 +215,7 @@ MovieReaderAccessor MovieReaderCache::acquire(const MovieReaderKey &key,
     }
     auto entry = std::make_unique<MovieReaderCacheEntry>();
     entry->key = key;
+    entry->owner = owner;
     best = entry.get();
     entries_.append(std::move(entry));
   }
@@ -234,6 +255,7 @@ MovieReaderAccessor MovieReaderCache::acquire_any(const MovieReaderKey &key)
   if (best == nullptr) {
     auto entry = std::make_unique<MovieReaderCacheEntry>();
     entry->key = key;
+    entry->owner = current_owner_get();
     best = entry.get();
     entries_.append(std::move(entry));
   }
@@ -260,11 +282,12 @@ void MovieReaderCache::reader_open(MovieReaderCacheEntry &entry)
   }
 
   const MovieReaderKey &key = entry.key;
-  char colorspace[IM_MAX_SPACE];
-  STRNCPY(colorspace, key.colorspace.c_str());
+  ColorManagedColorspaceSettings colorspace_settings;
+  IMB_colormanagement_colorspace_settings_set(&colorspace_settings, key.colorspace.c_str());
   const std::string &filepath = key.multiview_filepath.empty() ? key.source_filepath :
                                                                  key.multiview_filepath;
-  entry.reader = MOV_open_file(filepath.c_str(), key.flags, key.stream_index, true, colorspace);
+  entry.reader = MOV_open_file(
+      filepath.c_str(), key.flags, key.stream_index, true, &colorspace_settings);
   if (entry.reader == nullptr) {
     return;
   }

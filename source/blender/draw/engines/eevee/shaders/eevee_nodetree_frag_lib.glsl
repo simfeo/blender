@@ -7,6 +7,7 @@
 #pragma runtime_generated
 
 #include "eevee_geom_types_lib.bsl.hh"
+#include "eevee_light_data.bsl.hh"
 #include "eevee_nodetree_lib.bsl.hh"
 
 /* Loading of the attributes into GlobalData. */
@@ -17,25 +18,27 @@ void attrib_load(VolumePoint /*domain*/) {}
 #  define NODETREE_FUNCTIONS
 
 /* Material graph connected to the displacement output. */
-float3 nodetree_displacement()
+float3 nodetree_displacement([[resource_table]] KernelGlobals & /*kg*/, ShadingData & /*sd*/)
 {
   return float3(0.0f);
 }
 
 /* Material graph connected to the surface output. */
-Closure nodetree_surface(float /*closure_rand*/)
+Closure nodetree_surface([[resource_table]] KernelGlobals & /*kg*/,
+                         ShadingData & /*sd*/,
+                         float /*closure_rand*/)
 {
   return Closure(0);
 }
 
 /* Material graph connected to the volume output. */
-Closure nodetree_volume()
+Closure nodetree_volume([[resource_table]] KernelGlobals & /*kg*/, ShadingData & /*sd*/)
 {
   return Closure(0);
 }
 
 /* Material graph connected to the volume output. */
-float nodetree_thickness()
+float nodetree_thickness([[resource_table]] KernelGlobals & /*kg*/, ShadingData & /*sd*/)
 {
   return 0.1f;
 }

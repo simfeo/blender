@@ -96,7 +96,10 @@ function(file_suffix
   get_filename_component(_file_name_PATH ${file_name} PATH)
   get_filename_component(_file_name_NAME_WE ${file_name} NAME_WE)
   get_filename_component(_file_name_EXT ${file_name} EXT)
-  set(${file_name_new} "${_file_name_PATH}/${_file_name_NAME_WE}${file_suffix}${_file_name_EXT}" PARENT_SCOPE)
+  set(${file_name_new}
+    "${_file_name_PATH}/${_file_name_NAME_WE}${file_suffix}${_file_name_EXT}"
+    PARENT_SCOPE
+  )
 endfunction()
 
 # useful for adding debug suffix to library lists:
@@ -1166,7 +1169,9 @@ function(glsl_to_c
   add_custom_command(
     OUTPUT  ${_file_tmp} ${_file_meta} ${_file_info} ${_file_dep}
     DEPFILE ${_file_dep}
-    COMMAND ${SHADER_TOOL_EXECUTABLE} ${_file_from} ${_file_tmp} ${_file_meta} ${_file_info} ${_file_dep} ${_inc_list}
+    COMMAND
+      ${SHADER_TOOL_EXECUTABLE}
+      ${_file_from} ${_file_tmp} ${_file_meta} ${_file_info} ${_file_dep} ${_inc_list}
     DEPENDS ${_file_from} ${SHADER_TOOL_DEPENDENCY})
 
   add_custom_command(
@@ -1637,9 +1642,13 @@ function(compile_sources_as_cpp
 
   if(WIN32)
     foreach(glsl_file ${sources})
+      get_filename_component(_glsl_file_dir "${glsl_file}" DIRECTORY)
+      get_filename_component(_glsl_file_name "${glsl_file}" NAME)
+      cmake_path(APPEND _glsl_file_dir "${library}_${_glsl_file_name}.cc" OUTPUT_VARIABLE _glsl_file_cc)
+
       cmake_path(SET _file_from NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/${glsl_file}")
-      cmake_path(SET _file_to   NORMALIZE "${CMAKE_CURRENT_BINARY_DIR}/${glsl_file}.cc")
-      file(WRITE "${_file_to}" "#include \"${_file_from}\"\n")
+      cmake_path(SET _file_to   NORMALIZE "${CMAKE_CURRENT_BINARY_DIR}/${_glsl_file_cc}")
+      file(GENERATE OUTPUT "${_file_to}" CONTENT "#include \"${_file_from}\"\n")
       list(APPEND sources ${_file_to})
       # Mark the original file as header only, so no attempt will be made at compiling it
       # regardless of extention.

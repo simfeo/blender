@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup draw
+ */
+
 #include "subdiv_lib.glsl"
 
 COMPUTE_SHADER_CREATE_INFO(subdiv_custom_data_interp_4d_f32)
@@ -36,10 +40,10 @@ Vertex read_vertex(uint index)
     uint xy = src_data[base_index];
     uint zw = src_data[base_index + 1];
 
-    float x = float((xy >> 16) & 0xffff) / 65535.0f;
-    float y = float(xy & 0xffff) / 65535.0f;
-    float z = float((zw >> 16) & 0xffff) / 65535.0f;
-    float w = float(zw & 0xffff) / 65535.0f;
+    float x = float((xy >> 16) & 0xFFFFu) / 65535.0f;
+    float y = float(xy & 0xFFFFu) / 65535.0f;
+    float z = float((zw >> 16) & 0xFFFFu) / 65535.0f;
+    float w = float(zw & 0xFFFFu) / 65535.0f;
 
     result.vertex_data[0] = x;
     result.vertex_data[1] = y;

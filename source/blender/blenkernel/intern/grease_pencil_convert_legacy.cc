@@ -18,9 +18,9 @@
 #include "BKE_curves.hh"
 #include "BKE_deform.hh"
 #include "BKE_fcurve.hh"
-#include "BKE_gpencil_modifier_legacy.h"
 #include "BKE_grease_pencil.hh"
 #include "BKE_grease_pencil_legacy_convert.hh"
+#include "BKE_grease_pencil_modifiers.h"
 #include "BKE_idprop.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_lib_remap.hh"
@@ -52,7 +52,7 @@
 #include "DNA_anim_types.h"
 #include "DNA_brush_types.h"
 #include "DNA_gpencil_legacy_types.h"
-#include "DNA_gpencil_modifier_types.h"
+#include "DNA_grease_pencil_modifier_types.h"
 #include "DNA_grease_pencil_types.h"
 #include "DNA_meshdata_types.h"
 #include "DNA_modifier_types.h"
@@ -225,8 +225,10 @@ class AnimDataConvertor {
   using FCurveCallback = bool(bAction *owner_action, FCurve &fcurve);
   using ActionCallback = bool(bAction &action);
 
-  /** \return True if this AnimDataConvertor is valid, i.e. can be used to process animation data
-   * from source ID. */
+  /**
+   * \return True if this AnimDataConvertor is valid, i.e. can be used to process animation data
+   * from source ID.
+   */
   bool is_valid() const
   {
     return this->animdata_src != nullptr;
@@ -1514,7 +1516,7 @@ static ModifierData &legacy_object_modifier_common(ConversionData &conversion_da
 
   if (mti->flags & eModifierTypeFlag_RequiresOriginalData) {
     ModifierData *md;
-    for (md = static_cast<ModifierData *>(object.modifiers.first);
+    for (md = object.modifiers.first();
          md && BKE_modifier_get_info(md->type)->type == ModifierTypeType::OnlyDeform;
          md = md->next)
     {
@@ -2880,7 +2882,7 @@ static void legacy_object_modifiers(ConversionData &conversion_data, Object &obj
         break;
     }
 
-    BKE_gpencil_modifier_free_ex(gpd_md, 0);
+    BKE_grease_pencil_modifier_free_ex(gpd_md, 0);
   }
 }
 

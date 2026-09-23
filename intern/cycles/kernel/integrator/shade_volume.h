@@ -737,7 +737,7 @@ ccl_device void volume_shadow_null_scattering(KernelGlobals kg,
   }
 }
 
-/* Equi-angular sampling as in:
+/* Equiangular sampling as in:
  * "Importance Sampling Techniques for Path Tracing in Participating Media" */
 
 /* Below this pdf we ignore samples, as they tend to lead to very long distances.
@@ -2635,6 +2635,7 @@ ccl_device_forceinline bool integrate_volume_phase_scatter(
     label = volume_shader_phase_guided_sample(kg,
                                               state,
                                               sd,
+                                              phases,
                                               svc,
                                               rand_phase,
                                               &phase_eval,
@@ -2653,7 +2654,7 @@ ccl_device_forceinline bool integrate_volume_phase_scatter(
 #  endif
   {
     label = volume_shader_phase_sample(
-        sd, svc, rand_phase, &phase_eval, &phase_wo, &phase_pdf, &sampled_roughness);
+        sd, phases, svc, rand_phase, &phase_eval, &phase_wo, &phase_pdf, &sampled_roughness);
 
     if (phase_pdf == 0.0f || bsdf_eval_is_zero(&phase_eval)) {
       return false;
@@ -2741,8 +2742,8 @@ volume_integrate_event(KernelGlobals kg,
   const uint32_t path_flag = INTEGRATOR_STATE(state, path, flag);
   const float continuation_probability = (path_flag & PATH_RAY_TERMINATE_IN_NEXT_VOLUME) ?
                                              0.0f :
-                                             INTEGRATOR_STATE(
-                                                 state, path, continuation_probability);
+                                             float(INTEGRATOR_STATE(
+                                                 state, path, continuation_probability));
   if (continuation_probability == 0.0f) {
     return VOLUME_PATH_MISSED;
   }

@@ -361,7 +361,7 @@ void ED_clip_update_frame(const Main *mainp, int cfra)
 
       for (ScrArea &area : screen->areabase) {
         if (area.spacetype == SPACE_CLIP) {
-          SpaceClip *sc = static_cast<SpaceClip *>(area.spacedata.first);
+          SpaceClip *sc = area.spacedata.first_as<SpaceClip>();
 
           sc->scopes.ok = false;
 
@@ -866,7 +866,7 @@ static void prefetch_task_func(TaskPool *__restrict pool, void *task_data)
     MovieClipUser user = {};
     ImBufFlags flag = ImBufFlags::ByteData | ImBufFlags::AlphaDetect | ImBufFlags::Metadata;
     int result;
-    char *colorspace_name = nullptr;
+    ColorManagedColorspaceSettings *colorspace_settings = nullptr;
     const bool use_proxy = (clip->flag & MCLIP_USE_PROXY) &&
                            (queue->render_size != MCLIP_PROXY_RENDER_SIZE_FULL);
 
@@ -876,10 +876,11 @@ static void prefetch_task_func(TaskPool *__restrict pool, void *task_data)
 
     /* Proxies are stored in the display space. */
     if (!use_proxy) {
-      colorspace_name = clip->colorspace_settings.name;
+      colorspace_settings = &clip->colorspace_settings;
     }
 
-    ibuf = IMB_load_image_from_memory(mem, size, flag, "prefetch frame", nullptr, colorspace_name);
+    ibuf = IMB_load_image_from_memory(
+        mem, size, flag, "prefetch frame", nullptr, colorspace_settings);
     if (ibuf == nullptr) {
       continue;
     }

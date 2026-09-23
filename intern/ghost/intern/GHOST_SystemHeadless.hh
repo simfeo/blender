@@ -125,16 +125,16 @@ class GHOST_SystemHeadless : public GHOST_System {
       case GHOST_kDrawingContextTypeVulkan: {
 #  if defined(WITH_GHOST_SDL)
         GHOST_Context *context = new GHOST_ContextVK(
-            context_params_offscreen, nullptr, 1, 2, gpu_settings.preferred_device);
+            context_params_offscreen, nullptr, 1, 1, gpu_settings.preferred_device);
 #  elif defined(_WIN32)
         GHOST_Context *context = new GHOST_ContextVK(
-            context_params_offscreen, (HWND)0, 1, 2, gpu_settings.preferred_device);
+            context_params_offscreen, (HWND)0, 1, 1, gpu_settings.preferred_device);
 #  elif defined(__APPLE__)
         GHOST_Context *context = new GHOST_ContextVK(
-            context_params_offscreen, nullptr, 1, 2, gpu_settings.preferred_device);
+            context_params_offscreen, nullptr, 1, 1, gpu_settings.preferred_device);
 #  elif defined(__ANDROID__)
         GHOST_Context *context = new GHOST_ContextVK(
-            context_params_offscreen, (ANativeWindow *)nullptr, 1, 2, gpu_settings.preferred_device);
+            context_params_offscreen, (ANativeWindow *)nullptr, 1, 1, gpu_settings.preferred_device);
 #  else
         GHOST_Context *context = new GHOST_ContextVK(context_params_offscreen,
                                                      GHOST_kVulkanPlatformHeadless,
@@ -144,7 +144,7 @@ class GHOST_SystemHeadless : public GHOST_System {
                                                      nullptr,
                                                      nullptr,
                                                      1,
-                                                     2,
+                                                     1,
                                                      gpu_settings.preferred_device);
 #  endif
         if (context->initializeDrawingContext()) {

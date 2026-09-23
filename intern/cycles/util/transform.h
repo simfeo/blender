@@ -670,11 +670,12 @@ ccl_device_inline bool operator==(const DecomposedTransform &A, const Decomposed
   return memcmp(&A, &B, sizeof(DecomposedTransform)) == 0;
 }
 
+/* NOTE: quaternion (w, x, y, z) is stored as float4(x, y, z, w). */
 float4 transform_to_quat(const Transform &tfm);
 void transform_motion_decompose(DecomposedTransform *decomp,
                                 const Transform *motion,
                                 const size_t size);
-Transform transform_from_viewplane(BoundBox2D &viewplane);
+Transform transform_from_viewplane(const BoundBox2D &viewplane);
 
 #endif
 

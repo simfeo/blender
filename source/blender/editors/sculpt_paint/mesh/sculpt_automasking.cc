@@ -160,7 +160,7 @@ static bool is_constrained_by_radius(const Brush *br)
   return false;
 }
 
-/* Fetch the propogation_steps value, preferring the brush level value over the global sculpt tool
+/* Fetch the propagation_steps value, preferring the brush level value over the global sculpt tool
  * value. */
 static int boundary_propagation_steps(const Paint &paint, const Brush *brush)
 {
@@ -949,9 +949,7 @@ void calc_grids_factors(const Depsgraph &depsgraph,
       }
 
       if (automasking.settings.flags & BRUSH_AUTOMASKING_FACE_SETS) {
-        if (automasking.settings.initial_face_set != face_set_none_id &&
-            grid_face_set != automasking.settings.initial_face_set)
-        {
+        if (!ELEM(automasking.settings.initial_face_set, face_set_none_id, grid_face_set)) {
           factors[node_vert] = 0.0f;
           continue;
         }

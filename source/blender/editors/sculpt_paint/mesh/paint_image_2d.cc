@@ -158,7 +158,7 @@ static BrushPainter *brush_painter_2d_new(Scene *scene,
   painter->scene = scene;
   painter->paint = paint;
   if (BKE_brush_color_jitter_get_settings(paint, brush)) {
-    painter->initial_hsv_jitter = seed_hsv_jitter();
+    painter->initial_hsv_jitter = BKE_paint_seed_hsv_jitter();
   }
   painter->firsttouch = true;
   painter->cache_invert = invert;
@@ -1269,15 +1269,16 @@ static void paint_2d_do_making_brush(ImagePaintState *s,
       int origx = region->destx - tx * ED_IMAGE_UNDO_TILE_SIZE;
       int origy = region->desty - ty * ED_IMAGE_UNDO_TILE_SIZE;
 
-      if (const ImBuf *data = ED_image_paint_tile_find(
-              undo_tiles, s->image, tile->canvas, &tile->iuser, tx, ty, &mask, false))
-      {
-        if (tile->canvas->float_data()) {
-          tmpbuf.float_buffer = data->float_buffer;
-        }
-        else {
-          tmpbuf.byte_buffer = data->byte_buffer;
-        }
+      const ImBuf *data = ED_image_paint_tile_find(
+          undo_tiles, s->image, tile->canvas, &tile->iuser, tx, ty, &mask, false);
+      if (data == nullptr) {
+        continue;
+      }
+      if (tile->canvas->float_data()) {
+        tmpbuf.float_buffer = data->float_buffer;
+      }
+      else {
+        tmpbuf.byte_buffer = data->byte_buffer;
       }
 
       IMB_rectblend(tile->canvas,
@@ -1707,9 +1708,7 @@ void *paint_2d_new_stroke(bContext *C, wmOperator *op, const BrushStrokeMode mod
   /* Initialize offsets here, they're needed for the uv space clip test before lazy-loading the
    * tile properly. */
   int tile_idx = 0;
-  for (ImageTile *tile = static_cast<ImageTile *>(s->image->tiles.first); tile;
-       tile = tile->next, tile_idx++)
-  {
+  for (ImageTile *tile = s->image->tiles.first(); tile; tile = tile->next, tile_idx++) {
     s->tiles[tile_idx].iuser.tile = tile->tile_number;
     s->tiles[tile_idx].uv_origin[0] = ((tile->tile_number - 1001) % 10);
     s->tiles[tile_idx].uv_origin[1] = ((tile->tile_number - 1001) / 10);
@@ -1780,7 +1779,7 @@ void paint_2d_redraw(const bContext *C, void *ps, bool final)
   }
 }
 
-void paint_2d_stroke_done(void *ps)
+void paint_2d_stroke_done(void *ps, wmPaintCursor *cursor)
 {
   ImagePaintState *s = static_cast<ImagePaintState *>(ps);
 
@@ -1793,6 +1792,7 @@ void paint_2d_stroke_done(void *ps)
   paint_brush_exit_tex(s->brush);
 
   MEM_delete(s);
+  WM_paint_cursor_end(cursor);
 }
 
 static void paint_2d_fill_add_pixel_byte(const int x_px,

@@ -267,7 +267,7 @@ bool iter_other(Main *bmain,
     Object *ob;
     int totfound = include_orig ? 0 : 1;
 
-    for (ob = static_cast<Object *>(bmain->objects.first); ob && totfound < users;
+    for (ob = bmain->objects.first(); ob && totfound < users;
          ob = reinterpret_cast<Object *>(ob->id.next))
     {
       if (((ob != orig_ob) || include_orig) && (ob->data == orig_ob->data)) {
@@ -395,7 +395,7 @@ bool modifier_remove(ReportList *reports, Main *bmain, Scene *scene, Object *ob,
 
 void modifiers_clear(Main *bmain, Scene *scene, Object *ob)
 {
-  ModifierData *md = static_cast<ModifierData *>(ob->modifiers.first);
+  ModifierData *md = ob->modifiers.first();
   bool sort_depsgraph = false;
 
   if (!md) {
@@ -805,7 +805,7 @@ static Mesh *create_applied_mesh_for_modifier(Depsgraph *depsgraph,
     VirtualModifierData virtual_modifier_data;
     for (ModifierData *md_eval_virt =
              BKE_modifiers_get_virtual_modifierlist(ob_eval, &virtual_modifier_data);
-         md_eval_virt && (md_eval_virt != ob_eval->modifiers.first);
+         md_eval_virt && (md_eval_virt != ob_eval->modifiers.first_);
          md_eval_virt = md_eval_virt->next)
     {
       if (!BKE_modifier_is_enabled(scene, md_eval_virt, eModifierMode_Realtime)) {
@@ -1241,7 +1241,7 @@ static bool modifier_apply_obdata(ReportList *reports,
   }
 
   /* lattice modifier can be applied to particle system too */
-  if (ob->particlesystem.first) {
+  if (ob->particlesystem.first_) {
     for (ParticleSystem &psys : ob->particlesystem) {
       if (psys.part->type != PART_HAIR) {
         continue;
@@ -1281,7 +1281,7 @@ bool modifier_apply(Main *bmain,
     return false;
   }
 
-  if (md != ob->modifiers.first) {
+  if (md != ob->modifiers.first_) {
     BKE_report(reports, RPT_INFO, "Applied modifier was not first, result may not be as expected");
   }
 
@@ -2558,10 +2558,10 @@ void OBJECT_OT_modifiers_copy_to_selected(wmOperatorType *ot)
 static void modifier_skin_customdata_delete(Object *ob)
 {
   Mesh *mesh = id_cast<Mesh *>(ob->data);
-  if (BMEditMesh *em = mesh->runtime->edit_mesh.get()) {
-    BM_data_layer_free_named(em->bm, &em->bm->vdata, "skin_modifier_radius");
-    BM_data_layer_free_named(em->bm, &em->bm->vdata, "skin_modifier_root");
-    BM_data_layer_free_named(em->bm, &em->bm->vdata, "skin_modifier_loose");
+  if (BMesh *bm = BKE_editmesh_bmesh_get_for_write(mesh)) {
+    BM_data_layer_free_named(bm, &bm->vdata, "skin_modifier_radius");
+    BM_data_layer_free_named(bm, &bm->vdata, "skin_modifier_root");
+    BM_data_layer_free_named(bm, &bm->vdata, "skin_modifier_loose");
   }
   else {
     mesh->attributes_for_write().remove("skin_modifier_radius");
@@ -2607,8 +2607,7 @@ static wmOperatorStatus skin_root_mark_exec(bContext *C, wmOperator * /*op*/)
 {
   PointerRNA ptr = edit_modifier_ptr_get(C, RNA_SkinModifier);
   Object *ob = edit_modifier_object_get(C, ptr);
-  BMEditMesh *em = BKE_editmesh_from_object(ob);
-  BMesh *bm = em->bm;
+  BMesh *bm = BKE_editmesh_bmesh_get_for_write(ob);
 
   Set<BMVert *> visited;
 
@@ -2657,8 +2656,7 @@ static wmOperatorStatus skin_loose_mark_clear_exec(bContext *C, wmOperator *op)
 {
   PointerRNA ptr = edit_modifier_ptr_get(C, RNA_SkinModifier);
   Object *ob = edit_modifier_object_get(C, ptr);
-  BMEditMesh *em = BKE_editmesh_from_object(ob);
-  BMesh *bm = em->bm;
+  BMesh *bm = BKE_editmesh_bmesh_get_for_write(ob);
   SkinLooseAction action = static_cast<SkinLooseAction>(RNA_enum_get(op->ptr, "action"));
 
   if (!CustomData_has_layer_named(&bm->vdata, CD_PROP_FLOAT2, "skin_modifier_radius")) {
@@ -2715,8 +2713,7 @@ static wmOperatorStatus skin_radii_equalize_exec(bContext *C, wmOperator * /*op*
 {
   PointerRNA ptr = edit_modifier_ptr_get(C, RNA_SkinModifier);
   Object *ob = edit_modifier_object_get(C, ptr);
-  BMEditMesh *em = BKE_editmesh_from_object(ob);
-  BMesh *bm = em->bm;
+  BMesh *bm = BKE_editmesh_bmesh_get_for_write(ob);
 
   const int cd_skin_radius_offset = CustomData_get_offset_named(
       &bm->vdata, CD_PROP_FLOAT2, "skin_modifier_radius");

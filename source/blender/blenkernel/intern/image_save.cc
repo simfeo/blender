@@ -106,7 +106,8 @@ bool BKE_image_save_options_init(ImageSaveOptions *opts,
 
     /* Default to saving in the same colorspace as the image setting. */
     if (!opts->save_as_render) {
-      STRNCPY_UTF8(opts->im_format.linear_colorspace_settings.name, ima_colorspace);
+      IMB_colormanagement_colorspace_settings_set(&opts->im_format.linear_colorspace_settings,
+                                                  ima_colorspace);
     }
 
     opts->im_format.color_management = R_IMF_COLOR_MANAGEMENT_FOLLOW_SCENE;
@@ -199,7 +200,8 @@ void BKE_image_save_options_update(ImageSaveOptions *opts, const Image *image)
              BKE_imtype_requires_linear_float(opts->orig_imtype))
     {
       /* Same type of colorspace needed as original image, so preserve that. */
-      STRNCPY(opts->im_format.linear_colorspace_settings.name, opts->orig_colorspace);
+      IMB_colormanagement_colorspace_settings_set(&opts->im_format.linear_colorspace_settings,
+                                                  opts->orig_colorspace);
     }
     else {
       /* Update for different file format. */
@@ -300,7 +302,8 @@ static void image_save_post(ReportList *reports,
     if (colorspace) {
       StringRefNull colorspace_name = IMB_colormanagement_colorspace_get_name(colorspace);
       if (colorspace_name != ima->colorspace_settings.name) {
-        STRNCPY(ima->colorspace_settings.name, colorspace_name.c_str());
+        IMB_colormanagement_colorspace_settings_set(&ima->colorspace_settings,
+                                                    colorspace_name.c_str());
       }
     }
 
@@ -910,7 +913,7 @@ bool BKE_image_render_write_exr(ReportList *reports,
   }
 
   /* First add views since IMB_exr_add_channels checks number of views. */
-  const RenderView *first_rview = static_cast<const RenderView *>(rr->views.first);
+  const RenderView *first_rview = rr->views.first();
   if (first_rview && (first_rview->next || first_rview->name[0])) {
     for (RenderView &rview : rr->views) {
       if (!view || STREQ(view, rview.name)) {
@@ -1156,9 +1159,7 @@ bool BKE_image_render_write(ReportList *reports,
   /* mono, legacy code */
   else if (is_mono || (image_format.views_format == R_IMF_VIEWS_INDIVIDUAL)) {
     int view_id = 0;
-    for (const RenderView *rv = static_cast<const RenderView *>(rr->views.first); rv;
-         rv = rv->next, view_id++)
-    {
+    for (const RenderView *rv = rr->views.first(); rv; rv = rv->next, view_id++) {
       char filepath[FILE_MAX];
       if (is_mono) {
         STRNCPY(filepath, filepath_basis);

@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup shdnodes
+ */
+
 #include "node_shader_util.hh"
 
 #include "BLI_string.hh"
@@ -104,7 +108,7 @@ static int node_shader_gpu_volume_scatter(GPUMaterial *mat,
      * `extinction = scattering + absorption`. */
     GPU_material_flag_set(mat, GPU_MATFLAG_VOLUME_SCATTER | GPU_MATFLAG_VOLUME_ABSORPTION);
   }
-  return GPU_stack_link(mat, node, "node_volume_scatter", in, out);
+  return GPU_stack_link(mat, node, "node_volume_scatter", in, out, GPU_shading_data());
 }
 
 #undef SOCK_COLOR_ID

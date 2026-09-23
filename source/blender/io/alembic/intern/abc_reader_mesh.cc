@@ -120,9 +120,11 @@ static void assign_materials(Main *bmain,
 
 } /* namespace utils */
 
-/** This utility structure holds mesh data arrays which are common between the IPolyMeshSchema and
+/**
+ * This utility structure holds mesh data arrays which are common between the IPolyMeshSchema and
  * the ISubDSchema. As those schemas do not derive from one another, this structure is used to read
- * mesh data generically. */
+ * mesh data generically.
+ */
 struct AbcMeshData {
   StringRef iobject_full_name;
   StringRef schema_name;
@@ -809,6 +811,9 @@ void AbcMeshReader::readObjectData(Main *bmain, const Alembic::Abc::ISampleSelec
   if (m_settings->always_add_cache_reader || has_animations(m_schema, m_settings)) {
     addCacheModifier();
   }
+
+  ICompoundProperty user_props = m_schema.getUserProperties();
+  read_active_and_default_color_attributes(*mesh, user_props, sample_sel);
 }
 
 bool AbcMeshReader::accepts_object_type(
@@ -1151,6 +1156,9 @@ void AbcSubDReader::readObjectData(Main *bmain, const Alembic::Abc::ISampleSelec
   }
 
   add_subdiv_modifier();
+
+  ICompoundProperty user_props = m_schema.getUserProperties();
+  read_active_and_default_color_attributes(*mesh, user_props, sample_sel);
 }
 
 bool AbcSubDReader::topology_changed(const Mesh *existing_mesh, const ISampleSelector &sample_sel)

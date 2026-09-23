@@ -19,6 +19,7 @@
 #include "BKE_layer.hh"
 #include "BKE_main.hh"
 #include "BKE_report.hh"
+#include "BKE_scene.hh"
 
 #include "DEG_depsgraph.hh"
 
@@ -183,6 +184,28 @@ void relations_invalidate_cache(Scene *scene, Strip *strip)
   prefetch_stop(scene);
 }
 
+void relations_tag_temporary_animation_frame(Scene *scene)
+{
+  Editing *ed = editing_get(scene);
+  if (ed != nullptr) {
+    ed->runtime->temporary_animation_frame = BKE_scene_frame_get(scene);
+  }
+}
+
+void relations_invalidate_temporary_animation_frame(Scene *scene)
+{
+  Editing *ed = editing_get(scene);
+  if (ed == nullptr || !ed->runtime->temporary_animation_frame.has_value()) {
+    return;
+  }
+
+  const float temp_frame = ed->runtime->temporary_animation_frame.value();
+  if (temp_frame != BKE_scene_frame_get(scene)) {
+    final_image_cache_invalidate_frame_range(scene, temp_frame, temp_frame);
+    ed->runtime->temporary_animation_frame.reset();
+  }
+}
+
 void relations_invalidate_scene_strips(const Main *bmain, const Scene *scene_target)
 {
   for (Scene &scene : bmain->scenes) {
@@ -238,13 +261,12 @@ static void invalidate_movieclip_strips(Scene *scene,
                                         MovieClip *clip_target,
                                         ListBaseT<Strip> *seqbase)
 {
-  for (Strip *strip = static_cast<Strip *>(seqbase->first); strip != nullptr; strip = strip->next)
-  {
+  for (Strip *strip = seqbase->first(); strip != nullptr; strip = strip->next) {
     if (strip->clip == clip_target) {
       relations_invalidate_cache_raw(scene, strip);
     }
 
-    if (strip->seqbase.first != nullptr) {
+    if (strip->seqbase.first_ != nullptr) {
       invalidate_movieclip_strips(scene, clip_target, &strip->seqbase);
     }
   }
@@ -252,7 +274,7 @@ static void invalidate_movieclip_strips(Scene *scene,
 
 void relations_invalidate_movieclip_strips(Main *bmain, MovieClip *clip_target)
 {
-  for (Scene *scene = static_cast<Scene *>(bmain->scenes.first); scene != nullptr;
+  for (Scene *scene = bmain->scenes.first(); scene != nullptr;
        scene = static_cast<Scene *>(scene->id.next))
   {
     if (scene->ed != nullptr) {
@@ -293,6 +315,18 @@ void relations_free_imbuf(Scene *scene, ListBaseT<Strip> *seqbase, bool for_rend
        * but do recurse protection somehow! */
     }
   }
+}
+
+void relations_refresh_all(Scene *scene)
+{
+  Editing *ed = editing_get(scene);
+  if (ed == nullptr) {
+    return;
+  }
+
+  relations_free_imbuf(scene, &ed->seqbase, false);
+  media_presence_free(scene);
+  cache_cleanup(scene, CacheCleanup::All);
 }
 
 static Strip *sequencer_check_scene_recursion(Scene *scene, ListBaseT<Strip> *seqbase)

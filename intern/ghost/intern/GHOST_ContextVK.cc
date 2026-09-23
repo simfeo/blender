@@ -63,6 +63,7 @@
 #include <cassert>
 #include <cinttypes>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <mutex>
@@ -227,9 +228,6 @@ class GHOST_DeviceVK {
   VkPhysicalDeviceProperties2 properties = {
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
   };
-  VkPhysicalDeviceVulkan12Properties properties_12 = {
-      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES,
-  };
   VkPhysicalDeviceDriverProperties device_driver_properties = {
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES,
   };
@@ -256,8 +254,7 @@ class GHOST_DeviceVK {
       : vk_physical_device(vk_physical_device),
         use_vk_ext_swapchain_colorspace(use_vk_ext_swapchain_colorspace)
   {
-    properties.pNext = &properties_12;
-    properties_12.pNext = &device_driver_properties;
+    properties.pNext = &device_driver_properties;
     volk::vkGetPhysicalDeviceProperties2(vk_physical_device, &properties);
 
     features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -346,7 +343,7 @@ class GHOST_DeviceVK {
   void init_memory_allocator(VkInstance vk_instance)
   {
     VmaAllocatorCreateInfo vma_allocator_create_info = {};
-    vma_allocator_create_info.vulkanApiVersion = VK_API_VERSION_1_2;
+    vma_allocator_create_info.vulkanApiVersion = VK_API_VERSION_1_1;
     vma_allocator_create_info.physicalDevice = vk_physical_device;
     vma_allocator_create_info.device = vk_device;
     vma_allocator_create_info.instance = vk_instance;
@@ -380,6 +377,21 @@ struct GHOST_InstanceVK {
 
   GHOST_InstanceVK()
   {
+    /* volk is initialized in vk_instance_create_for_platform_checks during Vulkan backend support
+     * detection when not skipped via "--debug-gpu-backend-no-fallback". So only initialize it here
+     * as needed. */
+    if (volk::vkGetInstanceProcAddr == nullptr) {
+      VkResult vk_result = volkInitialize();
+      if (vk_result != VK_SUCCESS) {
+        CLOG_ERROR(
+            &LOG,
+            "Error initializing Vulkan loader: VkResult=%d, most likely cannot find the Vulkan "
+            "Loader provided by GPU driver/OS.",
+            vk_result);
+        /* Not recoverable when using "--debug-gpu-backend-no-fallback". */
+        exit(EXIT_FAILURE);
+      }
+    }
     init_extensions();
   }
 
@@ -618,8 +630,10 @@ struct GHOST_InstanceVK {
      *
      * Ref #151103
      */
-    const bool is_amd_driver = device.properties_12.driverID == VK_DRIVER_ID_AMD_PROPRIETARY ||
-                               device.properties_12.driverID == VK_DRIVER_ID_AMD_OPEN_SOURCE;
+    const bool is_amd_driver = device.device_driver_properties.driverID ==
+                                   VK_DRIVER_ID_AMD_PROPRIETARY ||
+                               device.device_driver_properties.driverID ==
+                                   VK_DRIVER_ID_AMD_OPEN_SOURCE;
     if (is_amd_driver && is_debug) {
       device.extensions.disable(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME);
       device.extensions.disable(VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME);
@@ -633,7 +647,7 @@ struct GHOST_InstanceVK {
      *
      * Ref: #147721
      */
-    if (device.properties_12.driverID == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS &&
+    if (device.device_driver_properties.driverID == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS &&
         device.properties.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
     {
       const uint32_t driver_version = device.properties.properties.driverVersion;
@@ -673,7 +687,6 @@ struct GHOST_InstanceVK {
      * reachable through GPU_BLEND_CUSTOM, which nothing selects. */
     device_features.shaderClipDistance = device.features.features.shaderClipDistance;
     device_features.fragmentStoresAndAtomics = VK_TRUE;
-    device_features.logicOp = device.features.features.logicOp;
     device_features.dualSrcBlend = device.features.features.dualSrcBlend;
     device_features.imageCubeArray = VK_TRUE;
     device_features.multiDrawIndirect = device.features.features.multiDrawIndirect;
@@ -690,12 +703,6 @@ struct GHOST_InstanceVK {
     device_create_info.pEnabledFeatures = &device_features;
 
     std::vector<void *> feature_struct_ptr;
-
-    /* Enable vulkan 11 features when supported on physical device. */
-    VkPhysicalDeviceVulkan11Features vulkan_11_features = {};
-    vulkan_11_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
-    vulkan_11_features.shaderDrawParameters = VK_TRUE;
-    feature_struct_ptr.push_back(&vulkan_11_features);
 
     /* Enable optional vulkan 12 features when supported on physical device. */
     VkPhysicalDeviceVulkan12Features vulkan_12_features = {};
@@ -1105,7 +1112,7 @@ GHOST_TSuccess GHOST_ContextVK::swapBufferAcquire()
     recreateSwapchain(use_hdr_swapchain);
   }
 
-  /* Acquiree next image, swapchain can be (or become) invalid when minimizing window. */
+  /* Acquire next image, swapchain can be (or become) invalid when minimizing window. */
   uint32_t image_index = 0;
   if (swapchain_ != VK_NULL_HANDLE) {
     /* Some platforms (NVIDIA/Wayland) can receive an out of date swapchain when acquiring the next
@@ -1911,6 +1918,7 @@ GHOST_TSuccess GHOST_ContextVK::initializeDrawingContext()
     vulkan_instance.emplace();
     GHOST_InstanceVK &instance_vk = vulkan_instance.value();
     instance_vk.extensions.enable(VK_EXT_DEBUG_UTILS_EXTENSION_NAME, true);
+    instance_vk.extensions.enable(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
 
     /* Some XR platforms load functions without knowing if they were replaced by a core
      * function. Monado for example always uses the extension functions. Due to maintenance changes
@@ -1923,7 +1931,6 @@ GHOST_TSuccess GHOST_ContextVK::initializeDrawingContext()
     instance_vk.extensions.enable(VK_KHR_EXTERNAL_FENCE_CAPABILITIES_EXTENSION_NAME);
     instance_vk.extensions.enable(VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME);
     instance_vk.extensions.enable(VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME);
-    instance_vk.extensions.enable(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
 
     /* SteamVR requests both NVIDIA and KHR rectified extension. */
     instance_vk.extensions.enable(VK_NV_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME, true);
@@ -2054,9 +2061,13 @@ GHOST_TSuccess GHOST_ContextVK::initializeDrawingContext()
      * The backend aliases the core function names to these in vk_device. */
     optional_device_extensions.append(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
     optional_device_extensions.append(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
+    optional_device_extensions.append(VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME);
+    optional_device_extensions.append(VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME);
+    optional_device_extensions.append(VK_KHR_SEPARATE_DEPTH_STENCIL_LAYOUTS_EXTENSION_NAME);
     optional_device_extensions.append(VK_KHR_DYNAMIC_RENDERING_LOCAL_READ_EXTENSION_NAME);
     optional_device_extensions.append(VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME);
     optional_device_extensions.append(VK_EXT_SHADER_STENCIL_EXPORT_EXTENSION_NAME);
+    optional_device_extensions.append(VK_EXT_SHADER_VIEWPORT_INDEX_LAYER_EXTENSION_NAME);
     optional_device_extensions.append(VK_KHR_MAINTENANCE_4_EXTENSION_NAME);
     optional_device_extensions.append(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME);
     optional_device_extensions.append(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);
@@ -2120,6 +2131,9 @@ GHOST_TSuccess GHOST_ContextVK::initializeDrawingContext()
     optional_device_extensions.append(VK_KHR_RAY_QUERY_EXTENSION_NAME);
     optional_device_extensions.append(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
     optional_device_extensions.append(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+    optional_device_extensions.append(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
+    optional_device_extensions.append(VK_KHR_SPIRV_1_4_EXTENSION_NAME);
+    optional_device_extensions.append(VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME);
 
     if (!instance_vk.select_physical_device(preferred_device_, required_device_extensions)) {
       return GHOST_kFailure;
@@ -2236,7 +2250,7 @@ GHOST_TSuccess GHOST_ContextVK::supportsWaylandColorManagement()
   }
 
   GHOST_DeviceVK &device_vk = vulkan_instance->device.value();
-  if (device_vk.properties_12.driverID != VK_DRIVER_ID_NVIDIA_PROPRIETARY) {
+  if (device_vk.device_driver_properties.driverID != VK_DRIVER_ID_NVIDIA_PROPRIETARY) {
     return GHOST_kSuccess;
   }
 

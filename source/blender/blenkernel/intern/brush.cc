@@ -608,6 +608,7 @@ IDTypeInfo IDType_ID_BR = {
     .foreach_cache = nullptr,
     .foreach_path = nullptr,
     .foreach_working_space_color = brush_foreach_working_space_color,
+    .foreach_asset_weak_reference = nullptr,
     .owner_pointer_get = nullptr,
 
     .blend_write = brush_blend_write,
@@ -965,17 +966,17 @@ void BKE_brush_curve_preset(Brush *b, eCurveMappingPreset preset)
   BKE_brush_tag_unsaved_changes(b);
 }
 
-const MTex *BKE_brush_mask_texture_get(const Brush *brush, const eObjectMode object_mode)
+const MTex *BKE_brush_mask_texture_get(const Brush *brush, const PaintMode paint_mode)
 {
-  if (object_mode == OB_MODE_SCULPT) {
+  if (ELEM(paint_mode, PaintMode::Sculpt, PaintMode::Vertex)) {
     return &brush->mtex;
   }
   return &brush->mask_mtex;
 }
 
-const MTex *BKE_brush_color_texture_get(const Brush *brush, const eObjectMode object_mode)
+const MTex *BKE_brush_color_texture_get(const Brush *brush, const PaintMode paint_mode)
 {
-  if (object_mode == OB_MODE_SCULPT) {
+  if (ELEM(paint_mode, PaintMode::Sculpt, PaintMode::Vertex)) {
     return &brush->mask_mtex;
   }
   return &brush->mtex;
@@ -1216,13 +1217,8 @@ float BKE_brush_sample_masktex(
 /** \name Unified Settings
  * \{ */
 
-bool BKE_brush_use_unified_size(const Paint *paint, const Brush *brush)
+bool BKE_brush_use_unified_size(const Paint * /*paint*/, const Brush *brush)
 {
-  /* For now, Grease Pencil Draw mode doesn't use the unified paint settings. */
-  if (paint->runtime->ob_mode == OB_MODE_PAINT_GREASE_PENCIL) {
-    return false;
-  }
-
   /* In the case of having no active brush (e.g. for non-brush tools), default to the scene level
    * settings */
   if (!brush) {
@@ -1232,13 +1228,8 @@ bool BKE_brush_use_unified_size(const Paint *paint, const Brush *brush)
   return brush->unified_paint_flags & BRUSH_USE_UNIFIED_PAINT_SIZE;
 }
 
-bool BKE_brush_use_unified_strength(const Paint *paint, const Brush *brush)
+bool BKE_brush_use_unified_strength(const Paint * /*paint*/, const Brush *brush)
 {
-  /* For now, Grease Pencil Draw mode doesn't use the unified paint settings. */
-  if (paint->runtime->ob_mode == OB_MODE_PAINT_GREASE_PENCIL) {
-    return false;
-  }
-
   /* In the case of having no active brush (e.g. for non-brush tools), default to the scene level
    * settings */
   if (!brush) {
@@ -1248,13 +1239,8 @@ bool BKE_brush_use_unified_strength(const Paint *paint, const Brush *brush)
   return brush->unified_paint_flags & BRUSH_USE_UNIFIED_PAINT_ALPHA;
 }
 
-bool BKE_brush_use_unified_color(const Paint *paint, const Brush *brush)
+bool BKE_brush_use_unified_color(const Paint * /*paint*/, const Brush *brush)
 {
-  /* For now, Grease Pencil Draw mode doesn't use the unified paint settings. */
-  if (paint->runtime->ob_mode == OB_MODE_PAINT_GREASE_PENCIL) {
-    return false;
-  }
-
   /* In the case of having no active brush (e.g. for non-brush tools), default to the scene level
    * settings */
   if (!brush) {
@@ -1860,6 +1846,15 @@ float normal_weight_get(const Brush &brush, const bool invert)
   }
 
   return brush.normal_weight == 0.0f;
+}
+bool implements_3d_texture_paint(const Brush &brush)
+{
+  switch (brush.image_brush_type) {
+    case IMAGE_PAINT_BRUSH_TYPE_DRAW:
+      return true;
+    default:
+      return false;
+  }
 }
 }  // namespace bke::brush
 

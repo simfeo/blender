@@ -134,6 +134,8 @@ class ImageTextureNode : public ImageSlotTextureNode {
   NODE_SOCKET_API(float, projection_blend)
   NODE_SOCKET_API(bool, animated)
   NODE_SOCKET_API(float3, vector)
+  NODE_SOCKET_API(float3, missing)
+  NODE_SOCKET_API(float, missing_alpha)
   NODE_SOCKET_API_ARRAY(array<int>, tiles)
 
  protected:
@@ -173,6 +175,8 @@ class EnvironmentTextureNode : public ImageSlotTextureNode {
   NODE_SOCKET_API(InterpolationType, interpolation)
   NODE_SOCKET_API(bool, animated)
   NODE_SOCKET_API(float3, vector)
+  NODE_SOCKET_API(float3, missing)
+  NODE_SOCKET_API(float, missing_alpha)
 };
 
 class SkyTextureNode : public TextureNode {
@@ -708,16 +712,28 @@ class GlassBsdfNode : public BsdfNode {
  public:
   SHADER_NODE_CLASS(GlassBsdfNode)
 
+  void simplify_settings(Scene *scene) override;
   ClosureType get_closure_type() override
   {
     return distribution;
   }
 
+  NODE_SOCKET_API(float3, tangent)
   NODE_SOCKET_API(float, roughness)
+  NODE_SOCKET_API(float, anisotropy)
+  NODE_SOCKET_API(float, rotation)
   NODE_SOCKET_API(float, IOR)
   NODE_SOCKET_API(float, thin_film_thickness)
   NODE_SOCKET_API(float, thin_film_ior)
   NODE_SOCKET_API(ClosureType, distribution)
+
+  void attributes(Shader *shader, AttributeRequestSet *attributes) override;
+  bool has_attribute_dependency() override
+  {
+    return true;
+  }
+
+  bool is_isotropic();
 };
 
 class RefractionBsdfNode : public BsdfNode {
@@ -1417,6 +1433,8 @@ class AttributeNode : public ShaderNode {
   ShaderNodeType shader_node_type() const override;
 
   NODE_SOCKET_API(ustring, attribute)
+  NODE_SOCKET_API(float3, missing)
+  NODE_SOCKET_API(float, missing_alpha)
 
   bool stochastic_sample = true;
 };
@@ -1535,6 +1553,27 @@ class MathNode : public ShaderNode {
   NODE_SOCKET_API(float, value3)
   NODE_SOCKET_API(NodeMathType, math_type)
   NODE_SOCKET_API(bool, use_clamp)
+};
+
+class BooleanMathNode : public ShaderNode {
+ public:
+  SHADER_NODE_CLASS(BooleanMathNode)
+  void constant_fold(const ConstantFolder &folder) override;
+
+  NODE_SOCKET_API(int, boolean1)
+  NODE_SOCKET_API(int, boolean2)
+  NODE_SOCKET_API(NodeBooleanMathType, math_type)
+};
+
+class IntegerMathNode : public ShaderNode {
+ public:
+  SHADER_NODE_CLASS(IntegerMathNode)
+  void constant_fold(const ConstantFolder &folder) override;
+
+  NODE_SOCKET_API(int, value1)
+  NODE_SOCKET_API(int, value2)
+  NODE_SOCKET_API(int, value3)
+  NODE_SOCKET_API(NodeIntegerMathType, math_type)
 };
 
 class NormalNode : public ShaderNode {

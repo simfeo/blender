@@ -729,8 +729,7 @@ static void mywrite_id_end(WriteData *wd, ID * /*id*/)
      *
      * So we can clear the stable address ids after each ID writing. This makes the mapping even
      * smaller, and ensures that data dynamically generated on write (which may re-use the same
-     * addresses between different IDs) do not trigger the assert in
-     * `BLO_write_generated_pointer_tag`.
+     * addresses between different IDs) do not trigger the assert in `generated_pointer_tag`.
      *
      * Note that `WriteDataStableAddressIDs::used_ids` and
      * `WriteDataStableAddressIDs::next_id_hint` are kept, to ensure generated address ids are
@@ -816,7 +815,8 @@ static void write_bhead(WriteData *wd, const BHead &bhead)
 
 /**
  * This bit is used to mark address ids that are generated for pointers during undo (when writing
- * undo steps, most addresses are used as-is). */
+ * undo steps, most addresses are used as-is).
+ */
 constexpr uint64_t generated_address_id_on_undo_flag = uint64_t(1) << 63;
 /** Mask to remove bits form the generated hash values used as stable addresses. */
 constexpr uint64_t generated_address_id_mask = generated_address_id_on_undo_flag;
@@ -856,7 +856,7 @@ static uint64_t get_address_id_int(WriteData &wd, const void *address)
     return 0;
   }
   /* In undo case, addresses are kept as-is, unless they have been tagged by specific functions
-   * like `BLO_write_generated_pointer_tag`, in which case their value will already be in the
+   * like `generated_pointer_tag`, in which case their value will already be in the
    * `pointer_map`. */
   if (wd.use_memfile) {
     return wd.stable_address_ids.pointer_map.lookup_default_as(
@@ -941,7 +941,7 @@ static void writestruct_at_address_nr(WriteData *wd,
     if (has_custom_fn) {
       for (const int i : IndexRange(nr)) {
         const int offset = i * struct_info.size_in_bytes;
-        BlendStructWriter struct_writer(
+        BlendStructWriterVoid struct_writer(
             *wd,
             struct_nr,
             {static_cast<char *>(POINTER_OFFSET(buffer, offset)), struct_info.size_in_bytes});
@@ -983,20 +983,7 @@ static void writestruct_at_address_nr(WriteData *wd,
   mywrite(wd, data_to_write, size_t(bh.len));
 }
 
-void BlendStructWriter::runtime_ptr(const int64_t offset)
-{
-#ifndef NDEBUG
-  const dna::pointers::StructInfo &struct_info =
-      wd_->stable_address_ids.sdna_pointers->get_for_struct(struct_nr_);
-  BLI_assert(struct_info.has_pointer_at_offset(offset));
-#else
-  UNUSED_VARS_NDEBUG(struct_nr_);
-#endif
-
-  data_.slice(offset, sizeof(void *)).fill(0);
-}
-
-void BlendStructWriter::generated_ptr(const int64_t offset)
+void BlendStructWriterVoid::generated_ptr(const int64_t offset)
 {
   if (!wd_->use_memfile) {
     /* When writing to file, all pointers are remapped to stable pointers. */
@@ -1015,7 +1002,7 @@ void BlendStructWriter::generated_ptr(const int64_t offset)
   if (!*p_ptr) {
     return;
   }
-  /* Should exist if #BLO_write_generated_pointer_tag has been called before. */
+  /* Should exist if #generated_pointer_tag has been called before. */
   BLI_assert(wd_->stable_address_ids.pointer_map.contains(*p_ptr));
   const void *p_ptr_address_id = get_address_id(*wd_, *p_ptr);
   *p_ptr = p_ptr_address_id;
@@ -1093,7 +1080,7 @@ static void writedata(
   bh.len = int64_t(len);
 
   if (wd->debug_dst) {
-    write_raw_data_in_debug_file(wd, len, address_id, adr);
+    write_raw_data_in_debug_file(wd, len, address_id, data);
   }
 
   write_bhead(wd, bh);
@@ -1114,7 +1101,7 @@ static void writelist_nr(WriteData *wd,
                          const ListBase *lb,
                          const BlendStructWriterFn fn)
 {
-  const Link *link = static_cast<Link *>(lb->first);
+  const Link *link = static_cast<Link *>(lb->first_);
 
   while (link) {
     writestruct_nr(wd, filecode, struct_nr, 1, link, fn);
@@ -1171,12 +1158,12 @@ static void current_screen_compat(Main *mainvar,
 
   /* Find a global current screen in the first open window, to have
    * a reasonable default for reading in older versions. */
-  wm = static_cast<wmWindowManager *>(mainvar->wm.first);
+  wm = mainvar->wm.first();
 
   if (wm) {
     if (use_active_win) {
       /* Write the active window into the file, needed for multi-window undo #43424. */
-      for (window = static_cast<wmWindow *>(wm->windows.first); window; window = window->next) {
+      for (window = wm->windows.first(); window; window = window->next) {
         if (window->active) {
           break;
         }
@@ -1184,11 +1171,11 @@ static void current_screen_compat(Main *mainvar,
 
       /* Fallback. */
       if (window == nullptr) {
-        window = static_cast<wmWindow *>(wm->windows.first);
+        window = wm->windows.first();
       }
     }
     else {
-      window = static_cast<wmWindow *>(wm->windows.first);
+      window = wm->windows.first();
     }
   }
 
@@ -1243,6 +1230,30 @@ static void write_keymapitem(BlendWriter *writer, const wmKeyMapItem *kmi)
 
 static void write_userdef(BlendWriter *writer, const UserDef *userdef)
 {
+  /* Filter out temporary/non user defined asset libraries. */
+  ListBaseT<bUserAssetLibrary> asset_libraries_filtered = {nullptr, nullptr};
+  ListBaseT<bUserAssetLibrary> asset_libraries_backup = userdef->asset_libraries;
+
+  for (const bUserAssetLibrary &asset_library_ref : userdef->asset_libraries) {
+    if (asset_library_ref.flag & ASSET_LIBRARY_PROJECT_DEFINED) {
+      /* Do not save project defined asset libraries. */
+      continue;
+    }
+
+    bUserAssetLibrary *copied_item = MEM_new<bUserAssetLibrary>(__func__);
+    *copied_item = asset_library_ref;
+    BLI_addtail(&asset_libraries_filtered, copied_item);
+  }
+
+  ListBaseT<bUserAssetLibrary> *asset_libraries = const_cast<ListBaseT<bUserAssetLibrary> *>(
+      &userdef->asset_libraries);
+  /* Remap the first and last pointers of `userdef->asset_libraries`.
+   * #writestruct will write out the pointers in here so make sure they are the same as our
+   * filtered list.
+   */
+  asset_libraries->first_ = asset_libraries_filtered.first();
+  asset_libraries->last_ = asset_libraries_filtered.last();
+
   writestruct(writer->wd, BLO_CODE_USER, UserDef, 1, userdef, nullptr);
 
   for (const bTheme &btheme : userdef->themes) {
@@ -1313,10 +1324,13 @@ static void write_userdef(BlendWriter *writer, const UserDef *userdef)
     writer->write_struct(&script_dir);
   }
 
-  for (const bUserAssetLibrary &asset_library_ref : userdef->asset_libraries) {
+  for (const bUserAssetLibrary &asset_library_ref : asset_libraries_filtered) {
     writer->write_struct(&asset_library_ref);
     BKE_preferences_asset_library_write_data(writer, &asset_library_ref);
   }
+  BLI_freelistN(&asset_libraries_filtered);
+  asset_libraries->first_ = asset_libraries_backup.first();
+  asset_libraries->last_ = asset_libraries_backup.last();
 
   for (const bUserExtensionRepo &repo_ref : userdef->extension_repos) {
     writer->write_struct(&repo_ref);
@@ -1631,37 +1645,14 @@ BLO_Write_IDBuffer::BLO_Write_IDBuffer(ID &id, const bool is_undo, const bool is
     return;
   }
 
-  /* Regular 'full' ID writing, copy everything, then clear some runtime data irrelevant in the
-   * blendfile. */
+  /* Common ID-header runtime fields are cleared when the ID is written via
+   * #BlendWriter::write_id_struct. The shallow copy here is still necessary because some functions
+   * like #mesh_blend_write still override the data. */
   memcpy(temp_id, &id, id_type->struct_size);
-
-  /* Clear runtime data to reduce false detection of changed data in undo/redo context. */
-  if (is_undo) {
-    temp_id->tag &= ID_TAG_KEEP_ON_UNDO;
-  }
-  else {
-    temp_id->tag = 0;
-  }
-  temp_id->us = 0;
-  temp_id->icon_id = 0;
-  temp_id->runtime = nullptr;
-  /* Those listbase data change every time we add/remove an ID, and also often when
-   * renaming one (due to re-sorting). This avoids generating a lot of false 'is changed'
-   * detections between undo steps. */
-  temp_id->prev = nullptr;
-  temp_id->next = nullptr;
-  /* Those runtime pointers should never be set during writing stage, but just in case clear
-   * them too. */
-  temp_id->orig_id = nullptr;
-  temp_id->newid = nullptr;
-  /* Even though in theory we could be able to preserve this python instance across undo even
-   * when we need to re-read the ID into its original address, this is currently cleared in
-   * #direct_link_id_common in `readfile.cc` anyway. */
-  temp_id->py_instance = nullptr;
 }
 
 BLO_Write_IDBuffer::BLO_Write_IDBuffer(ID &id, BlendWriter *writer)
-    : BLO_Write_IDBuffer(id, BLO_write_is_undo(writer), false)
+    : BLO_Write_IDBuffer(id, writer->is_undo(), false)
 {
 }
 
@@ -2205,6 +2196,11 @@ bool BLO_write_file_mem(Main *mainvar, MemFile *compare, MemFile *current, const
   return (err == 0);
 }
 
+bool BlendWriter::is_undo() const
+{
+  return this->wd->use_memfile;
+}
+
 /*
  * API to write chunks of data.
  */
@@ -2365,38 +2361,37 @@ void BlendWriter::write_string(const char *data)
   }
 }
 
-void BLO_write_generated_pointer_tag(BlendWriter *writer, const void *data)
+void BlendWriter::generated_pointer_tag(const void *data)
 {
   if (!data) {
     return;
   }
-  if (!BLO_write_is_undo(writer)) {
+  if (!this->is_undo()) {
     return;
   }
-  const uint64_t address_id = get_address_id_for_undo(*writer->wd);
+  const uint64_t address_id = get_address_id_for_undo(*this->wd);
   /* Check that the pointer has not been written before it was tagged as being generated. */
-  BLI_assert(writer->wd->stable_address_ids.pointer_map.lookup_default(data, address_id) ==
+  BLI_assert(this->wd->stable_address_ids.pointer_map.lookup_default(data, address_id) ==
              address_id);
-  writer->wd->stable_address_ids.pointer_map.add(data, address_id);
+  this->wd->stable_address_ids.pointer_map.add(data, address_id);
 }
 
-StringRefNull BLO_write_filepath(const BlendWriter *writer)
+StringRefNull BlendWriter::filepath() const
 {
-  return writer->wd->filepath;
+  return this->wd->filepath;
 }
 
-void BLO_write_shared(BlendWriter *writer,
-                      const void *data,
-                      const size_t approximate_size_in_bytes,
-                      const ImplicitSharingInfo *sharing_info,
-                      const FunctionRef<void()> write_fn)
+void BlendWriter::write_shared(const void *data,
+                               const size_t approximate_size_in_bytes,
+                               const ImplicitSharingInfo *sharing_info,
+                               const FunctionRef<void()> write_fn)
 {
   if (data == nullptr) {
     return;
   }
-  const uint64_t address_id = get_address_id_int(*writer->wd, data);
-  if (BLO_write_is_undo(writer)) {
-    MemFile &memfile = *writer->wd->mem.written_memfile;
+  const uint64_t address_id = get_address_id_int(*this->wd, data);
+  if (this->is_undo()) {
+    MemFile &memfile = *this->wd->mem.written_memfile;
     if (sharing_info != nullptr) {
       if (memfile.shared_storage == nullptr) {
         memfile.shared_storage = MEM_new<MemFileSharedStorage>(__func__);
@@ -2412,17 +2407,12 @@ void BLO_write_shared(BlendWriter *writer,
     }
   }
   if (sharing_info != nullptr) {
-    if (!writer->wd->per_id_written_shared_addresses.add(data)) {
+    if (!this->wd->per_id_written_shared_addresses.add(data)) {
       /* Was written already. */
       return;
     }
   }
   write_fn();
-}
-
-bool BLO_write_is_undo(BlendWriter *writer)
-{
-  return writer->wd->use_memfile;
 }
 
 /** \} */

@@ -26,6 +26,7 @@
 #include "BLI_string_utf8.hh"
 #include "BLI_string_utils.hh"
 #include "BLI_sys_types.hh"
+#include "BLI_vector.hh"
 
 #include "BKE_anim_data.hh"
 #include "BKE_animsys.hh"
@@ -3711,6 +3712,7 @@ static void do_version_replace_image_info_node_coordinates(bNodeTree *node_tree)
  */
 static void do_version_vector_sockets_dimensions(bNodeTree *node_tree)
 {
+  Vector<bNodeTreeInterfaceSocket *> sockets_to_remove;
   node_tree->tree_interface.foreach_item([&](bNodeTreeInterfaceItem &item) {
     if (item.item_type != NodeTreeInterfaceItemType::Socket) {
       return true;
@@ -3724,11 +3726,19 @@ static void do_version_vector_sockets_dimensions(bNodeTree *node_tree)
     }
 
     if (base_typeinfo->type == SOCK_VECTOR) {
+      if (interface_socket.socket_data == nullptr) {
+        sockets_to_remove.append(&interface_socket);
+        return true;
+      }
       bke::node_interface::get_socket_data_as<bNodeSocketValueVector>(interface_socket)
           .dimensions = 3;
     }
     return true;
   });
+
+  for (bNodeTreeInterfaceSocket *socket : sockets_to_remove) {
+    node_tree->tree_interface.remove_item(socket->item);
+  }
 
   for (bNode &node : node_tree->nodes) {
     for (bNodeSocket &socket : node.inputs) {
@@ -3937,22 +3947,22 @@ static void do_init_default_jitter_curves_in_unified_paint_settings(ToolSettings
 static void do_convert_gp_jitter_flags(Brush *brush)
 {
   BrushGpencilSettings *settings = brush->gpencil_settings;
-  if (settings->flag2 & GP_BRUSH_USE_HUE_AT_STROKE) {
+  if (settings->flag2 & GP_BRUSH_UNUSED_2) {
     brush->color_jitter_flag |= BRUSH_COLOR_JITTER_USE_HUE_AT_STROKE;
   }
-  if (settings->flag2 & GP_BRUSH_USE_SAT_AT_STROKE) {
+  if (settings->flag2 & GP_BRUSH_UNUSED_3) {
     brush->color_jitter_flag |= BRUSH_COLOR_JITTER_USE_SAT_AT_STROKE;
   }
-  if (settings->flag2 & GP_BRUSH_USE_VAL_AT_STROKE) {
+  if (settings->flag2 & GP_BRUSH_UNUSED_4) {
     brush->color_jitter_flag |= BRUSH_COLOR_JITTER_USE_VAL_AT_STROKE;
   }
-  if (settings->flag2 & GP_BRUSH_USE_HUE_RAND_PRESS) {
+  if (settings->flag2 & GP_BRUSH_UNUSED_5) {
     brush->color_jitter_flag |= BRUSH_COLOR_JITTER_USE_HUE_RAND_PRESS;
   }
-  if (settings->flag2 & GP_BRUSH_USE_SAT_RAND_PRESS) {
+  if (settings->flag2 & GP_BRUSH_UNUSED_6) {
     brush->color_jitter_flag |= BRUSH_COLOR_JITTER_USE_SAT_RAND_PRESS;
   }
-  if (settings->flag2 & GP_BRUSH_USE_VAL_RAND_PRESS) {
+  if (settings->flag2 & GP_BRUSH_UNUSED_7) {
     brush->color_jitter_flag |= BRUSH_COLOR_JITTER_USE_VAL_RAND_PRESS;
   }
 }
@@ -4645,18 +4655,6 @@ void do_versions_after_linking_405(FileData * /*fd*/, Main *bmain)
       }
     }
     FOREACH_NODETREE_END;
-  }
-
-  if (!MAIN_VERSION_FILE_ATLEAST(bmain, 405, 84)) {
-    for (Scene &scene : bmain->scenes) {
-      do_init_default_jitter_curves_in_unified_paint_settings(scene.toolsettings);
-    }
-
-    for (Brush &brush : bmain->brushes) {
-      if (brush.gpencil_settings) {
-        do_convert_gp_jitter_flags(&brush);
-      }
-    }
   }
 
   /**
@@ -5405,8 +5403,8 @@ void blo_do_versions_405(FileData * /*fd*/, Library * /*lib*/, Main *bmain)
       for (ScrArea &area : screen.areabase) {
         for (SpaceLink &sl : area.spacedata) {
           if (sl.spacetype == SPACE_SEQ) {
-            ListBaseT<ARegion> *regionbase = (&sl == area.spacedata.first) ? &area.regionbase :
-                                                                             &sl.regionbase;
+            ListBaseT<ARegion> *regionbase = (&sl == area.spacedata.first_) ? &area.regionbase :
+                                                                              &sl.regionbase;
             for (ARegion &region : *regionbase) {
               if (region.regiontype == RGN_TYPE_WINDOW) {
                 region.v2d.keepzoom |= V2D_KEEPZOOM;
@@ -5646,8 +5644,8 @@ void blo_do_versions_405(FileData * /*fd*/, Library * /*lib*/, Main *bmain)
       for (ScrArea &area : screen.areabase) {
         for (SpaceLink &sl : area.spacedata) {
           if (sl.spacetype == SPACE_SEQ) {
-            ListBaseT<ARegion> *regionbase = (&sl == area.spacedata.first) ? &area.regionbase :
-                                                                             &sl.regionbase;
+            ListBaseT<ARegion> *regionbase = (&sl == area.spacedata.first_) ? &area.regionbase :
+                                                                              &sl.regionbase;
             for (ARegion &region : *regionbase) {
               if (region.regiontype == RGN_TYPE_WINDOW) {
                 region.v2d.flag |= V2D_ZOOM_IGNORE_KEEPOFS;
@@ -5848,6 +5846,18 @@ void blo_do_versions_405(FileData * /*fd*/, Library * /*lib*/, Main *bmain)
     for (Object &ob : bmain->objects) {
       if (ob.soft) {
         ob.soft->fuzzyness = std::max<int>(1, ob.soft->fuzzyness);
+      }
+    }
+  }
+
+  if (!MAIN_VERSION_FILE_ATLEAST(bmain, 405, 84)) {
+    for (Scene &scene : bmain->scenes) {
+      do_init_default_jitter_curves_in_unified_paint_settings(scene.toolsettings);
+    }
+
+    for (Brush &brush : bmain->brushes) {
+      if (brush.gpencil_settings) {
+        do_convert_gp_jitter_flags(&brush);
       }
     }
   }

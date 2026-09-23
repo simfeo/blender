@@ -118,7 +118,7 @@ static wmOperatorStatus outliner_highlight_update_invoke(bContext *C,
 
   /* Drag and drop does its own highlighting. */
   wmWindowManager *wm = CTX_wm_manager(C);
-  if (wm->runtime->drags.first) {
+  if (wm->runtime->drags.first_) {
     return OPERATOR_PASS_THROUGH;
   }
 
@@ -1478,7 +1478,8 @@ static wmOperatorStatus outliner_start_filter_exec(bContext *C, wmOperator * /*o
   SpaceOutliner *space_outliner = CTX_wm_space_outliner(C);
   ScrArea *area = CTX_wm_area(C);
   ARegion *region = BKE_area_find_region_type(area, RGN_TYPE_HEADER);
-  ui::textbutton_activate_rna(C, region, space_outliner, "filter_text");
+
+  ED_region_activate_rna_prop(C, region, space_outliner, "filter_text");
 
   return OPERATOR_FINISHED;
 }
@@ -1625,6 +1626,9 @@ void outliner_scroll_to_active(SpaceOutliner *space_outliner, ARegion *region, s
 
   tree_iterator::all(space_outliner->runtime->tree, [&](TreeElement *te) {
     TreeStoreElem *tselem = TREESTORE(te);
+    if (te->flag & TE_CHILD_NOT_IN_COLLECTION) {
+      return;
+    }
     if (tselem->flag & TSE_ACTIVE) {
       if (tselem->type == TSE_SOME_ID) {
         if (te->idcode == idcode) {
@@ -1979,7 +1983,7 @@ static void tree_element_to_path(TreeElement *te,
 
   /* step 2: step down hierarchy building the path
    * (NOTE: addhead in previous loop was needed so that we can loop like this) */
-  for (const LinkData *ld = static_cast<const LinkData *>(hierarchy.first); ld; ld = ld->next) {
+  for (const LinkData *ld = hierarchy.first(); ld; ld = ld->next) {
     /* get data */
     TreeElement *tem = static_cast<TreeElement *>(ld->data);
     TreeElementRNACommon *tem_rna = tree_element_cast<TreeElementRNACommon>(tem);

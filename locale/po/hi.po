@@ -1,9 +1,9 @@
 
 msgid ""
 msgstr ""
-"Project-Id-Version: Blender 5.3.0 Alpha (b'af4852ed4560')\n"
+"Project-Id-Version: Blender 5.3.0 Alpha (b'2cef5b8c951a')\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-10 07:54+0000\n"
+"POT-Creation-Date: 2026-09-14 07:47+0000\n"
 "PO-Revision-Date: 2025-12-04 22:18+0000\n"
 "Last-Translator: Jackson Zheng <business.jackson.zheng@gmail.com>\n"
 "Language-Team: Hindi <https://translate.blender.org/projects/blender-ui/ui/hi/>\n"
@@ -847,20 +847,12 @@ msgid "Quality"
 msgstr "गुणवत्ता"
 
 
-msgid "Display"
-msgstr "प्रदर्शित करें"
-
-
 msgid "Curve"
 msgstr "वक्र"
 
 
 msgid "Gamma"
 msgstr "गामा"
-
-
-msgid "View"
-msgstr "दृश्य"
 
 
 msgid "RGB"
@@ -1046,6 +1038,10 @@ msgstr "विभक्त करें"
 
 msgid "Plane"
 msgstr "समतल"
+
+
+msgid "View"
+msgstr "दृश्य"
 
 
 msgid "Radius"
@@ -2153,6 +2149,10 @@ msgid "Damp"
 msgstr "आद्र"
 
 
+msgid "Display"
+msgstr "प्रदर्शित करें"
+
+
 msgid "Steps"
 msgstr "कदम"
 
@@ -2586,28 +2586,24 @@ msgid "Placement"
 msgstr "नियोजन"
 
 
-msgid "Names"
-msgstr "नाम"
-
-
-msgid "Bone Roll"
-msgstr "हड्डी पंजी"
-
-
 msgid "Show/Hide"
 msgstr "छुपाएँ / दिखाएँ"
 
 
-msgid "Keying"
-msgstr "कुंजीयन"
+msgid "Snap"
+msgstr "स्नैप"
+
+
+msgid "Import"
+msgstr "आयात करें"
 
 
 msgid "Math"
 msgstr "गणित"
 
 
-msgid "Snap"
-msgstr "स्नैप"
+msgid "UV"
+msgstr "यूवी"
 
 
 msgid "Mirror"
@@ -2626,16 +2622,16 @@ msgid "Apply"
 msgstr "लागू करें"
 
 
-msgid "Import"
-msgstr "आयात करें"
-
-
 msgid "Track"
 msgstr "ट्रैक"
 
 
 msgid "Quick Effects"
 msgstr "त्वरित प्रभाव"
+
+
+msgid "Keying"
+msgstr "कुंजीयन"
 
 
 msgid "Make Single User"
@@ -2646,8 +2642,8 @@ msgid "Hooks"
 msgstr "खूँटी"
 
 
-msgid "UV"
-msgstr "यूवी"
+msgid "Names"
+msgstr "नाम"
 
 
 msgid "Toggle Bone Options"
@@ -2660,6 +2656,10 @@ msgstr "हड्डी विकल्प को सक्षम करें"
 
 msgid "Merge"
 msgstr "विलय करें"
+
+
+msgid "Bone Roll"
+msgstr "हड्डी पंजी"
 
 
 msgid "Basic"
@@ -3033,10 +3033,6 @@ msgstr "प्रारम्भ"
 
 msgid "NLA Track is locked"
 msgstr "अरैखिक अनुप्राणन ट्रैक अवरोधित है"
-
-
-msgid "To"
-msgstr "करने के लिए"
 
 
 msgid "Keying Screen"
@@ -4302,12 +4298,12 @@ msgid "Wrap"
 msgstr "आच्छादन"
 
 
-msgid "Open a Blender file"
-msgstr "एक ब्लेंडर संचिका खोलें"
-
-
 msgid "Trusted Source"
 msgstr "विश्वसनीय स्रोत"
+
+
+msgid "Open a Blender file"
+msgstr "एक ब्लेंडर संचिका खोलें"
 
 
 msgid "Context"
@@ -5396,6 +5392,11 @@ msgstr "निर्माण"
 
 
 msgctxt "Operator"
+msgid "Text"
+msgstr "पाठ"
+
+
+msgctxt "Operator"
 msgid "Delete Keyframes..."
 msgstr "अनुबोधक चिन्हों मिटाएँ..."
 
@@ -5413,11 +5414,6 @@ msgstr "दाईं ओर"
 msgctxt "Operator"
 msgid "Color"
 msgstr "रंग"
-
-
-msgctxt "Operator"
-msgid "Text"
-msgstr "पाठ"
 
 
 msgctxt "Operator"

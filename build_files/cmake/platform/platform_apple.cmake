@@ -84,7 +84,7 @@ set(CMAKE_PREFIX_PATH ${LIB_SUBDIRS})
 # Find precompiled libraries, and avoid system or user-installed ones.
 
 if(EXISTS ${LIBDIR})
-  include(platform_old_libs_update)
+  include("${CMAKE_CURRENT_LIST_DIR}/platform_old_libs_update.cmake")
   without_system_libs_begin()
 endif()
 
@@ -250,7 +250,7 @@ endif()
 find_package(OpenImageIO REQUIRED)
 add_bundled_libraries(openimageio/lib)
 
-find_package(OpenColorIO 2.0.0 REQUIRED CONFIG)
+find_package(OpenColorIO 2.3.0 REQUIRED CONFIG)
 add_bundled_libraries(opencolorio/lib)
 
 if(WITH_OPENVDB)

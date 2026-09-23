@@ -232,7 +232,7 @@ bool parent_set(ReportList *reports,
                 bool xmirror,
                 bool keep_transform,
                 const int vert_par[3]);
-void parent_clear(Object *ob, int type);
+void parent_clear(Main *bmain, Object *ob, int type);
 
 /**
  * Simple API for object selection, rather than just using the flag
@@ -331,7 +331,7 @@ float new_primitive_matrix(bContext *C,
  */
 #define OBJECT_ADD_SIZE_MAXF 1.0e12f
 
-void add_unit_props_size(wmOperatorType *ot);
+void add_unit_props_size(wmOperatorType *ot, float default_value = 2.0f);
 void add_unit_props_radius_ex(wmOperatorType *ot, float default_value);
 void add_unit_props_radius(wmOperatorType *ot);
 void add_generic_props(wmOperatorType *ot, bool do_editmode);
@@ -611,7 +611,8 @@ void data_xform_by_mat4(XFormObjectData &xod, const float4x4 &transform);
 void data_xform_restore(XFormObjectData &xod);
 void data_xform_tag_update(XFormObjectData &xod);
 
-void ui_template_modifier_asset_menu_items(ui::Layout &layout,
+void ui_template_modifier_asset_menu_items(const bContext &C,
+                                           ui::Layout &layout,
                                            StringRef catalog_path,
                                            bool skip_essentials);
 

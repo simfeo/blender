@@ -650,7 +650,7 @@ static Strip *strip_select_from_preview(
   BLI_listbase_sort(&strips_ordered,
                     center ? strip_sort_for_center_select : strip_sort_for_depth_select);
 
-  SeqSelect_Link *slink_select = static_cast<SeqSelect_Link *>(strips_ordered.first);
+  SeqSelect_Link *slink_select = strips_ordered.first();
   Strip *strip_select = nullptr;
   if (slink_select != nullptr) {
     /* Only use special behavior for the active strip when it's selected. */
@@ -861,7 +861,7 @@ static float inner_clickable_handle_size_get(const Scene *scene,
   return min_ff(15.0f * pixelx * U.pixelsize, strip_len / 4);
 }
 
-bool can_select_handle(const Scene *scene, const Strip *strip, const View2D *v2d)
+bool can_select_handle(const Scene *scene, const Strip *strip)
 {
   if (strip->is_effect_with_inputs()) {
     return false;
@@ -870,21 +870,6 @@ bool can_select_handle(const Scene *scene, const Strip *strip, const View2D *v2d
   Editing *ed = seq::editing_get(scene);
   const ListBaseT<SeqTimelineChannel> *channels = seq::channels_displayed_get(ed);
   if (seq::transform_is_locked(channels, strip)) {
-    return false;
-  }
-
-  /* This ensures clickable handles are deactivated when the strip gets too small
-   * (25 pixels). Since the full handle size for a small strip is 1/3 of the strip size (see
-   * `inner_clickable_handle_size_get`), this means handles cannot be smaller than 25/3 = 8px. */
-  int min_len = 25 * U.pixelsize;
-
-  const float pixelx = ui::view2d_pixel_size_get_x(v2d);
-  const int strip_len = strip->right_handle(scene) - strip->left_handle();
-  if (strip_len / pixelx < min_len) {
-    return false;
-  }
-
-  if (ui::view2d_scale_get_y(v2d) < 16 * U.pixelsize) {
     return false;
   }
 
@@ -985,7 +970,7 @@ static eStripHandle strip_handle_under_cursor_get(const Scene *scene,
                                                   const View2D *v2d,
                                                   float mouse_co[2])
 {
-  if (!can_select_handle(scene, strip, v2d)) {
+  if (!can_select_handle(scene, strip)) {
     return STRIP_HANDLE_NONE;
   }
 
@@ -2140,7 +2125,19 @@ static wmOperatorStatus sequencer_box_select_invoke(bContext *C,
     }
   }
 
-  return WM_gesture_box_invoke(C, op, event);
+  const wmOperatorStatus opstatus = WM_gesture_box_invoke(C, op, event);
+  const SpaceSeq *sseq = CTX_wm_space_seq(C);
+
+  wmGesture *gesture = static_cast<wmGesture *>(op->customdata);
+  if ((sseq->flag & SEQ_CLAMP_VIEW) && gesture->edge_pan_data && scene != nullptr &&
+      region->regiontype == RGN_TYPE_WINDOW)
+  {
+    const rctf view_bounds = sequencer_clamped_view_bounds_get(C, region);
+    gesture->edge_pan_data->limit.ymin = view_bounds.ymin;
+    gesture->edge_pan_data->limit.ymax = view_bounds.ymax;
+  }
+
+  return opstatus;
 }
 
 void SEQUENCER_OT_select_box(wmOperatorType *ot)
@@ -2236,7 +2233,7 @@ static bool do_lasso_select_timeline(bContext *C,
                                      ARegion *region,
                                      const eSelectOp sel_op)
 {
-  Scene *scene = CTX_data_scene(C);
+  Scene *scene = CTX_data_sequencer_scene(C);
   Editing *ed = seq::editing_get(scene);
 
   bool changed = false;
@@ -2263,7 +2260,7 @@ static bool do_lasso_select_preview(bContext *C,
                                     const Span<int2> mcoords,
                                     const eSelectOp sel_op)
 {
-  Scene *scene = CTX_data_scene(C);
+  Scene *scene = CTX_data_sequencer_scene(C);
   const ARegion *region = CTX_wm_region(C);
 
   bool changed = false;
@@ -2295,7 +2292,7 @@ static bool do_lasso_select_preview(bContext *C,
 
 static wmOperatorStatus vse_lasso_select_exec(bContext *C, wmOperator *op)
 {
-  Scene *scene = CTX_data_scene(C);
+  Scene *scene = CTX_data_sequencer_scene(C);
   ARegion *region = CTX_wm_region(C);
   Array<int2> mcoords = WM_gesture_lasso_path_to_array(C, op);
   Editing *ed = seq::editing_get(scene);
@@ -2374,7 +2371,7 @@ static void seq_circle_select_strip_from_preview(bContext *C,
                                                  const float2 mval,
                                                  const eSelectOp mode)
 {
-  Scene *scene = CTX_data_scene(C);
+  Scene *scene = CTX_data_sequencer_scene(C);
   Editing *ed = seq::editing_get(scene);
   ListBaseT<Strip> *seqbase = seq::active_seqbase_get(ed);
   ListBaseT<SeqTimelineChannel> *channels = seq::channels_displayed_get(ed);
@@ -2427,7 +2424,7 @@ static wmOperatorStatus vse_circle_select_exec(bContext *C, wmOperator *op)
   wmGesture *gesture = static_cast<wmGesture *>(op->customdata);
   const eSelectOp sel_op = eSelectOp(RNA_enum_get(op->ptr, "mode"));
 
-  Scene *scene = CTX_data_scene(C);
+  Scene *scene = CTX_data_sequencer_scene(C);
   View2D *v2d = ui::view2d_fromcontext(C);
   Editing *ed = seq::editing_get(scene);
   ARegion *region = CTX_wm_region(C);

@@ -84,6 +84,9 @@ void device_optix_info(const vector<DeviceInfo> &cuda_devices, vector<DeviceInfo
 
     info.type = DEVICE_OPTIX;
     info.id += "_OptiX";
+
+    info.use_hardware_raytracing = true;
+
 #  if defined(WITH_OSL) && defined(OSL_USE_OPTIX) && \
       (OSL_VERSION_MINOR >= 13 || OSL_VERSION_MAJOR > 1)
     info.has_osl = true;
@@ -99,7 +102,6 @@ void device_optix_info(const vector<DeviceInfo> &cuda_devices, vector<DeviceInfo
     }
 #  endif
 
-    info.meets_driver_requirement = true;
     devices.push_back(info);
   }
 #else

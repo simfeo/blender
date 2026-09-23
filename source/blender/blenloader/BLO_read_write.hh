@@ -41,6 +41,8 @@
 #include "BLI_implicit_sharing.hh"
 #include "BLI_map.hh"
 
+#include "BLO_core_bhead.hh"
+
 namespace blender {
 
 class ImplicitSharingInfo;
@@ -53,41 +55,93 @@ struct WriteData;
 struct FileData;
 enum eReportType : uint16_t;
 
+template<typename T> class BlendStructWriter;
+
 /**
  * Allows code using #BlendWriter to customize how a specific struct is written. Often, small
  * changes to the struct data are done before it is written (e.g. zeroing runtime pointers and
  * setting generated pointers).
+ *
+ * Use #typed to get a typed view of the shallow copy that will be written.
  */
-class BlendStructWriter {
- private:
+class BlendStructWriterVoid {
+ protected:
   WriteData *wd_;
   int struct_nr_;
   /** This is a shallow copy of the struct being written. */
   MutableSpan<char> data_;
 
  public:
-  BlendStructWriter(WriteData &wd, const int struct_nr, MutableSpan<char> data)
+  BlendStructWriterVoid(WriteData &wd, const int struct_nr, MutableSpan<char> data)
       : wd_(&wd), struct_nr_(struct_nr), data_(data)
   {
   }
 
-  /**
-   * Mark the pointer at the given offset as purely runtime. That means that it will be zeroed.
-   */
-  void runtime_ptr(int64_t offset);
+  template<typename T> BlendStructWriter<T> typed();
 
   /**
    * Tag the pointer at the given offset as "generated". That implies that it may be remapped
    * to a stable pointer. It's expected that the pointer has been tagged with
-   * #BLO_write_generated_pointer_tag before.
+   * #generated_pointer_tag before.
    */
   void generated_ptr(int64_t offset);
 };
 
-using BlendStructWriterFn = FunctionRef<void(BlendStructWriter &struct_writer)>;
+/**
+ * Typed version of #BlendStructWriterVoid. It makes the API more convenient to use and more
+ * type-safe.
+ */
+template<typename T> class BlendStructWriter : public BlendStructWriterVoid {
+ public:
+  T &shallow_data;
+
+  explicit BlendStructWriter(const BlendStructWriterVoid &writer)
+      : BlendStructWriterVoid(writer), shallow_data(*reinterpret_cast<T *>(this->data_.data()))
+  {
+  }
+};
+
+template<typename T> inline BlendStructWriter<T> BlendStructWriterVoid::typed()
+{
+  BLI_assert(struct_nr_ == dna::sdna_struct_id_get<T>());
+  return BlendStructWriter<T>(*this);
+}
+
+using BlendStructWriterFn = FunctionRef<void(BlendStructWriterVoid &struct_writer)>;
+
+/**
+ * Callback for typed #BlendWriter methods.
+ *
+ * \note #type_identity_t is used as a workaround so that #T can be properly deduced when the
+ * #BlendWriter methods are called.
+ */
+template<typename T>
+using BlendStructWriterTypedFn =
+    std::type_identity_t<FunctionRef<void(BlendStructWriter<T> &struct_writer)>>;
+
+/**
+ * Utility to convert either wrap the function or pass through none.
+ */
+#define blo_blend_struct_writer_fn_typed(T, fn) \
+  ((fn) ? BlendStructWriterFn([fn](BlendStructWriterVoid &struct_writer) { \
+    BlendStructWriter<T> typed_writer(struct_writer); \
+    fn(typed_writer); \
+  }) : \
+          nullptr)
 
 struct BlendWriter {
   WriteData *wd = nullptr;
+
+  /**
+   * Sometimes different data is written depending on whether the file is saved to disk or used for
+   * undo. This function returns true when the current file-writing is done for undo.
+   */
+  bool is_undo() const;
+
+  /**
+   * \note Should not be strictly needed outside of handling external Multires .btx files.
+   */
+  StringRefNull filepath() const;
 
   void write_struct_by_name(const char *struct_name,
                             const void *data,
@@ -153,72 +207,155 @@ struct BlendWriter {
   /** Write a null terminated string. */
   void write_string(const char *data);
 
+  /**
+   * Check if the data can be written more efficiently by making use of implicit-sharing. If yes,
+   * the user count of the sharing-info is increased making the data immutable. The provided
+   * callback should serialize the potentially shared data. It is only called when necessary.
+   *
+   * \param approximate_size_in_bytes: Used to be able to approximate how large the undo step is in
+   * total.
+   * \param write_fn: Use the #BlendWrite to serialize the potentially shared data.
+   */
+  void write_shared(const void *data,
+                    size_t approximate_size_in_bytes,
+                    const ImplicitSharingInfo *sharing_info,
+                    FunctionRef<void()> write_fn);
+
   int struct_id_by_name(const char *struct_name) const;
 
-  template<typename T> void write_struct(const T *data, const BlendStructWriterFn fn = nullptr)
+  /**
+   * Needs to be called for all pointers that _need_ to be 'stabilized' when writing undo steps,
+   * _before_ any of these pointers are actually written (so typically at the very start of a write
+   * function)..
+   *
+   * Typically required for data dynamically generated as part of the write process, see e.g.
+   * AttributeStorage::dna_attributes.
+   */
+  void generated_pointer_tag(const void *data);
+
+  template<typename T> void write_struct(const T *data, BlendStructWriterTypedFn<T> fn = nullptr)
   {
-    this->write_struct_by_id(dna::sdna_struct_id_get<T>(), data, fn);
+    this->write_struct_by_id(
+        dna::sdna_struct_id_get<T>(), data, blo_blend_struct_writer_fn_typed(T, fn));
   }
 
   template<typename T>
-  void write_struct_cast(const void *data, const BlendStructWriterFn fn = nullptr)
+  void write_struct_cast(const void *data, BlendStructWriterTypedFn<T> fn = nullptr)
   {
-    this->write_struct_by_id(dna::sdna_struct_id_get<T>(), data, fn);
+    this->write_struct_by_id(
+        dna::sdna_struct_id_get<T>(), data, blo_blend_struct_writer_fn_typed(T, fn));
   }
 
   template<typename T>
   void write_struct_at_address(const void *address,
                                const T *data,
-                               const BlendStructWriterFn fn = nullptr)
+                               BlendStructWriterTypedFn<T> fn = nullptr)
   {
-    this->write_struct_at_address_by_id(dna::sdna_struct_id_get<T>(), address, data, fn);
+    this->write_struct_at_address_by_id(
+        dna::sdna_struct_id_get<T>(), address, data, blo_blend_struct_writer_fn_typed(T, fn));
   }
 
   template<typename T>
   void write_struct_at_address_cast(const void *address,
                                     const void *data,
-                                    const BlendStructWriterFn fn = nullptr)
+                                    BlendStructWriterTypedFn<T> fn = nullptr)
   {
-    this->write_struct_at_address_by_id(dna::sdna_struct_id_get<T>(), address, data, fn);
+    this->write_struct_at_address_by_id(
+        dna::sdna_struct_id_get<T>(), address, data, blo_blend_struct_writer_fn_typed(T, fn));
   }
 
   template<typename T>
   void write_struct_array(const int64_t array_size,
                           const T *data,
-                          const BlendStructWriterFn fn = nullptr)
+                          BlendStructWriterTypedFn<T> fn = nullptr)
   {
-    this->write_struct_array_by_id(dna::sdna_struct_id_get<T>(), array_size, data, fn);
+    this->write_struct_array_by_id(
+        dna::sdna_struct_id_get<T>(), array_size, data, blo_blend_struct_writer_fn_typed(T, fn));
   }
 
   template<typename T>
   void write_struct_array_cast(const int64_t array_size,
                                const void *data,
-                               const BlendStructWriterFn fn = nullptr)
+                               BlendStructWriterTypedFn<T> fn = nullptr)
   {
-    this->write_struct_array_by_id(dna::sdna_struct_id_get<T>(), array_size, data, fn);
+    this->write_struct_array_by_id(
+        dna::sdna_struct_id_get<T>(), array_size, data, blo_blend_struct_writer_fn_typed(T, fn));
   }
 
   template<typename T>
   void write_struct_array_at_address(const int64_t array_size,
                                      const void *address,
                                      const T *data,
-                                     const BlendStructWriterFn fn = nullptr)
+                                     BlendStructWriterTypedFn<T> fn = nullptr)
   {
-    this->write_struct_array_at_address_by_id(
-        dna::sdna_struct_id_get<T>(), array_size, address, data, fn);
+    this->write_struct_array_at_address_by_id(dna::sdna_struct_id_get<T>(),
+                                              array_size,
+                                              address,
+                                              data,
+                                              blo_blend_struct_writer_fn_typed(T, fn));
   }
 
   template<typename T>
-  void write_struct_list(const ListBaseT<T> *list, const BlendStructWriterFn fn = nullptr)
+  void write_struct_list(const ListBaseT<T> *list, BlendStructWriterTypedFn<T> fn = nullptr)
   {
-    this->write_struct_list_by_id(dna::sdna_struct_id_get<T>(), list, fn);
+    this->write_struct_list_by_id(
+        dna::sdna_struct_id_get<T>(), list, blo_blend_struct_writer_fn_typed(T, fn));
   }
 
   template<typename T>
-  void write_id_struct(const void *id_address, const T *id, const BlendStructWriterFn fn = nullptr)
+  void write_id_struct(const void *id_address,
+                       const T *id,
+                       BlendStructWriterTypedFn<T> fn = nullptr)
+  {
+    this->write_id_struct(GS(id_cast<const ID *>(id)->name), id_address, id, fn);
+  }
+
+  template<typename T>
+  void write_embedded_id_struct(const void *id_address,
+                                const T *id,
+                                BlendStructWriterTypedFn<T> fn = nullptr)
+  {
+    this->write_id_struct(BLO_CODE_DATA, id_address, id, fn);
+  }
+
+  /** Write an ID data-block with an explicit file-code. */
+  template<typename T>
+  void write_id_struct(const int filecode,
+                       const void *id_address,
+                       const T *id,
+                       BlendStructWriterTypedFn<T> fn = nullptr)
   {
     this->write_struct_at_address_by_id_with_filecode(
-        GS(id_cast<const ID *>(id)->name), dna::sdna_struct_id_get<T>(), id_address, id, fn);
+        filecode,
+        dna::sdna_struct_id_get<T>(),
+        id_address,
+        id,
+        [&](BlendStructWriterVoid &struct_writer) {
+          BlendStructWriter<T> typed_writer(struct_writer);
+          ID &shallow_id = *reinterpret_cast<ID *>(&typed_writer.shallow_data);
+          /* Clear runtime ID fields shared by every ID write path. */
+          if (this->is_undo()) {
+            shallow_id.tag &= ID_TAG_KEEP_ON_UNDO;
+          }
+          else {
+            shallow_id.tag = 0;
+            shallow_id.session_uid = 0;
+            shallow_id.recalc = 0;
+            shallow_id.recalc_up_to_undo_push = 0;
+            shallow_id.recalc_after_undo_push = 0;
+          }
+          shallow_id.us = 0;
+          shallow_id.icon_id = 0;
+          shallow_id.runtime = nullptr;
+          shallow_id.prev = nullptr;
+          shallow_id.next = nullptr;
+          shallow_id.orig_id = nullptr;
+          shallow_id.newid = nullptr;
+          shallow_id.py_instance = nullptr;
+          if (fn) {
+            fn(typed_writer);
+          }
+        });
   }
 };
 
@@ -274,12 +411,9 @@ struct BlendLibReader {
  * \{ */
 
 /**
- * Specific code to prepare IDs to be written.
- *
- * Required for writing properly embedded IDs currently.
- *
- * \note Once there is a better generic handling of embedded IDs,
- * this may go back to private code in `writefile.cc`.
+ * Makes a shallow copy of the ID for use in #IDTypeInfo::blend_write. The functions are currently
+ * allowed to make shallow changes to the data-block which won't be written to the file. For
+ * example, #mesh_blend_write assumes that the passed in #Mesh is a shallow copy already.
  */
 struct BLO_Write_IDBuffer {
  private:
@@ -295,44 +429,6 @@ struct BLO_Write_IDBuffer {
     return static_cast<ID *>(buffer_.buffer());
   };
 };
-
-/* Misc. */
-
-/**
- * \note Should not be strictly needed outside of handling external Multires .btx files.
- */
-StringRefNull BLO_write_filepath(const BlendWriter *writer);
-
-/**
- * Check if the data can be written more efficiently by making use of implicit-sharing. If yes, the
- * user count of the sharing-info is increased making the data immutable. The provided callback
- * should serialize the potentially shared data. It is only called when necessary.
- *
- * \param approximate_size_in_bytes: Used to be able to approximate how large the undo step is in
- * total.
- * \param write_fn: Use the #BlendWrite to serialize the potentially shared data.
- */
-void BLO_write_shared(BlendWriter *writer,
-                      const void *data,
-                      size_t approximate_size_in_bytes,
-                      const ImplicitSharingInfo *sharing_info,
-                      FunctionRef<void()> write_fn);
-
-/**
- * Needs to be called for all pointers that _need_ to be 'stabilized' when writing undo steps,
- * _before_ any of these pointers are actually written (so typically at the very start of a write
- * function)..
- *
- * Typically required for data dynamically generated as part of the write process, see e.g.
- * AttributeStorage::dna_attributes.
- */
-void BLO_write_generated_pointer_tag(BlendWriter *writer, const void *data);
-
-/**
- * Sometimes different data is written depending on whether the file is saved to disk or used for
- * undo. This function returns true when the current file-writing is done for undo.
- */
-bool BLO_write_is_undo(BlendWriter *writer);
 
 /** \} */
 

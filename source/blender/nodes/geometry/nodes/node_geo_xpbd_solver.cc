@@ -2,6 +2,8 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include <fmt/format.h>
+
 #include "BKE_bvh.hh"
 #include "BKE_bvhutils.hh"
 #include "BKE_curves.hh"
@@ -592,8 +594,6 @@ class XpbdSolverStep {
   ConstraintsInfo constraints_;
   Array<ChunkData> chunks_data_;
 
-  Mutex field_evaluators_mutex_;
-
   Result result_;
   Mutex warnings_mutex_;
   VectorSet<std::pair<NodeWarningType, std::string>> warnings_;
@@ -704,11 +704,10 @@ class XpbdSolverStep {
     /* Ensure the order is deterministic. */
     std::ranges::sort(paths);
     for (const StringRef path : paths) {
-      GeometrySetData geo_set_data;
-      geo_set_data.path = path;
-      geo_set_data.geometry = std::move(*world_.lookup_path_for_write_ptr<GeometrySet>(path));
-      if (geo_set_data.geometry.has_bundle()) {
-        const Bundle &bundle_in_geo = *geo_set_data.geometry.bundle();
+      GeometrySet &geometry = *world_.lookup_path_for_write_ptr<GeometrySet>(path);
+      Set<std::string> tags;
+      if (geometry.has_bundle()) {
+        const Bundle &bundle_in_geo = *geometry.bundle();
         if (const std::optional<GListPtr> tags_list_ptr = bundle_in_geo.lookup_path<GListPtr>(
                 "tags"))
         {
@@ -716,14 +715,19 @@ class XpbdSolverStep {
             const GList &tags_list = **tags_list_ptr;
             if (tags_list.cpp_type().is<std::string>()) {
               tags_list.typed<std::string>().foreach(
-                  [&](const std::string &tag) { geo_set_data.tags.add(tag); });
+                  [&](const std::string &tag) { tags.add(tag); });
             }
           }
         }
       }
-      if (!tag_filter_matches(geometry_tag_filter_, geo_set_data.tags)) {
+      if (!tag_filter_matches(geometry_tag_filter_, tags)) {
         continue;
       }
+
+      GeometrySetData geo_set_data;
+      geo_set_data.path = path;
+      geo_set_data.geometry = std::move(geometry);
+      geo_set_data.tags = std::move(tags);
       geometries_.geometry_sets.append(std::move(geo_set_data));
     }
 
@@ -1230,6 +1234,10 @@ class XpbdSolverStep {
     return ClosestMeshFaceContact{contact_pos, contact_nor, bary_coords, is_inside, tri_i};
   }
 
+  /**
+   * \note This uses the legacy BVH tree because it ray-casts against the edge BVH with a ray that
+   * has a radius. bvh::Tree doesn't yet support this.
+   */
   std::optional<ClosestMeshEdgeContact> get_closest_mesh_edge_contact(
       const float3 &sample_pos0,
       const float3 &sample_pos1,
@@ -1432,10 +1440,10 @@ class XpbdSolverStep {
                                                                           const bool deforming)
   {
     if (!deforming || !prev_mesh) {
-      return StaticMeshInfo{&mesh, &mesh.bvh_tris(), mesh.bvh_edges()};
+      return StaticMeshInfo{&mesh, &mesh.bvh_tris(), mesh.bvh_edges_legacy()};
     }
     if (mesh.verts_num != prev_mesh->verts_num) {
-      return StaticMeshInfo{&mesh, &mesh.bvh_tris(), mesh.bvh_edges()};
+      return StaticMeshInfo{&mesh, &mesh.bvh_tris(), mesh.bvh_edges_legacy()};
     }
     const int verts_num = mesh.verts_num;
     DeformingMeshInfo result;
@@ -1477,7 +1485,7 @@ class XpbdSolverStep {
             if (mesh_i > 0) {
               /* The bvh tree is not needed for the first substep. */
               result.substep_corner_tris_bvh_trees[mesh_i - 1] = &substep_mesh->bvh_tris();
-              result.substep_edges_bvh_trees[mesh_i - 1] = substep_mesh->bvh_edges();
+              result.substep_edges_bvh_trees[mesh_i - 1] = substep_mesh->bvh_edges_legacy();
             }
           }
         });
@@ -2998,7 +3006,8 @@ class XpbdSolverStep {
   PointCloud *write_back__plane_contacts(const IndexRange mesh_colliders_range,
                                          const OffsetIndices<int> points_by_chunk)
   {
-    PointCloud *pointcloud = BKE_pointcloud_new_nomain(points_by_chunk.total_size());
+    PointCloud *pointcloud = BKE_pointcloud_new_nomain(PointCloudType::Points,
+                                                       points_by_chunk.total_size());
     MutableAttributeAccessor attributes = pointcloud->attributes_for_write();
     bke::SpanAttributeWriter<int> geometries_writer =
         attributes.lookup_or_add_for_write_only_span<int>("geometry", AttrDomain::Point);
@@ -3078,7 +3087,8 @@ class XpbdSolverStep {
   PointCloud *write_back__edge_contacts(const IndexRange mesh_colliders_range,
                                         const OffsetIndices<int> points_by_chunk)
   {
-    PointCloud *pointcloud = BKE_pointcloud_new_nomain(points_by_chunk.total_size());
+    PointCloud *pointcloud = BKE_pointcloud_new_nomain(PointCloudType::Points,
+                                                       points_by_chunk.total_size());
     MutableAttributeAccessor attributes = pointcloud->attributes_for_write();
     bke::SpanAttributeWriter<int> geometries_writer =
         attributes.lookup_or_add_for_write_only_span<int>("geometry", AttrDomain::Point);
@@ -3221,7 +3231,7 @@ class XpbdSolverStep {
           collider_map_path,
           BundleItemSocketValue{
               bke::node_socket_type_find_static(SOCK_STRING),
-              bke::SocketValueVariant::From(GList::from_container(std::move(collider_paths)))});
+              bke::SocketValueVariant::from(GList::from_container(std::move(collider_paths)))});
     }
   }
 

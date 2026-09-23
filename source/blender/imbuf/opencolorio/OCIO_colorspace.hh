@@ -57,6 +57,12 @@ class ColorSpace {
    */
   virtual StringRefNull interop_id() const = 0;
   virtual bool is_primary_interop_id() const = 0;
+  /*
+   * Scene or display variant of the primary interop ID, when it is an alias of this
+   * color space. This is needed because the bundled config does not always distinguish
+   * between scene and display referred spaces.
+   */
+  virtual StringRefNull alternate_interop_id() const = 0;
 
   /*
    * ICC profile path from attribute in the configuration.
@@ -71,5 +77,15 @@ class ColorSpace {
   const virtual CPUProcessor *get_to_scene_linear_cpu_processor() const = 0;
   const virtual CPUProcessor *get_from_scene_linear_cpu_processor() const = 0;
 };
+
+/**
+ * Drop the namespace from an interop ID, so e.g. `blender:g24_rec2020_display` becomes
+ * `g24_rec2020_display`.
+ */
+inline StringRef interop_id_drop_namespace(const StringRef interop_id)
+{
+  const int64_t colon = interop_id.find(':');
+  return (colon == StringRef::not_found) ? interop_id : interop_id.drop_prefix(colon + 1);
+}
 
 }  // namespace blender::ocio

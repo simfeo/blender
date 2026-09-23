@@ -433,6 +433,7 @@ IDTypeInfo IDType_ID_GR = {
     .foreach_cache = nullptr,
     .foreach_path = nullptr,
     .foreach_working_space_color = nullptr,
+    .foreach_asset_weak_reference = nullptr,
     .owner_pointer_get = collection_owner_pointer_get,
 
     .blend_write = collection_blend_write,
@@ -558,8 +559,7 @@ void BKE_collection_exporter_name_set(const ListBaseT<CollectionExport> *exporte
 {
   /* Only use the new name if it's not empty. */
   if (newname && newname[0] != '\0') {
-    ListBaseT<CollectionExport> list = exporters ? *exporters :
-                                                   ListBaseT<CollectionExport>{data, data};
+    ListBaseT<CollectionExport> list = exporters ? *exporters : BLI_listbase_from_link(data);
 
     STRNCPY(data->name, newname);
     BLI_uniquename(
@@ -604,18 +604,18 @@ bool BKE_collection_delete(Main *bmain, Collection *collection, bool hierarchy)
 
   if (hierarchy) {
     /* Remove child objects. */
-    CollectionObject *cob = static_cast<CollectionObject *>(collection->gobject.first);
+    CollectionObject *cob = collection->gobject.first();
     while (cob != nullptr) {
       collection_object_remove_no_gobject_hash(
           bmain, collection, cob, LIB_ID_CREATE_NO_DEG_TAG, true);
-      cob = static_cast<CollectionObject *>(collection->gobject.first);
+      cob = collection->gobject.first();
     }
 
     /* Delete all child collections recursively. */
-    CollectionChild *child = static_cast<CollectionChild *>(collection->children.first);
+    CollectionChild *child = collection->children.first();
     while (child != nullptr) {
       BKE_collection_delete(bmain, child->collection, hierarchy);
-      child = static_cast<CollectionChild *>(collection->children.first);
+      child = collection->children.first();
     }
   }
   else {
@@ -627,7 +627,7 @@ bool BKE_collection_delete(Main *bmain, Collection *collection, bool hierarchy)
       }
     }
 
-    CollectionObject *cob = static_cast<CollectionObject *>(collection->gobject.first);
+    CollectionObject *cob = collection->gobject.first();
     while (cob != nullptr) {
       /* Link child object into parent collections. */
       for (CollectionParent &cparent : collection->runtime->parents) {
@@ -638,7 +638,7 @@ bool BKE_collection_delete(Main *bmain, Collection *collection, bool hierarchy)
       /* Remove child object. */
       collection_object_remove_no_gobject_hash(
           bmain, collection, cob, LIB_ID_CREATE_NO_DEG_TAG, true);
-      cob = static_cast<CollectionObject *>(collection->gobject.first);
+      cob = collection->gobject.first();
     }
   }
 
@@ -1004,15 +1004,14 @@ void BKE_collection_object_cache_free(const Main *bmain,
 
 void BKE_main_collections_object_cache_free(const Main *bmain)
 {
-  for (Scene *scene = static_cast<Scene *>(bmain->scenes.first); scene != nullptr;
+  for (Scene *scene = bmain->scenes.first(); scene != nullptr;
        scene = static_cast<Scene *>(scene->id.next))
   {
     collection_object_cache_free(
         bmain, scene->master_collection, 0, ID_RECALC_HIERARCHY | ID_RECALC_GEOMETRY);
   }
 
-  for (Collection *collection = static_cast<Collection *>(bmain->collections.first);
-       collection != nullptr;
+  for (Collection *collection = bmain->collections.first(); collection != nullptr;
        collection = static_cast<Collection *>(collection->id.next))
   {
     collection_object_cache_free(bmain, collection, 0, ID_RECALC_HIERARCHY | ID_RECALC_GEOMETRY);
@@ -1025,10 +1024,10 @@ Base *BKE_collection_or_layer_objects(const Main &bmain,
                                       Collection *collection)
 {
   if (collection) {
-    return static_cast<Base *>(BKE_collection_object_cache_get(collection).first);
+    return BKE_collection_object_cache_get(collection).first();
   }
   BKE_view_layer_synced_ensure(bmain, scene, view_layer);
-  return static_cast<Base *>(BKE_view_layer_object_bases_get(view_layer)->first);
+  return BKE_view_layer_object_bases_get(view_layer)->first();
 }
 
 /** \} */
@@ -1173,7 +1172,7 @@ bool BKE_collection_contains_geometry_recursive(const Collection *collection)
 static Collection *collection_next_find(Main *bmain, Scene *scene, Collection *collection)
 {
   if (scene && collection == scene->master_collection) {
-    return static_cast<Collection *>(bmain->collections.first);
+    return bmain->collections.first();
   }
 
   return static_cast<Collection *>(collection->id.next);
@@ -1191,7 +1190,7 @@ Collection *BKE_collection_object_find(Main *bmain,
     collection = scene->master_collection;
   }
   else {
-    collection = static_cast<Collection *>(bmain->collections.first);
+    collection = bmain->collections.first();
   }
 
   while (collection) {
@@ -1438,6 +1437,44 @@ Collection *BKE_collection_parent_editable_find_recursive(const ViewLayer *view_
   }
 
   return nullptr;
+}
+
+CollectionObject *BKE_collection_object_find_in(const Collection &collection, const Object &ob)
+{
+  collection_gobject_hash_ensure(const_cast<Collection *>(&collection));
+  return collection.runtime->gobject_hash->lookup_default(&ob, nullptr);
+}
+
+void BKE_collection_object_parented_sort_index_reset(Main &bmain, Object &ob)
+{
+  Collection *collection = nullptr;
+  while ((collection = BKE_collection_object_find(&bmain, nullptr, collection, &ob))) {
+    CollectionObject *cob = BKE_collection_object_find_in(*collection, ob);
+    if (cob != nullptr) {
+      cob->parented_sort_index = -1;
+    }
+  }
+}
+
+void BKE_collection_object_parent_clear_sort_index_reset(Main &bmain, Object &ob)
+{
+  Collection *collection = nullptr;
+  while ((collection = BKE_collection_object_find(&bmain, nullptr, collection, &ob))) {
+    CollectionObject *cob = BKE_collection_object_find_in(*collection, ob);
+    if (cob != nullptr) {
+      cob->parented_sort_index = -1;
+      if (ob.parent != nullptr) {
+        for (Object *parent_iter = ob.parent; parent_iter != nullptr;
+             parent_iter = parent_iter->parent)
+        {
+          if (BKE_collection_object_find_in(*collection, *parent_iter) != nullptr) {
+            cob->sort_index = -1;
+            break;
+          }
+        }
+      }
+    }
+  }
 }
 
 static bool collection_object_add(Main *bmain,
@@ -2471,7 +2508,7 @@ static void scene_objects_iterator_begin(BLI_Iterator *iter,
   BKE_scene_collections_iterator_begin(&data->scene_collection_iter, scene);
 
   Collection *collection = static_cast<Collection *>(data->scene_collection_iter.current);
-  data->cob_next = static_cast<CollectionObject *>(collection->gobject.first);
+  data->cob_next = collection->gobject.first();
 
   BKE_scene_objects_iterator_next(iter);
 }
@@ -2574,8 +2611,7 @@ void BKE_scene_objects_iterator_next(BLI_Iterator *iter)
     do {
       collection = static_cast<Collection *>(data->scene_collection_iter.current);
       /* get the first unique object of this collection */
-      CollectionObject *new_cob = object_base_unique(
-          *data->visited, static_cast<CollectionObject *>(collection->gobject.first));
+      CollectionObject *new_cob = object_base_unique(*data->visited, collection->gobject.first());
       if (new_cob) {
         data->cob_next = new_cob->next;
         iter->current = new_cob->ob;

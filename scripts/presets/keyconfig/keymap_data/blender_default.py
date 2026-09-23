@@ -1114,6 +1114,8 @@ def km_user_interface(_params):
          {"properties": [("scroll_direction", 'TOP')]}),
         ("ui.view_item_page_scroll", {"type": 'END', "value": 'PRESS'},
          {"properties": [("scroll_direction", 'BOTTOM')]}),
+        ("ui.region_start_filter", {"type": 'F', "value": 'PRESS', "ctrl": True}, None),
+        ("ui.region_clear_filter", {"type": 'F', "value": 'PRESS', "alt": True}, None),
     ])
 
     return keymap
@@ -2429,6 +2431,10 @@ def km_node_editor(params):
         ("node.group_make", {"type": 'G', "value": 'PRESS', "ctrl": True}, None),
         ("node.group_ungroup", {"type": 'G', "value": 'PRESS', "ctrl": True, "alt": True}, None),
         ("node.group_separate", {"type": 'P', "value": 'PRESS'}, None),
+        ("node.comment_edit", {"type": 'LEFTMOUSE', "value": 'DOUBLE_CLICK'}, None),
+        ("node.comment_edit", {"type": 'RET', "value": 'PRESS'}, None),
+        ("node.comment_edit", {"type": 'F2', "value": 'PRESS'},
+         {"properties": [("use_active", True)]}),
         ("node.group_enter_exit", {"type": 'LEFTMOUSE', "value": 'DOUBLE_CLICK'}, None),
         ("node.group_edit", {"type": 'TAB', "value": 'PRESS'},
          {"properties": [("exit", False)]}),
@@ -3157,7 +3163,7 @@ def km_sequencer_generic(params):
             sidebar_key={"type": 'N', "value": 'PRESS'},
         ),
         ("wm.context_toggle", {"type": 'O', "value": 'PRESS', "shift": True},
-         {"properties": [("data_path", "scene.sequence_editor.show_overlay_frame")]}),
+         {"properties": [("data_path", "sequencer_scene.sequence_editor.show_overlay_frame")]}),
         ("wm.context_toggle_enum", {"type": 'TAB', "value": 'PRESS', "ctrl": True},
          {"properties": [("data_path", "space_data.view_type"), ("value_1", 'SEQUENCER'), ("value_2", 'PREVIEW')]}),
         ("wm.context_toggle", {"type": 'TAB', "value": 'PRESS', "shift": True},
@@ -3294,7 +3300,7 @@ def km_sequencer(params):
         op_menu_pie("SEQUENCER_MT_view_pie", {"type": 'ACCENT_GRAVE', "value": 'PRESS'}),
         ("sequencer.slip", {"type": 'S', "value": 'PRESS'}, {"properties": [("use_cursor_position", False)]}),
         ("wm.context_set_int", {"type": 'O', "value": 'PRESS'},
-         {"properties": [("data_path", "scene.sequence_editor.overlay_frame"), ("value", 0)]}),
+         {"properties": [("data_path", "sequencer_scene.sequence_editor.overlay_frame"), ("value", 0)]}),
         ("transform.seq_slide", {"type": 'G', "value": 'PRESS'},
          {"properties": [("view2d_edge_pan", True)]}),
         ("transform.seq_slide", {"type": params.select_mouse, "value": 'CLICK_DRAG'},
@@ -4084,6 +4090,8 @@ def km_grease_pencil_paint_mode(params):
     )
 
     items.extend([
+        # Select All
+        *_template_items_select_actions(params, "grease_pencil.select_all"),
         # Active material
         op_menu("VIEW3D_MT_greasepencil_material_active", {"type": 'U', "value": 'PRESS'}),
         # Active layer
@@ -4126,17 +4134,32 @@ def km_grease_pencil_paint_mode(params):
         # Lasso/Box erase
         ("grease_pencil.erase_lasso", {"type": 'RIGHTMOUSE', "value": 'PRESS', "ctrl": True, "alt": True}, None),
         ("grease_pencil.erase_box", {"type": "B", "value": 'PRESS'}, {"properties": [("wait_for_input", True)]}),
-        # Brush size
-        ("wm.radial_control", {"type": 'F', "value": 'PRESS'},
-         {"properties": [("data_path_primary", "tool_settings.gpencil_paint.brush.size")]}),
-        # Brush strength
-        ("wm.radial_control", {"type": 'F', "value": 'PRESS', "shift": True},
-         {"properties": [("data_path_primary", "tool_settings.gpencil_paint.brush.strength")]}),
+        # Radial controls
+        *_template_paint_radial_control("gpencil_paint"),
 
         *_template_asset_shelf_popup("VIEW3D_AST_brush_gpencil_paint", params.spacebar_action),
 
         *_template_items_context_panel("VIEW3D_PT_greasepencil_draw_context_menu", params.context_menu_event),
+
+        # Delete menu
+        op_menu("VIEW3D_MT_edit_greasepencil_delete", {"type": 'DEL', "value": 'PRESS'}),
+        # Copy/paste
+        ("grease_pencil.copy", {"type": 'C', "value": 'PRESS', "ctrl": True}, None),
+        ("grease_pencil.paste", {"type": 'V', "value": 'PRESS', "ctrl": True}, None),
+        ("grease_pencil.paste", {"type": 'V', "value": 'PRESS', "shift": True, "ctrl": True},
+         {"properties": [("paste_back", True)]}),
+
+        # Duplicate + Move
+        ("grease_pencil.duplicate_move", {"type": 'D', "value": 'PRESS', "shift": True}, None),
+
+        # Transform Actions.
+        *_template_items_transform_actions(params, use_bend=True, use_mirror=True, use_tosphere=True, use_shear=True),
     ])
+
+    if params.select_mouse == 'LEFTMOUSE' and not params.legacy:
+        items.extend([
+            op_tool_cycle("builtin.select_lasso", {"type": 'W', "value": 'PRESS'}),
+        ])
 
     return keymap
 
@@ -8665,6 +8688,16 @@ def km_3d_view_tool_paint_grease_pencil_primitive_curve(_params):
     )
 
 
+def km_3d_view_tool_paint_grease_pencil_carver(params):
+    return (
+        "3D View Tool: Paint Grease Pencil, Carver",
+        {"space_type": 'VIEW_3D', "region_type": 'WINDOW'},
+        {"items": [
+            ("grease_pencil.stroke_carver", {"type": params.tool_mouse, "value": 'PRESS'}, None),
+        ]},
+    )
+
+
 def km_3d_view_tool_paint_grease_pencil_eyedropper(params):
     return (
         "3D View Tool: Paint Grease Pencil, Eyedropper",
@@ -9318,6 +9351,7 @@ def generate_keymaps(params=None):
         km_3d_view_tool_edit_grease_pencil_texture_gradient(params),
         km_3d_view_tool_edit_grease_pencil_pen(params),
         km_3d_view_tool_edit_grease_pencil_interpolate(params),
+        km_3d_view_tool_paint_grease_pencil_carver(params),
         *(km_sequencer_tool_generic_select_box(params, fallback=fallback)
           for fallback in (False, True)),
         *(km_sequencer_preview_tool_generic_select(params, fallback=fallback)

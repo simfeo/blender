@@ -4,7 +4,7 @@
 
 #include <algorithm>
 
-#include "BLI_kdtree.hh"
+#include "BLI_kdtree_new.hh"
 #include "BLI_listbase.hh"
 #include "BLI_math_vector.hh"
 #include "BLI_rand.hh"
@@ -180,41 +180,37 @@ static std::unique_ptr<CurvesSculptStrokeOperation> start_brush_operation(
 
 struct SculptCurvesBrushStroke final : public PaintStroke {
   SculptCurvesBrushStroke(bContext *C, wmOperator *op, const wmEvent *event)
-      : PaintStroke(C, op, event)
+      : PaintStroke(C, op, event, PaintMode::SculptCurves)
   {
   }
 
-  bool get_location(float out[3], const float mouse[2], bool force_original) override;
-  bool test_start(wmOperator *op, const float mouse[2]) override;
+  std::optional<float3> get_location(float2 mouse, bool force_original) override;
+  bool test_start(wmOperator *op, float2 mouse) override;
   void redraw(bool final) override;
   bool test_cancel() override;
-  void update_step(wmOperator *op, PointerRNA *stroke_element) override;
+  void update_step(wmOperator *op, const StrokeStep &stroke_step) override;
   void done(bool is_cancel, bool stroke_started) override;
 
  private:
   std::unique_ptr<CurvesSculptStrokeOperation> operation_;
 };
 
-bool SculptCurvesBrushStroke::get_location(float out[3],
-                                           const float mouse[2],
-                                           bool /*force_original*/)
+std::optional<float3> SculptCurvesBrushStroke::get_location(const float2 mouse,
+                                                            bool /*force_original*/)
 {
-  out[0] = mouse[0];
-  out[1] = mouse[1];
-  out[2] = 0;
-  return true;
+  return float3(mouse.x, mouse.y, 0.0f);
 }
 
-bool SculptCurvesBrushStroke::test_start(wmOperator * /*op*/, const float /*mouse*/[2])
+bool SculptCurvesBrushStroke::test_start(wmOperator * /*op*/, const float2 /*mouse*/)
 {
   return true;
 }
 
-void SculptCurvesBrushStroke::update_step(wmOperator *op, PointerRNA *stroke_element)
+void SculptCurvesBrushStroke::update_step(wmOperator *op, const StrokeStep &stroke_step)
 {
   StrokeExtension stroke_extension;
-  RNA_float_get_array(stroke_element, "mouse", stroke_extension.mouse_position);
-  stroke_extension.pressure = RNA_float_get(stroke_element, "pressure");
+  stroke_extension.mouse_position = stroke_step.mouse;
+  stroke_extension.pressure = stroke_step.pressure;
   stroke_extension.reports = op->reports;
 
   if (!operation_) {
@@ -675,50 +671,24 @@ static void select_grow_invoke_per_curve(const Curves &curves_id,
   threading::parallel_invoke(
       1024 < curve_op_data.selected_points.size() + curve_op_data.unselected_points.size(),
       [&]() {
-        /* Build KD-tree for the selected points. */
-        KDTree<float3> *kdtree = kdtree_new<float3>(curve_op_data.selected_points.size());
-        BLI_SCOPED_DEFER([&]() { kdtree_free<float3>(kdtree); });
-        curve_op_data.selected_points.foreach_index([&](const int point_i) {
-          const float3 &position = positions[point_i];
-          kdtree_insert<float3>(kdtree, point_i, position);
-        });
-        kdtree_balance<float3>(kdtree);
-
         /* For each unselected point, compute the distance to the closest selected point. */
+        KDTreeNew<float3> kdtree(positions, curve_op_data.selected_points);
         curve_op_data.distances_to_selected.reinitialize(curve_op_data.unselected_points.size());
-        threading::parallel_for(
-            curve_op_data.unselected_points.index_range(), 256, [&](const IndexRange range) {
-              for (const int i : range) {
-                const int point_i = curve_op_data.unselected_points[i];
-                const float3 &position = positions[point_i];
-                KDTreeNearest<float3> nearest;
-                kdtree_find_nearest<float3>(kdtree, position, &nearest);
-                curve_op_data.distances_to_selected[i] = nearest.dist;
-              }
-            });
+        curve_op_data.unselected_points.foreach_index(
+            [&](const int point, const int pos) {
+              kdtree.find_nearest(positions[point], &curve_op_data.distances_to_selected[pos]);
+            },
+            exec_mode::grain_size(256));
       },
       [&]() {
-        /* Build KD-tree for the unselected points. */
-        KDTree<float3> *kdtree = kdtree_new<float3>(curve_op_data.unselected_points.size());
-        BLI_SCOPED_DEFER([&]() { kdtree_free<float3>(kdtree); });
-        curve_op_data.unselected_points.foreach_index([&](const int point_i) {
-          const float3 &position = positions[point_i];
-          kdtree_insert<float3>(kdtree, point_i, position);
-        });
-        kdtree_balance<float3>(kdtree);
-
         /* For each selected point, compute the distance to the closest unselected point. */
+        KDTreeNew<float3> kdtree(positions, curve_op_data.unselected_points);
         curve_op_data.distances_to_unselected.reinitialize(curve_op_data.selected_points.size());
-        threading::parallel_for(
-            curve_op_data.selected_points.index_range(), 256, [&](const IndexRange range) {
-              for (const int i : range) {
-                const int point_i = curve_op_data.selected_points[i];
-                const float3 &position = positions[point_i];
-                KDTreeNearest<float3> nearest;
-                kdtree_find_nearest<float3>(kdtree, position, &nearest);
-                curve_op_data.distances_to_unselected[i] = nearest.dist;
-              }
-            });
+        curve_op_data.selected_points.foreach_index(
+            [&](const int point, const int pos) {
+              kdtree.find_nearest(positions[point], &curve_op_data.distances_to_unselected[pos]);
+            },
+            exec_mode::grain_size(256));
       });
 
   const float4x4 &curves_to_world_mat = curves_ob.object_to_world();

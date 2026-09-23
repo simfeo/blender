@@ -31,6 +31,7 @@ class ColorSpace;
 using ColorSpace = ocio::ColorSpace;
 
 struct rcti;
+struct ColorManagedColorspaceSettings;
 struct Depsgraph;
 struct ID;
 struct ImBuf;
@@ -156,12 +157,12 @@ MovieReader *openanim(const char *filepath,
                       ImBufFlags ibuf_flags,
                       int streamindex,
                       bool keep_original_colorspace,
-                      char colorspace[IMA_MAX_SPACE]);
+                      ColorManagedColorspaceSettings *colorspace_settings);
 MovieReader *openanim_noload(const char *filepath,
                              ImBufFlags flags,
                              int streamindex,
                              bool keep_original_colorspace,
-                             char colorspace[IMA_MAX_SPACE]);
+                             ColorManagedColorspaceSettings *colorspace_settings);
 
 /* ********************************** NEW IMAGE API *********************** */
 
@@ -203,11 +204,14 @@ ImBuf *BKE_image_acquire_ibuf(Image *ima, ImageUser *iuser, void **r_lock);
  *
  * If #r_load_failed is provided, it is set to true when the image is known to have failed
  * loading when the #ImBuf is null, as opposed to not having been loaded yet.
+ *
+ * If #cached_only is true, image buffers are not loaded from files.
  */
 ImBuf *BKE_image_acquire_ibuf_gpu(Image *ima,
                                   ImageUser *iuser,
                                   void **r_lock,
-                                  bool *r_load_failed = nullptr);
+                                  bool *r_load_failed = nullptr,
+                                  bool cached_only = false);
 
 /**
  * Return image buffer for given image, user, pass, and view.
@@ -249,28 +253,41 @@ void BKE_image_alpha_mode_from_extension(Image *image);
 /**
  * Returns a new image or NULL if it can't load.
  *
+ * \param check_open: Whether to check if the file can be opened. If false, the function will
+ * not attempt to open the file specified by the filepath.
+ *
  * \note: The `_in_lib` version allows to add a new image in a given library. It also affects the
  * root path used for relative filepaths. See also #BKE_id_new and #BKE_id_new_in_lib
  * documentation for more details.
  */
-Image *BKE_image_load(Main *bmain, const char *filepath);
+Image *BKE_image_load(Main *bmain, const char *filepath, bool check_open = true);
 Image *BKE_image_load_in_lib(Main *bmain,
                              std::optional<Library *> owner_library,
-                             const char *filepath);
+                             const char *filepath,
+                             bool check_open = true);
 /**
  * Returns existing Image when filename/type is same.
  *
  * Checks if image was already loaded, then returns same image otherwise creates new
  * (does not load ibuf itself).
  *
+ * \param check_open: Whether to check if the file can be opened. If false, the function will
+ * not attempt to open the file specified by the filepath.
+ * \param r_exists: Optional output parameter that will be set to true if an image data-block
+ * already exists for this filepath.
+ *
  * \note: The `_in_lib` version allows to find an existing (or add a new) image in a given library.
  * It also affects the root path used for relative filepaths. See also #BKE_id_new and
  * #BKE_id_new_in_lib documentation for more details.
  */
-Image *BKE_image_load_exists(Main *bmain, const char *filepath, bool *r_exists = nullptr);
+Image *BKE_image_load_exists(Main *bmain,
+                             const char *filepath,
+                             bool check_open = true,
+                             bool *r_exists = nullptr);
 Image *BKE_image_load_exists_in_lib(Main *bmain,
                                     std::optional<Library *> owner_library,
                                     const char *filepath,
+                                    bool check_open = true,
                                     bool *r_exists = nullptr);
 
 /**

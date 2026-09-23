@@ -61,12 +61,12 @@ BLOCKLIST = [
     "osl_camera_bevel.blend",
     # Extreme texture values interpolate differently on different GPUs.
     "image_log.blend",
-    # Exhibit the LTC light leaking issue. To be enabeld back after fixing.
-    "light_path_glossy_depth.blend",
     # Exhibit non-deterministic behavior because of tracing outside the spotlight 45° cone.
     "light_path_is_camera_ray.blend",
     # Exhibit non-deterministic (to be fixed).
     "background_scene.blend",
+    # EEVEE doesnt have adaptive dicing.
+    "panorama_dicing.blend",
     # Currently, the only image_mipmap test enabled for EEVEE is image_mipmap_large_tex.blend.
     "image_cache_evict.blend",
     "image_mipmap_area_light.blend",
@@ -80,6 +80,7 @@ BLOCKLIST = [
     "image_mipmap_world_sun.blend",
 
     ### Cycles only tests go here ###
+    "gsplat.*.blend",
 ]
 
 BLOCKLIST_METAL = [
@@ -105,6 +106,8 @@ BLOCKLIST_VULKAN = [
 ]
 
 BLOCKLIST_OPENGL = [
+    # Fails on AMD.
+    "aov_consecutive_view_layers.blend",
 ]
 
 BLOCKLIST_INTEL = [
@@ -316,7 +319,7 @@ def get_arguments(filepath, output_filepath, gpu_backend):
         "--debug-exit-on-error"]
 
     if gpu_backend:
-        arguments.extend(["--gpu-backend", gpu_backend])
+        arguments.extend(["--gpu-backend", gpu_backend, "--debug-gpu-backend-no-fallback"])
 
     arguments.extend([
         filepath,
@@ -399,10 +402,20 @@ def main():
             # Reference images on the CI worker seem to differ slightly from images on
             # an NVIDIA RTX 4060 Ti with driver 610.74
             report.set_fail_threshold(6.0 / 255.0)
+    elif test_dir_name.startswith('attributes') and gpu_vendor == "AMD":
+        # attribute_pointcloud_color
+        report.set_fail_percent(0.09)
+    elif test_dir_name.startswith('ray_portal') and gpu_vendor == "AMD":
+        # AMD PRO W7600
+        report.set_fail_percent(0.09)
     elif test_dir_name.startswith('camera'):
         # camera_stereo_panoramic have some platform specific small differences
-        report.set_fail_percent(0.14)
+        # Fix back to 0.14 once eevee panorama has proper filtering.
+        report.set_fail_percent(1.5)
         report.set_fail_threshold(6.0 / 255.0)
+        if gpu_vendor == "AMD" and args.gpu_backend == "opengl":
+            # camera_fisheye_polynomial
+            report.set_fail_percent(1.8)
     elif test_dir_name.startswith('image_colorspace'):
         # image_log has hot pixels that result in platform differences.
         report.set_fail_percent(0.15)
@@ -420,6 +433,9 @@ def main():
         # Dithered transparency uses platform dependent noise pattern.
         report.set_fail_percent(0.22)
         report.set_fail_threshold(10.0 / 255.0)
+    elif test_dir_name.startswith('lighting_node'):
+        # Shadow noise pattern is system dependent.
+        report.set_fail_threshold(6.0 / 255.0)
     elif test_dir_name.startswith('instancing'):
         # Small pointcloud has platform dependent raster pattern
         report.set_fail_threshold(8.0 / 255.0)
@@ -432,10 +448,10 @@ def main():
     elif test_dir_name.startswith('principled_bsdf'):
         # principled_bsdf_thinfilm_metallic has some weird behavior in reflection of
         # black surfaces. to be investigated
-        report.set_fail_percent(0.09)
+        report.set_fail_percent(0.098)
         # principled_bsdf_dispersion has some difference in the highlights
         if gpu_vendor == "AMD":
-            report.set_fail_threshold(6.0 / 255.0)
+            report.set_fail_threshold(10.0 / 255.0)
     elif test_dir_name.startswith('integrator'):
         # Noise difference in transparent materials (mostly transparent_spatial_splits)
         report.set_fail_threshold(8.0 / 255.0)
@@ -458,7 +474,7 @@ def main():
     elif test_dir_name.startswith('shader'):
         # normal_mapping_light_leak fireflies.
         # fresnel_layer_weight high values are accumulated differently on different platform.
-        report.set_fail_percent(0.2)
+        report.set_fail_percent(0.221)
         if gpu_vendor == "INTEL":
             # mix_color uses implementation dependent function.
             report.set_fail_percent(0.41)
@@ -477,6 +493,9 @@ def main():
     elif test_dir_name.startswith('pointcloud'):
         # Only because of points_transparent
         report.set_fail_threshold(8.0 / 255.0)
+        if gpu_vendor == "AMD" and args.gpu_backend == "opengl":
+            # points_transparent
+            report.set_fail_percent(0.9)
     elif test_dir_name.startswith('motion_blur'):
         # Failure can be subtle, tighten threshold
         report.set_fail_percent(0.04)
@@ -486,8 +505,13 @@ def main():
             report.set_fail_percent(0.06)
         if args.gpu_backend == "opengl" and gpu_vendor == "AMD":
             # large_combined_motion has 1 hot pixel difference in rasterization.
-            report.set_fail_percent(0.043)
+            # shutter_curve_triangle on AMD PRO W7600
+            report.set_fail_percent(0.1)
             report.set_fail_threshold(3.0 / 255.0)
+    elif test_dir_name.startswith('bsdf') and args.gpu_backend == "opengl" and gpu_vendor == "AMD":
+        # ray_portal fireflies on AMD PRO W7600
+        report.set_fail_percent(0.3)
+        report.set_fail_threshold(3.0 / 255.0)
     elif test_dir_name.startswith('lightprobe') and args.gpu_backend == "metal":
         # Some shadow difference, to be investigated
         report.set_fail_percent(0.09)

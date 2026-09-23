@@ -80,6 +80,7 @@
 #include "UI_view2d.hh"
 
 #include "WM_api.hh"
+#include "WM_toolsystem.hh"
 
 #include "DRW_render.hh"
 #include "draw_cache.hh"
@@ -158,6 +159,10 @@ DRWContext::DRWContext(Mode mode_,
   }
   else {
     this->object_pose = nullptr;
+  }
+
+  if (C != nullptr) {
+    this->active_tool = WM_toolsystem_ref_from_context(C);
   }
 
   /* View layer can be lazily synced. */
@@ -394,6 +399,7 @@ void DRWData::modules_init()
 {
   using namespace blender::draw;
   DRW_pointcloud_init(this);
+  DRW_gsplat_init(this);
   DRW_curves_init(this);
   DRW_volume_init(this);
 }
@@ -403,6 +409,7 @@ void DRWData::modules_begin_sync()
   using namespace blender::draw;
   DRW_curves_begin_sync(this);
   DRW_smoke_begin_sync(this);
+  DRW_gsplat_begin_sync();
 }
 
 void DRWData::modules_exit()
@@ -417,6 +424,7 @@ void DRW_viewport_data_free(DRWData *drw_data)
   }
   DRW_volume_module_free(drw_data->volume_module);
   DRW_pointcloud_module_free(drw_data->pointcloud_module);
+  DRW_gsplat_module_free(drw_data->gsplat_module);
   DRW_curves_module_free(drw_data->curves_module);
   delete drw_data->default_view;
   MEM_delete(drw_data);
@@ -1008,9 +1016,7 @@ void DRW_cache_free_old_batches(Main *bmain)
 
   lasttime = ctime;
 
-  for (scene = static_cast<Scene *>(bmain->scenes.first); scene;
-       scene = static_cast<Scene *>(scene->id.next))
-  {
+  for (scene = bmain->scenes.first(); scene; scene = static_cast<Scene *>(scene->id.next)) {
     for (ViewLayer &view_layer : scene->view_layers) {
       Depsgraph *depsgraph = BKE_scene_get_depsgraph(scene, &view_layer);
       if (depsgraph == nullptr) {
@@ -1111,7 +1117,9 @@ static void drw_render_border_mask(const DRWContext &ctx)
   const RegionView3D *rv3d = ctx.rv3d;
 
   /* Check if we need to do any render border masking. */
-  if (v3d == nullptr || rv3d == nullptr || rv3d->persp != RV3D_CAMOB || rv3d->camroll == 0.0f) {
+  if (v3d == nullptr || rv3d == nullptr || rv3d->persp != RV3D_CAMOB || v3d->camera == nullptr ||
+      rv3d->camroll == 0.0f)
+  {
     return;
   }
 
@@ -1135,9 +1143,14 @@ static void drw_render_border_mask(const DRWContext &ctx)
     return;
   }
 
+  float roll_angle = rv3d->camroll;
+  if ((rv3d->rflag & RV3D_FLIP_X) != 0) {
+    roll_angle = -roll_angle;
+  }
+
   /* Compute corners of the render border. */
   const float2 pivot = ctx.size * 0.5f;
-  const float2x2 roll = math::from_rotation<float2x2>(math::AngleRadian(rv3d->camroll));
+  const float2x2 roll = math::from_rotation<float2x2>(math::AngleRadian(roll_angle));
   const float2 corner[4] = {
       pivot + roll * (float2(unrolled_border.xmin, unrolled_border.ymin) - pivot),
       pivot + roll * (float2(unrolled_border.xmax, unrolled_border.ymin) - pivot),
@@ -1919,8 +1932,7 @@ void DRW_render_gpencil(RenderEngine *engine, Depsgraph *depsgraph)
     BLI_rcti_init(&render_rect, 0, draw_ctx.size[0], 0, draw_ctx.size[1]);
   }
 
-  for (RenderView *render_view = static_cast<RenderView *>(render_result->views.first);
-       render_view != nullptr;
+  for (RenderView *render_view = render_result->views.first(); render_view != nullptr;
        render_view = render_view->next)
   {
     RE_SetActiveRenderView(render, render_view->name);
@@ -1985,9 +1997,8 @@ void DRW_render_to_image(
                                                        draw_ctx.size[1],
                                                        view_layer->name,
                                                        /*RR_ALL_VIEWS*/ nullptr);
-  RenderLayer *render_layer = static_cast<RenderLayer *>(render_result->layers.first);
-  for (RenderView *render_view = static_cast<RenderView *>(render_result->views.first);
-       render_view != nullptr;
+  RenderLayer *render_layer = render_result->layers.first();
+  for (RenderView *render_view = render_result->views.first(); render_view != nullptr;
        render_view = render_view->next)
   {
     RE_SetActiveRenderView(render, render_view->name);
@@ -2436,6 +2447,9 @@ void DRW_module_init()
 
   BKE_pointcloud_batch_cache_dirty_tag_cb = DRW_pointcloud_batch_cache_dirty_tag;
   BKE_pointcloud_batch_cache_free_cb = DRW_pointcloud_batch_cache_free;
+
+  BKE_gsplat_batch_cache_dirty_tag_cb = DRW_gsplat_batch_cache_dirty_tag;
+  BKE_gsplat_batch_cache_free_cb = DRW_gsplat_batch_cache_free;
 
   BKE_volume_batch_cache_dirty_tag_cb = DRW_volume_batch_cache_dirty_tag;
   BKE_volume_batch_cache_free_cb = DRW_volume_batch_cache_free;

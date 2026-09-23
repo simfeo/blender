@@ -97,6 +97,7 @@ set(SRC
   intern/usd_reader_material.cc
   intern/usd_reader_mesh.cc
   intern/usd_reader_nurbs.cc
+  intern/usd_reader_particlefield.cc
   intern/usd_reader_pointinstancer.cc
   intern/usd_reader_points.cc
   intern/usd_reader_prim.cc
@@ -120,7 +121,6 @@ set(SRC
   intern/usd_blend_shape_utils.hh
   intern/usd_colorspace_utils.hh
   intern/usd_exporter_context.hh
-  intern/usd_hash_types.hh
   intern/usd_hierarchy_iterator.hh
   intern/usd_hook.hh
   intern/usd_instancing_utils.hh
@@ -153,6 +153,7 @@ set(SRC
   intern/usd_reader_material.hh
   intern/usd_reader_mesh.hh
   intern/usd_reader_nurbs.hh
+  intern/usd_reader_particlefield.hh
   intern/usd_reader_pointinstancer.hh
   intern/usd_reader_points.hh
   intern/usd_reader_prim.hh

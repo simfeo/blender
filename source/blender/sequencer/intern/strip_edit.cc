@@ -18,6 +18,7 @@
 
 #include "BLT_translation.hh"
 
+#include "BKE_animsys.hh"
 #include "BKE_sound.hh"
 
 #include "strip_time.hh"
@@ -129,7 +130,7 @@ void edit_update_muting(Editing *ed)
 {
   if (ed) {
     /* mute all sounds up to current metastack list */
-    MetaStack *ms = static_cast<MetaStack *>(ed->metastack.last);
+    MetaStack *ms = ed->metastack.last();
 
     if (ms) {
       strip_update_muting_recursive(&ed->channels, &ed->seqbase, ms->parent_strip, true);
@@ -274,7 +275,6 @@ static void seq_split_set_right_hold_offset(Main *bmain,
     strip->anim_endofs += round_fl_to_int((content_end - timeline_frame) * speed_factor);
   }
 
-  /* Needed only to set `strip->len`. */
   add_update_content_length(bmain, scene, strip);
   strip->right_handle_set(scene, timeline_frame);
 }
@@ -302,7 +302,6 @@ static void seq_split_set_left_hold_offset(Main *bmain,
     strip->end_offset_set(strip->end_offset() + offset);
   }
 
-  /* Needed only to set `strip->len`. */
   add_update_content_length(bmain, scene, strip);
   strip->left_handle_set(scene, timeline_frame);
 }
@@ -445,8 +444,8 @@ Strip *edit_strip_split(Main *bmain,
   seqbase_duplicate_recursive(
       bmain, scene, scene, &right_strips, &left_strips, StripDuplicate::All, 0);
 
-  Strip *left_strip = static_cast<Strip *>(left_strips.first);
-  Strip *right_strip = static_cast<Strip *>(right_strips.first);
+  Strip *left_strip = left_strips.first();
+  Strip *right_strip = right_strips.first();
   Strip *return_strip = nullptr;
 
   /* Move strips from detached `ListBase`, otherwise they can't be flagged for removal. */
@@ -457,7 +456,7 @@ Strip *edit_strip_split(Main *bmain,
    * strips to seqbase, for lookup cache to work correctly. */
   Strip *strip_rename = right_strip;
   for (; strip_rename; strip_rename = strip_rename->next) {
-    ensure_unique_name(*bmain, strip_rename, scene);
+    ensure_unique_name(strip_rename, scene, {});
   }
 
   /* Split strips. */

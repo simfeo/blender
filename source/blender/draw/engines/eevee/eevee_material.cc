@@ -13,6 +13,7 @@
 #include "BKE_material.hh"
 #include "BKE_node.hh"
 #include "BKE_node_legacy_types.hh"
+#include "BKE_node_tree_update.hh"
 #include "BKE_scene.hh"
 
 #include "eevee_instance.hh"
@@ -47,6 +48,7 @@ MaterialModule::MaterialModule(Instance &inst) : inst_(inst)
                        *bke::node_find_socket(*output, SOCK_IN, "Surface"_ustr));
 
     bke::node_set_active(*ntree, *output);
+    BKE_ntree_update_without_main(*ntree);
   }
   {
     metallic_mat = BKE_id_new_nomain<blender::Material>("EEVEE default metal");
@@ -68,6 +70,7 @@ MaterialModule::MaterialModule(Instance &inst) : inst_(inst)
                        *bke::node_find_socket(*output, SOCK_IN, "Surface"_ustr));
 
     bke::node_set_active(*ntree, *output);
+    BKE_ntree_update_without_main(*ntree);
   }
   {
     default_surface = reinterpret_cast<blender::Material *>(BKE_id_copy_ex(
@@ -94,6 +97,7 @@ MaterialModule::MaterialModule(Instance &inst) : inst_(inst)
                        *bke::node_find_socket(*output, SOCK_IN, "Surface"_ustr));
 
     bke::node_set_active(*ntree, *output);
+    BKE_ntree_update_without_main(*ntree);
   }
 }
 
@@ -183,7 +187,8 @@ MaterialPass MaterialModule::material_pass_get(Object *ob,
 
   inst_.manager->register_layer_attributes(matpass.gpumat);
 
-  const bool is_transparent = GPU_material_flag_get(matpass.gpumat, GPU_MATFLAG_TRANSPARENT);
+  const bool is_transparent = GPU_material_flag_get(matpass.gpumat, GPU_MATFLAG_TRANSPARENT) ||
+                              geometry_type == MAT_GEOM_GSPLAT;
 
   bool pass_updated = GPU_material_compilation_timestamp(matpass.gpumat) > gpu_pass_last_update_;
 
@@ -348,6 +353,12 @@ blender::Material *MaterialModule::material_from_slot(Object *ob, int slot)
   if (ma == nullptr) {
     if (ob->type == OB_VOLUME) {
       return BKE_material_default_volume();
+    }
+    if (ob->type == OB_POINTCLOUD) {
+      PointCloud &pointcloud = DRW_object_get_data_for_drawing<PointCloud>(*ob);
+      if (pointcloud.type == PointCloudType::GSplat) {
+        return BKE_material_default_gsplat();
+      }
     }
     return BKE_material_default_surface();
   }

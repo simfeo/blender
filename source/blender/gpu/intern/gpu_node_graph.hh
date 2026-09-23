@@ -39,6 +39,8 @@ enum GPUDataSource {
   GPU_SOURCE_TEX_TILED_MAPPING,
   GPU_SOURCE_FUNCTION_CALL,
   GPU_SOURCE_CRYPTOMATTE,
+  GPU_SOURCE_SHADING_DATA,
+  GPU_SOURCE_KERNEL_GLOBALS,
 };
 
 enum GPUNodeLinkType {
@@ -55,6 +57,8 @@ enum GPUNodeLinkType {
   GPU_NODE_LINK_OUTPUT,
   GPU_NODE_LINK_UNIFORM,
   GPU_NODE_LINK_DIFFERENTIATE_FLOAT_FN,
+  GPU_NODE_LINK_SHADING_DATA,
+  GPU_NODE_LINK_KERNEL_GLOBALS,
 };
 
 enum GPUNodeTag {
@@ -226,7 +230,8 @@ void gpu_node_graph_finalize_uniform_attrs(GPUNodeGraph *graph);
  *
  * NOTE: Graph optimizations will produce a shader which needs to be re-compiled
  * more frequently, however, the default material pass will always exist to fall
- * back on. */
+ * back on.
+ */
 void gpu_node_graph_optimize(GPUNodeGraph *graph);
 
 /**

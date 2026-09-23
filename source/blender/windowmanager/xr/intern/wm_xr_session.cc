@@ -64,7 +64,7 @@ static CLG_LogRef LOG = {"wm.xr"};
 static void wm_xr_session_create_cb()
 {
   Main *bmain = G_MAIN;
-  wmWindowManager *wm = static_cast<wmWindowManager *>(bmain->wm.first);
+  wmWindowManager *wm = bmain->wm.first();
   wmXrData *xr_data = &wm->xr;
   wmXrSessionState *state = &xr_data->runtime->session_state;
   XrSessionSettings *settings = &xr_data->session_settings;
@@ -253,7 +253,7 @@ wmWindow *wm_xr_session_root_window_or_fallback_get(const wmWindowManager *wm,
     return xr_win;
   }
   /* Otherwise, fall back. */
-  return static_cast<wmWindow *>(wm->windows.first);
+  return wm->windows.first();
 }
 
 enum wmXrSessionStateEvent {
@@ -471,6 +471,12 @@ bContext *WM_xr_session_context_ensure(wmXrData *xr, const wmWindowManager *wm)
   /* XR session root window. Also sets the context scene. */
   wmWindow *xr_win = wm_xr_session_root_window_or_fallback_get(wm, xr->runtime);
   CTX_wm_window_set(xr->runtime->b_context, xr_win);
+
+  /* `Main` may have been replaced while the session is running (global undo),
+   * in which case only the calling context is updated and this XR context is left dangling.
+   *
+   * This is the inverse of the main-context sync in #wm_event_handle_xrevent(). */
+  CTX_data_main_set(xr->runtime->b_context, G_MAIN);
 
   /* Unique offscreen XR area. */
   CTX_wm_area_set(xr->runtime->b_context, xr->runtime->offscreen_area);
@@ -1640,7 +1646,7 @@ void wm_xr_session_actions_update(wmWindowManager *wm)
     bContext *xr_context = WM_xr_session_context_ensure(xr, wm);
     ScrArea *xr_offscreen_area = CTX_wm_area(xr_context);
 
-    View3D *v3d = static_cast<View3D *>(xr_offscreen_area->spacedata.first);
+    View3D *v3d = static_cast<View3D *>(xr_offscreen_area->spacedata.first_);
     v3d->object_type_exclude_viewport = settings->object_type_exclude_viewport;
     v3d->object_type_exclude_select = settings->object_type_exclude_select;
 

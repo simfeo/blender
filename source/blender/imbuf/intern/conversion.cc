@@ -24,7 +24,6 @@
 namespace blender {
 
 /* -------------------------------------------------------------------- */
-
 /** \name Generic Buffer Conversion
  * \{ */
 
@@ -369,6 +368,9 @@ void IMB_float_from_byte(ImBuf *ibuf)
       return;
     }
   }
+
+  /* Pixels get converted to scene linear, so clear colorspace. */
+  ibuf->float_buffer.colorspace = nullptr;
 
   rcti region_to_update;
   BLI_rcti_init(&region_to_update, 0, ibuf->x, 0, ibuf->y);

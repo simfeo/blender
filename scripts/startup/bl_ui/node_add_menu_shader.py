@@ -122,6 +122,8 @@ class NODE_MT_shader_node_input_base(node_add_menu.NodeMenu):
                 "Portal Depth"
             ],
         )
+        self.node_operator(layout, "ShaderNodeLightEvaluation", poll=object_eevee_shader_nodes_poll(context))
+        self.node_operator(layout, "ShaderNodeLightInfo", poll=object_eevee_shader_nodes_poll(context))
         self.node_operator_with_outputs(
             context, layout, "ShaderNodeObjectInfo",
             ["Location", "Color", "Alpha", "Object Index", "Material Index", "Random"],
@@ -139,6 +141,7 @@ class NODE_MT_shader_node_input_base(node_add_menu.NodeMenu):
         )
         self.node_operator(layout, "ShaderNodeRaycast", poll=object_material_shader_nodes_poll(context))
         self.node_operator_with_outputs(context, layout, "GeometryNodeInputSceneTime", ["Frame", "Seconds"])
+        self.node_operator(layout, "ShaderNodeShadowRaycast", poll=object_eevee_shader_nodes_poll(context))
         self.node_operator(layout, "ShaderNodeTangent")
         self.node_operator_with_outputs(
             context, layout, "ShaderNodeTexCoord",
@@ -207,6 +210,9 @@ class NODE_MT_shader_node_output_base(node_add_menu.NodeMenu):
             "ShaderNodeOutputWorld",
             poll=world_shader_nodes_poll(context),
         )
+        layout.separator()
+        self.node_operator(layout, "NodeEnableOutput")
+        self.node_operator_with_searchable_enum(context, layout, "GeometryNodeWarning", "warning_type")
 
         self.draw_assets_for_catalog(layout, self.bl_label)
 
@@ -265,6 +271,11 @@ class NODE_MT_shader_node_shader_base(node_add_menu.NodeMenu):
             layout,
             "ShaderNodeHoldout",
             poll=object_material_shader_nodes_poll(context),
+        )
+        self.node_operator(
+            layout,
+            "ShaderNodeLightAccumulation",
+            poll=object_eevee_shader_nodes_poll(context)
         )
         self.node_operator(
             layout,
@@ -440,9 +451,16 @@ class NODE_MT_shader_node_math_base(node_add_menu.NodeMenu):
     def draw(self, context):
         layout = self.layout
 
+        self.node_operator_with_searchable_enum(context, layout, "FunctionNodeBooleanMath", "operation")
         self.node_operator(layout, "ShaderNodeClamp")
         self.node_operator(layout, "ShaderNodeFloatCurve")
         self.node_operator(layout, "ShaderNodeMapRange")
+        self.node_operator_with_searchable_enum(
+            context,
+            layout,
+            "FunctionNodeIntegerMath",
+            "operation",
+            defaults_callback=node_add_menu.set_int_math_node_default_props)
         self.node_operator_with_searchable_enum(
             context,
             layout,

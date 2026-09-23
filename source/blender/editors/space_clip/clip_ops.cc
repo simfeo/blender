@@ -1380,7 +1380,7 @@ static void proxy_task_func(TaskPool *__restrict pool, void *task_data)
                                       ImBufFlags::ByteData | ImBufFlags::AlphaDetect,
                                       "proxy frame",
                                       nullptr,
-                                      data->clip->colorspace_settings.name);
+                                      &data->clip->colorspace_settings);
 
     BKE_movieclip_build_proxy_frame_for_ibuf(
         data->clip, ibuf, nullptr, cfra, data->build_sizes, data->build_count, false);
@@ -1693,7 +1693,7 @@ void CLIP_OT_view_ndof(wmOperatorType *ot)
 static wmOperatorStatus clip_prefetch_modal(bContext *C, wmOperator * /*op*/, const wmEvent *event)
 {
   /* no running blender, remove handler and pass through */
-  if (0 == WM_jobs_test(CTX_wm_manager(C), CTX_wm_area(C), WM_JOB_TYPE_CLIP_PREFETCH)) {
+  if (!WM_jobs_has_running(CTX_wm_manager(C), CTX_data_scene(C), WM_JOB_TYPE_CLIP_PREFETCH)) {
     return OPERATOR_FINISHED | OPERATOR_PASS_THROUGH;
   }
 

@@ -9,6 +9,11 @@
 #  include <cstring>
 #  include <iomanip>
 
+#  ifdef WITH_OSL
+#    include <OSL/oslversion.h>
+#    include <OpenImageIO/oiioversion.h>
+#  endif
+
 #  include "device/cuda/device_impl.h"
 
 #  include "util/debug.h"
@@ -98,6 +103,9 @@ CUDADevice::CUDADevice(const DeviceInfo &info, Stats &stats, Profiler &profiler,
 
   cuda_assert(cuDeviceGetAttribute(
       &pitch_alignment, CU_DEVICE_ATTRIBUTE_TEXTURE_PITCH_ALIGNMENT, cuDevice));
+
+  cuda_assert(cuDeviceGetAttribute(
+      &max_shared_mem_bytes, CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK, cuDevice));
 
   if (can_map_host) {
     init_host_memory();
@@ -237,6 +245,11 @@ string CUDADevice::compile_kernel_get_common_cflags(const uint64_t kernel_featur
 
 #  ifdef WITH_NANOVDB
   cflags += " -DWITH_NANOVDB";
+#  endif
+
+#  ifdef WITH_OSL
+  cflags += string_printf(
+      " -DOSL_LIBRARY_VERSION_CODE=%d -DOIIO_VERSION=%d", OSL_LIBRARY_VERSION_CODE, OIIO_VERSION);
 #  endif
 
 #  ifdef WITH_CYCLES_DEBUG
@@ -688,6 +701,12 @@ void CUDADevice::const_copy_to(const char *name, void *host, const size_t size)
   cuda_assert(cuModuleGetGlobal(&mem, &bytes, cuModule, "kernel_params"));
   assert(bytes == sizeof(KernelParamsCUDA));
 
+  if (strcmp(name, "data") == 0) {
+    /* We need this value for shared memory size when launching integrator_sort_bucket_pass
+     * and integrator_sort_write_pass kernels. */
+    scene_max_shaders_ = static_cast<const KernelData *>(host)->max_shaders;
+  }
+
   /* Update data storage pointers in launch parameters. */
 #  define KERNEL_DATA_ARRAY(data_type, data_name) \
     if (strcmp(name, #data_name) == 0) { \
@@ -790,7 +809,7 @@ void CUDADevice::image_alloc(device_image &mem)
    *
    * Cycles expects to read all image data as normalized float values in
    * kernel/device/gpu/image.h. But storing all data as floats would be very inefficient due to the
-   * huge size of float image. So in the code below, we define different texture types including
+   * huge size of float images. So in the code below, we define different texture types including
    * integer types, with the aim of using CUDA's default promotion behavior of integer data to
    * floating point data in the range [0, 1], as noted in the CUDA documentation on
    * cuTexObjectCreate API Call.

@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup shdnodes
+ */
+
 #include <map>
 
 #include "node_shader_util.hh"
@@ -365,12 +369,12 @@ static int node_shader_gpu_bsdf_principled(GPUMaterial *mat,
 {
   /* Normals */
   if (!in[SOCK_NORMAL_ID].link) {
-    GPU_link(mat, "world_normals_get", &in[SOCK_NORMAL_ID].link);
+    GPU_link(mat, "world_normals_get", GPU_shading_data(), &in[SOCK_NORMAL_ID].link);
   }
 
   /* Coat Normals */
   if (!in[SOCK_COAT_NORMAL_ID].link) {
-    GPU_link(mat, "world_normals_get", &in[SOCK_COAT_NORMAL_ID].link);
+    GPU_link(mat, "world_normals_get", GPU_shading_data(), &in[SOCK_COAT_NORMAL_ID].link);
   }
 
 #if 0 /* Not used at the moment. */
@@ -378,7 +382,7 @@ static int node_shader_gpu_bsdf_principled(GPUMaterial *mat,
   if (!in[SOCK_TANGENT_ID].link) {
     GPUNodeLink *orco = GPU_attribute(CD_ORCO, "");
     GPU_link(mat, "tangent_orco_z", orco, &in[SOCK_TANGENT_ID].link);
-    GPU_link(mat, "node_tangent", in[SOCK_TANGENT_ID].link, &in[SOCK_TANGENT_ID].link);
+    GPU_link(mat, "node_tangent", in[SOCK_TANGENT_ID].link, GPU_kernel_globals(), GPU_shading_data(), &in[SOCK_TANGENT_ID].link);
   }
 #endif
 
@@ -421,24 +425,27 @@ static int node_shader_gpu_bsdf_principled(GPUMaterial *mat,
     flag |= GPU_MATFLAG_TRANSLUCENT;
   }
 
-  const bool refraction_might_be_tinted = use_refract && in[SOCK_BASE_COLOR_ID].might_be_tinted();
+  /* Coat tints lower layers. */
+  const bool coat_might_be_tinted = use_coat && in[SOCK_COAT_TINT_ID].might_be_tinted();
 
-  if (might_have_tinted_specular(
-          in[SOCK_BASE_COLOR_ID], in[SOCK_METALLIC_ID], in[SOCK_SPECULAR_TINT_ID]) ||
-      /* Multiscatter GGX can tint the reflection lobe. See `bsdf_lut`. */
-      (refraction_might_be_tinted && node->custom1 == SHD_GLOSSY_MULTI_GGX))
-  {
+  const bool refraction_might_be_tinted = use_refract &&
+                                          (in[SOCK_BASE_COLOR_ID].might_be_tinted() ||
+                                           coat_might_be_tinted);
+
+  bool specular_might_be_tinted = might_have_tinted_specular(
+      in[SOCK_BASE_COLOR_ID], in[SOCK_METALLIC_ID], in[SOCK_SPECULAR_TINT_ID]);
+  specular_might_be_tinted |= coat_might_be_tinted;
+  /* Multiscatter GGX can tint the reflection lobe. See `bsdf_lut`. */
+  specular_might_be_tinted |= (refraction_might_be_tinted &&
+                               node->custom1 == SHD_GLOSSY_MULTI_GGX);
+
+  if (specular_might_be_tinted) {
+    /* Specular reflection. */
     flag |= GPU_MATFLAG_REFLECTION_MAYBE_COLORED;
   }
   if (refraction_might_be_tinted) {
+    /* Specular refraction. */
     flag |= GPU_MATFLAG_REFRACTION_MAYBE_COLORED;
-  }
-  if (use_coat && in[SOCK_COAT_TINT_ID].might_be_tinted()) {
-    /* Coat tints lower layers. */
-    flag |= GPU_MATFLAG_REFLECTION_MAYBE_COLORED;
-    if (use_refract) {
-      flag |= GPU_MATFLAG_REFRACTION_MAYBE_COLORED;
-    }
   }
 
   GPU_material_flag_set(mat, flag);
@@ -467,7 +474,9 @@ static int node_shader_gpu_bsdf_principled(GPUMaterial *mat,
                         in,
                         out,
                         GPU_constant(&use_multi_scatter),
-                        subsurface_random_walk_radius_scale);
+                        subsurface_random_walk_radius_scale,
+                        GPU_kernel_globals(),
+                        GPU_shading_data());
 }
 
 static void node_shader_update_principled(bNodeTree *ntree, bNode *node)

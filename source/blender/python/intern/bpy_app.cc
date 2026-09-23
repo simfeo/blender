@@ -360,6 +360,19 @@ PyDoc_STRVAR(
 
 PyDoc_STRVAR(
     /* Wrap. */
+    bpy_app_autoexec_doc,
+    "Boolean, True when auto-execution is allowed (read-only).\n"
+    "\n"
+    ":type: bool\n");
+PyDoc_STRVAR(
+    /* Wrap. */
+    bpy_app_autoexec_override_doc,
+    "The auto-execution set by the command line, None when the preference isn't overridden "
+    "(read-only).\n"
+    "\n"
+    ":type: bool | None\n");
+PyDoc_STRVAR(
+    /* Wrap. */
     bpy_app_autoexec_fail_doc,
     "Boolean, True when auto-execution of scripts failed (read-only).\n"
     "\n"
@@ -376,6 +389,14 @@ static PyObject *bpy_app_global_flag_get(PyObject * /*self*/, void *closure)
 {
   const int flag = POINTER_AS_INT(closure);
   return PyBool_FromLong(G.f & flag);
+}
+
+static PyObject *bpy_app_autoexec_override_get(PyObject * /*self*/, void * /*closure*/)
+{
+  if ((G.f & G_FLAG_SCRIPT_OVERRIDE_PREF) == 0) {
+    Py_RETURN_NONE;
+  }
+  return PyBool_FromLong(G.f & G_FLAG_SCRIPT_AUTOEXEC);
 }
 
 static int bpy_app_global_flag_set(PyObject * /*self*/, PyObject *value, void *closure)
@@ -680,6 +701,16 @@ static PyGetSetDef bpy_app_getsets[] = {
      reinterpret_cast<void *> G_FLAG_INTERNET_OVERRIDE_PREF_ANY},
 
     /* security */
+    {"autoexec",
+     bpy_app_global_flag_get,
+     nullptr,
+     bpy_app_autoexec_doc,
+     reinterpret_cast<void *>(G_FLAG_SCRIPT_AUTOEXEC)},
+    {"autoexec_override",
+     bpy_app_autoexec_override_get,
+     nullptr,
+     bpy_app_autoexec_override_doc,
+     nullptr},
     {"autoexec_fail",
      bpy_app_global_flag_get,
      nullptr,
@@ -738,13 +769,13 @@ static PyObject *bpy_app_is_job_running(PyObject * /*self*/, PyObject *args, PyO
   {
     return nullptr;
   }
-  wmWindowManager *wm = static_cast<wmWindowManager *>(G_MAIN->wm.first);
+  wmWindowManager *wm = G_MAIN->wm.first();
   if (job_type_enum.value == WM_JOB_TYPE_SHADER_COMPILATION) {
     /* Shader compilation no longer uses the WM_job API, so we handle this as a special case
      * to avoid breaking the Python API. */
     return PyBool_FromLong(GPU_is_init() && GPU_shader_compiler_has_pending_work());
   }
-  return PyBool_FromLong(WM_jobs_has_running_type(wm, job_type_enum.value));
+  return PyBool_FromLong(WM_jobs_has_running(wm, nullptr, eWM_JobType(job_type_enum.value)));
 }
 
 char *(*BPY_python_app_help_text_fn)(bool all) = nullptr;
