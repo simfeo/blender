@@ -436,7 +436,7 @@ To use your own builds instead, for example a prebuilt driver from
 name them and nothing is downloaded:
 
 ```bash
-export BLENDER_ANDROID_ADRENOTOOLS=/path/to/libadrenotools/build
+export BLENDER_ANDROID_ADRENOTOOLS=/path/to/libadrenotools
 export BLENDER_ANDROID_TURNIP_DRIVER=/path/to/libvulkan_turnip.so
 ```
 

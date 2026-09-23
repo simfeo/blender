@@ -127,7 +127,7 @@ else
   log "$MESA_TAG Turnip already built"
 fi
 
-log "libadrenotools: $ADRENOTOOLS_DIR/build"
+log "libadrenotools: $ADRENOTOOLS_DIR"
 log "driver:         $DRIVER"
-echo "BLENDER_ANDROID_ADRENOTOOLS=$ADRENOTOOLS_DIR/build" >&3
+echo "BLENDER_ANDROID_ADRENOTOOLS=$ADRENOTOOLS_DIR" >&3
 echo "BLENDER_ANDROID_TURNIP_DRIVER=$DRIVER" >&3
