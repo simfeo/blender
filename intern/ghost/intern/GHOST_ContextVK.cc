@@ -1722,7 +1722,27 @@ GHOST_TSuccess GHOST_ContextVK::recreateSwapchain(bool use_hdr_swapchain)
   else {
     create_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     context_params_.use_alpha = false;
+    /* The opaque bit is not guaranteed: Android surfaces commonly advertise only
+     * INHERIT, and passing a bit the surface never reported leaves the swapchain
+     * undefined rather than failing outright, so the damage surfaces later and
+     * elsewhere. Take the first bit that is actually supported. */
+    static const VkCompositeAlphaFlagBitsKHR fallbacks[] = {
+        VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+        VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+        VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,
+        VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+    };
   }
+    for (const VkCompositeAlphaFlagBitsKHR candidate : fallbacks) {
+      if (capabilities.supportedCompositeAlpha & candidate) {
+        create_info.compositeAlpha = candidate;
+        break;
+      }
+    }
+    CLOG_DEBUG(&LOG,
+               "Swapchain compositeAlpha 0x%x (supported mask 0x%x).",
+               int(create_info.compositeAlpha),
+               int(capabilities.supportedCompositeAlpha));
   create_info.presentMode = present_mode;
   create_info.clipped = VK_TRUE;
   create_info.oldSwapchain = old_swapchain;
