@@ -201,7 +201,7 @@ def fetch_validation_layer() -> Path:
     return layer
 
 
-def inject_validation_layer(config: str) -> None:
+def inject_validation_layer(config: str, turnip: bool = False) -> None:
     """Add the layer to an already-built APK and re-sign it.
 
     package.sh wipes its staging directory on entry, so the layer cannot be
@@ -210,8 +210,8 @@ def inject_validation_layer(config: str) -> None:
     env = tool_env()
     build_tools = Path(env["ANDROID_HOME"]) / "build-tools" / "35.0.1"
     keystore = BUILD_BASE / "android-debug.keystore"
-    stage = stage_dir(config)
-    apk = apk_path(config)
+    stage = stage_dir(config, turnip)
+    apk = apk_path(config, turnip)
 
     shutil.copy2(fetch_validation_layer(), stage / "lib" / "arm64-v8a" / VVL_SO)
     run(["zip", "-q", str(apk), f"lib/arm64-v8a/{VVL_SO}"], cwd=stage)
@@ -308,7 +308,7 @@ def main() -> int:
               debuggable=debuggable,
               turnip=args.turnip)
         if args.validation:
-            inject_validation_layer(args.config)
+            inject_validation_layer(args.config, args.turnip)
         print(f"APK: {apk_path(args.config, args.turnip)}")
 
     if args.install:
