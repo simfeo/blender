@@ -26,10 +26,15 @@
         android:theme="@style/Theme.Blender">
 
         <!-- BlenderActivity extends NativeActivity; loads libblender.so and
-             bridges soft-keyboard IME text to native. Landscape only. -->
+             bridges soft-keyboard IME text to native. Landscape only.
+
+             singleTask is required, not cosmetic: a second NativeActivity instance
+             would start a second android_main and a second Blender in this process.
+             With it, a .blend tapped while Blender runs arrives at onNewIntent. -->
         <activity
             android:name="org.blender.blender.BlenderActivity"
             android:label="Blender"
+            android:launchMode="singleTask"
             android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|density|navigation|uiMode"
             android:exported="true">
@@ -37,6 +42,48 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- "Open with Blender" for a .blend in a file manager. .blend has no
+                 registered MIME type, so the match is on the path. pathSuffix, not
+                 pathPattern: PatternMatcher's ".*" does not backtrack and fails on
+                 dotted paths. host="*" is required, or the path is never checked and
+                 every content:// URI matches. No file:// filter: file managers send
+                 content:// since API 24, and file:// has no host to match. -->
+            <intent-filter android:label="Blender">
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.EDIT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" android:host="*"
+                    android:mimeType="*/*" android:pathSuffix=".blend" />
+            </intent-filter>
+
+            <!-- Same, for intents with no type at all. A typed filter never matches an
+                 untyped intent, and file managers usually send no type for .blend. -->
+            <intent-filter android:label="Blender">
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.EDIT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" android:host="*"
+                    android:pathSuffix=".blend" />
+            </intent-filter>
+
+            <!-- MediaStore URIs (Samsung My Files) name a row by number, so there is no
+                 extension to match. pathPrefix keeps this to the non-media tables so
+                 images, video and music never offer Blender; other non-media files will,
+                 which is the price of being reachable from those file managers. -->
+            <intent-filter android:label="Blender">
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.EDIT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" android:host="media"
+                    android:mimeType="*/*" android:pathPrefix="/external/file" />
+                <data android:scheme="content" android:host="media"
+                    android:mimeType="*/*" android:pathPrefix="/external/downloads" />
+                <data android:scheme="content" android:host="media"
+                    android:mimeType="*/*" android:pathPrefix="/external_primary/file" />
+                <data android:scheme="content" android:host="media"
+                    android:mimeType="*/*" android:pathPrefix="/external_primary/downloads" />
             </intent-filter>
         </activity>
     </application>

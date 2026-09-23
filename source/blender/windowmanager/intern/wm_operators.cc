@@ -2481,6 +2481,47 @@ static void WM_OT_window_new_main(wmOperatorType *ot)
   ot->poll = wm_operator_winactive_normal;
 }
 
+#ifdef __ANDROID__
+
+/* -------------------------------------------------------------------- */
+/** \name Open a URL through the platform (Android)
+ *
+ * Python's `webbrowser`, behind `wm.url_open`, finds no browser on Android and returns False
+ * silently. This operator is registered with `webbrowser` by
+ * `scripts/startup/bl_android_browser.py`, so add-ons reach it too.
+ * \{ */
+
+/* Implemented in GHOST_SystemAndroid.cc; the window manager cannot include GHOST's private
+ * headers. */
+extern "C" bool GHOST_android_open_url(const char *url);
+
+static wmOperatorStatus wm_platform_url_open_exec(bContext * /*C*/, wmOperator *op)
+{
+  const std::string url = RNA_string_get(op->ptr, "url");
+  const bool success = !url.empty() && GHOST_android_open_url(url.c_str());
+  if (!success) {
+    BKE_report(op->reports, RPT_ERROR, "Could not open the link");
+  }
+  return success ? OPERATOR_FINISHED : OPERATOR_CANCELLED;
+}
+
+static void WM_OT_platform_url_open(wmOperatorType *ot)
+{
+  ot->name = "Open URL";
+  ot->idname = "WM_OT_platform_url_open";
+  ot->description = "Hand a URL to the browser the device has";
+
+  ot->exec = wm_platform_url_open_exec;
+
+  ot->flag = OPTYPE_INTERNAL;
+
+  RNA_def_string(ot->srna, "url", nullptr, 0, "URL", "URL to open");
+}
+
+/** \} */
+
+#endif /* __ANDROID__ */
+
 static void WM_OT_window_fullscreen_toggle(wmOperatorType *ot)
 {
   ot->name = "Toggle Window Fullscreen";
@@ -4357,6 +4398,9 @@ void wm_operatortypes_register()
   WM_operatortype_append(WM_OT_read_factory_userpref);
   WM_operatortype_append(WM_OT_window_fullscreen_toggle);
   WM_operatortype_append(WM_OT_virtual_keyboard_toggle);
+#ifdef __ANDROID__
+  WM_operatortype_append(WM_OT_platform_url_open);
+#endif
   WM_operatortype_append(WM_OT_quit_blender);
   WM_operatortype_append(WM_OT_open_mainfile);
   WM_operatortype_append(WM_OT_revert_mainfile);

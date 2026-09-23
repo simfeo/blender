@@ -229,10 +229,22 @@ static void on_app_cmd(android_app *app, int32_t cmd)
          * failure costs a round trip through that user. */
         argv.push_back("--log");
         argv.push_back("*");
+        /* A .blend the system asked us to open, resolved by BlenderActivity before the
+         * native thread started. As an argument it loads instead of the startup file.
+         * Copied, since argv borrows the pointer and unsetenv below would free it. */
+        std::string open_file;
+        if (const char *env = getenv("BLENDER_ANDROID_OPEN_FILE")) {
+          open_file = env;
+        }
+        if (!open_file.empty()) {
+          argv.push_back(open_file.c_str());
+        }
         for (const char *arg : argv) {
           __android_log_print(ANDROID_LOG_INFO, "blender", "[BlenderAndroid] argv: %s", arg);
         }
         blender::GHOST_android_launch(int(argv.size()), argv.data());
+        /* A later tap arrives through onNewIntent and must not find a stale path. */
+        unsetenv("BLENDER_ANDROID_OPEN_FILE");
         g_blender_launched = true;
       }
       else if (GHOST_ISystem::getSystem()) {
@@ -306,6 +318,20 @@ extern "C" JNIEXPORT void JNICALL Java_org_blender_blender_BlenderActivity_nativ
   if (GHOST_SystemAndroid *system = android_system_if_ready()) {
     system->handleJavaKeyEvent(keycode, action, meta_state);
   }
+}
+
+/* A .blend tapped in a file manager while Blender runs, from BlenderActivity.onNewIntent
+ * on the Android UI thread. */
+extern "C" JNIEXPORT void JNICALL Java_org_blender_blender_BlenderActivity_nativeOpenMainFile(
+    JNIEnv *env, jobject /*thiz*/, jstring path)
+{
+  GHOST_SystemAndroid *system = android_system_if_ready();
+  if (!system || !path) {
+    return;
+  }
+  const char *utf = env->GetStringUTFChars(path, nullptr);
+  system->handleOpenMainFile(utf);
+  env->ReleaseStringUTFChars(path, utf);
 }
 
 extern "C" void android_main(struct android_app *app)

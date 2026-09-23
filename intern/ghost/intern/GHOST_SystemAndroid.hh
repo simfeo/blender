@@ -77,6 +77,10 @@ class GHOST_SystemAndroid : public GHOST_System {
   void handleTextInput(const char *utf8_string);
   void handleJavaKeyEvent(int32_t keycode, int32_t action, int32_t meta_state);
 
+  /** A `.blend` the system asked us to open, from `onNewIntent`. Becomes a
+   * #GHOST_kEventOpenMainFile, answered by the window manager with `WM_OT_open_mainfile`. */
+  void handleOpenMainFile(const char *path);
+
  private:
   GHOST_TSuccess init() override;
 
@@ -168,4 +172,5 @@ class GHOST_SystemAndroid : public GHOST_System {
   std::mutex java_input_mutex_;
   std::vector<std::string> java_text_;
   std::vector<JavaKeyEvent> java_keys_;
+  std::vector<std::string> java_open_files_;
 };

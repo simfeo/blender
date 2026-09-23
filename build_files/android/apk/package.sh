@@ -313,7 +313,7 @@ while [ "$changed" = 1 ]; do
       case "$base" in
         libc.so|libm.so|libdl.so|liblog.so|libandroid.so|libGLESv1_CM.so|\
         libGLESv2.so|libGLESv3.so|libEGL.so|libvulkan.so|libOpenSLES.so|\
-        libjnigraphics.so|libz.so) continue;;
+        libaaudio.so|libjnigraphics.so|libz.so) continue;;
       esac
       for d in $searchdirs; do
         if [ -f "$d/$base" ]; then cp "$d/$base" "$JNI/$base"; changed=1; break; fi

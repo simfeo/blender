@@ -729,14 +729,119 @@ class USERPREF_PT_system_sound(SystemPanel, CenterAlignMixIn, Panel):
         sub.prop(system, "audio_sample_format", text="Sample Format")
 
 
+def _device_hardware_groups():
+    """What the machine is, for the Cycles device panel, which on Android shows only "None".
+
+    Returns groups of (label, value) pairs; an empty label continues the line above. Device
+    and chip names come from BlenderActivity through the environment, because arm64
+    /proc/cpuinfo has no model name and the sysfs paths that do are closed to apps. Read once;
+    a line whose source is unreadable is left out rather than guessed.
+    """
+    cache = _device_hardware_groups._cache
+    if cache is not None:
+        return cache
+
+    import os
+
+    identity = []
+
+    for label, key in (("Device", "BLENDER_ANDROID_DEVICE"), ("Processor", "BLENDER_ANDROID_SOC")):
+        value = os.environ.get(key, "").strip()
+        if value:
+            identity.append((label, value))
+
+    try:
+        import gpu
+        renderer = gpu.platform.renderer_get().strip()
+        if renderer:
+            identity.append(("GPU", renderer))
+    except Exception:
+        pass
+
+    try:
+        count = 0
+        with open("/proc/cpuinfo", "r") as f:
+            for line in f:
+                if line.startswith("processor"):
+                    count += 1
+        if count == 0:
+            count = os.cpu_count() or 0
+        if count:
+            identity.append(("Cores", "{:d}".format(count)))
+    except Exception:
+        pass
+
+    groups = []
+    if identity:
+        groups.append(identity)
+
+    # MemTotal excludes firmware, modem and display reservations (a 12 GB phone reports about
+    # 10.8 GiB), and nothing reports the fitted size, so it is inferred as the nearest capacity
+    # phones are sold with and shown beside the figure it came from.
+    try:
+        with open("/proc/meminfo", "r") as f:
+            for line in f:
+                key, _, rest = line.partition(":")
+                if key != "MemTotal":
+                    continue
+                total_gib = int(rest.strip().split()[0]) / 1048576.0
+                fitted = next(
+                    (size for size in (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64)
+                     if size >= total_gib),
+                    None,
+                )
+                memory = []
+                if fitted is not None:
+                    memory.append(("Memory", "{:d} GB fitted".format(fitted)))
+                    memory.append(("", "{:.1f} GB to the system".format(total_gib)))
+                else:
+                    memory.append(("Memory", "{:.1f} GB to the system".format(total_gib)))
+                groups.append(memory)
+                break
+    except Exception:
+        pass
+
+    if groups:
+        _device_hardware_groups._cache = groups
+    return groups
+
+
+_device_hardware_groups._cache = None
+
+
+def _device_memory_available():
+    """Graphics memory Blender may use, as a row for the device panel, or None.
+
+    The same figure the status bar reports. On a phone it is a share of the one memory pool,
+    well below what was fitted. Not cached, since unlike the other figures it can change.
+    """
+    try:
+        import gpu
+        stats = gpu.capabilities.memory_statistics_get()
+    except Exception:
+        return None
+
+    if not stats:
+        return None
+
+    total_kb, _in_use_kb = stats
+    return ("", "{:.1f} GB for Blender".format(total_kb / 1048576.0))
+
+
 class USERPREF_PT_system_cycles_devices(SystemPanel, CenterAlignMixIn, Panel):
     bl_label = "Cycles Render Devices"
 
     def draw_centered(self, context, layout):
+        import sys
+
         prefs = context.preferences
 
         col = layout.column()
         col.use_property_split = False
+
+        # With no GPU compute device the panel says nothing about the hardware, so on Android
+        # what the device reports about itself goes underneath.
+        show_hardware = hasattr(sys, "getandroidapilevel")
 
         if bpy.app.build_options.cycles:
             addon = prefs.addons.get("cycles")
@@ -744,9 +849,41 @@ class USERPREF_PT_system_cycles_devices(SystemPanel, CenterAlignMixIn, Panel):
                 layout.label(text="Enable Cycles Render Engine add-on to use Cycles", icon='STATUS_INFO')
             else:
                 addon.preferences.draw_impl(col, context)
+                try:
+                    # A selected GPU compute device already names the hardware.
+                    show_hardware = show_hardware and addon.preferences.compute_device_type == 'NONE'
+                except Exception:
+                    pass
             del addon
         else:
             layout.label(text="Cycles is disabled in this build", icon='STATUS_INFO')
+
+        if show_hardware:
+            try:
+                hardware = _device_hardware_groups()
+            except Exception:
+                hardware = []
+
+            # The live figure joins the memory group, which is the last one.
+            available = _device_memory_available()
+            if hardware and available:
+                hardware = hardware[:-1] + [hardware[-1] + [available]]
+
+            if hardware:
+                box = layout.box()
+                box.label(text="Rendering on the CPU")
+
+                # A split rather than a row, so the labels line up with each other.
+                table = box.column(align=True)
+                for index, group in enumerate(hardware):
+                    if index != 0:
+                        table.separator()
+                    for label, value in group:
+                        split = table.split(factor=0.35)
+                        left = split.row()
+                        left.alignment = 'RIGHT'
+                        left.label(text=label)
+                        split.label(text=value, translate=False)
 
 
 class USERPREF_PT_system_display_graphics(SystemPanel, CenterAlignMixIn, Panel):
@@ -785,9 +922,13 @@ class USERPREF_PT_system_os_settings(SystemPanel, CenterAlignMixIn, Panel):
 
     @classmethod
     def poll(cls, _context):
+        import sys
         # macOS isn't supported.
-        from sys import platform
-        if platform == "darwin":
+        if sys.platform == "darwin":
+            return False
+        # Nor is Android, which reports "linux" but has no xdg-mime. There .blend files are
+        # associated by an intent filter in the APK manifest, fixed at build time.
+        if hasattr(sys, "getandroidapilevel"):
             return False
         return True
 

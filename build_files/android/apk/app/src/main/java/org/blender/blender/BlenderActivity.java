@@ -9,12 +9,19 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.res.AssetManager;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.ParcelFileDescriptor;
+import android.os.storage.StorageManager;
+import android.os.storage.StorageVolume;
 import android.system.Os;
 import android.util.Log;
 import android.os.Environment;
+import android.provider.DocumentsContract;
+import android.provider.MediaStore;
+import android.provider.OpenableColumns;
 import android.provider.Settings;
 import android.text.InputType;
 import android.view.KeyEvent;
@@ -60,6 +67,7 @@ public class BlenderActivity extends NativeActivity {
   private native void nativeOnCommitText(String text);
   private native void nativeOnKey(int keycode, int action, int metaState);
   private native void nativeSetLogPath(String path);
+  private native void nativeOpenMainFile(String path);
 
   private String logPath = null;
 
@@ -71,6 +79,9 @@ public class BlenderActivity extends NativeActivity {
     /* Before super.onCreate: that is what starts the native activity, and the
      * log is opened as the first thing it does. */
     chooseLogPath();
+    publishHardwareNames();
+    /* Also before super.onCreate: the native side reads it while building argv. */
+    publishLaunchFile(getIntent());
     super.onCreate(state);
     announceLogPath();
     /* Sensor variant, so the tablet can be picked up from either side. Plain
@@ -103,6 +114,255 @@ public class BlenderActivity extends NativeActivity {
       }
       catch (Exception ignored) {
       }
+    }
+  }
+
+  /* Device and chip names for the Preferences panel. The Linux side cannot read them:
+   * arm64 /proc/cpuinfo has no model name and the sysfs paths are closed to apps.
+   * Anything missing stays unset, so the panel leaves the line out. */
+  private void publishHardwareNames() {
+    try {
+      /* Build.MANUFACTURER is lower case ("samsung"). */
+      String device = joinNonEmpty(capitalize(Build.MANUFACTURER), Build.MODEL);
+      if (!device.isEmpty()) {
+        Os.setenv("BLENDER_ANDROID_DEVICE", device, true);
+      }
+      /* Qualcomm parts report "QTI", which nobody recognises. */
+      String vendor = Build.SOC_MANUFACTURER;
+      if ("QTI".equalsIgnoreCase(vendor)) {
+        vendor = "Qualcomm";
+      }
+      String soc = joinNonEmpty(vendor, Build.SOC_MODEL);
+      if (!soc.isEmpty()) {
+        Os.setenv("BLENDER_ANDROID_SOC", soc, true);
+      }
+    }
+    catch (Exception ex) {
+      Log.w(TAG, "hardware names unavailable", ex);
+    }
+  }
+
+  private static String capitalize(String text) {
+    if (text == null || text.isEmpty()) {
+      return text;
+    }
+    return Character.toUpperCase(text.charAt(0)) + text.substring(1);
+  }
+
+  /* Unset Build fields read "unknown", which would be printed. */
+  private static String joinNonEmpty(String a, String b) {
+    StringBuilder out = new StringBuilder();
+    for (String part : new String[] {a, b}) {
+      if (part == null) {
+        continue;
+      }
+      part = part.trim();
+      if (part.isEmpty() || part.equalsIgnoreCase(Build.UNKNOWN)) {
+        continue;
+      }
+      if (out.length() != 0) {
+        out.append(' ');
+      }
+      out.append(part);
+    }
+    return out.toString();
+  }
+
+  /* A .blend tapped in a file manager while Blender is running. Queued in GHOST as
+   * GHOST_kEventOpenMainFile, which wm_window.cc answers with WM_OT_open_mainfile, so
+   * the unsaved-changes prompt and recent files behave as they do from the File menu. */
+  @Override
+  protected void onNewIntent(Intent intent) {
+    super.onNewIntent(intent);
+    setIntent(intent);
+    String path = resolveBlendPath(intent);
+    if (path != null) {
+      nativeOpenMainFile(path);
+    }
+  }
+
+  /* Cold start: the file goes in as a launch argument, the way a double-clicked file
+   * reaches argv on macOS, so it loads instead of the startup file rather than
+   * replacing it afterwards. The native thread has not started yet, hence the
+   * environment. */
+  private void publishLaunchFile(Intent intent) {
+    String path = resolveBlendPath(intent);
+    if (path == null) {
+      return;
+    }
+    try {
+      Os.setenv("BLENDER_ANDROID_OPEN_FILE", path, true);
+    }
+    catch (Exception ex) {
+      Log.w(TAG, "cannot publish launch file", ex);
+    }
+  }
+
+  private String resolveBlendPath(Intent intent) {
+    if (intent == null) {
+      return null;
+    }
+    String action = intent.getAction();
+    if (!Intent.ACTION_VIEW.equals(action) && !Intent.ACTION_EDIT.equals(action)) {
+      return null;
+    }
+    Uri uri = intent.getData();
+    if (uri == null) {
+      return null;
+    }
+    try {
+      String path = resolveUriToPath(uri);
+      Log.i(TAG, "open request " + uri + " -> " + path);
+      return path;
+    }
+    catch (Exception ex) {
+      Log.w(TAG, "cannot resolve " + uri, ex);
+      return null;
+    }
+  }
+
+  /* Blender opens files by path, and a .blend opened from a copy loses the relative
+   * paths to its textures and libraries and saves back where nobody will find it.
+   * So each step tries to name the real file; the copy is the last resort. */
+  private String resolveUriToPath(Uri uri) throws Exception {
+    if ("file".equals(uri.getScheme())) {
+      String path = usable(uri.getPath());
+      if (path != null) {
+        return path;
+      }
+    }
+
+    /* The storage document provider spells volume and relative path into the id:
+     * "primary:Download/scene.blend". */
+    if (DocumentsContract.isDocumentUri(this, uri) &&
+        "com.android.externalstorage.documents".equals(uri.getAuthority()))
+    {
+      String[] id = DocumentsContract.getDocumentId(uri).split(":", 2);
+      if (id.length == 2) {
+        File root = "primary".equalsIgnoreCase(id[0]) ? Environment.getExternalStorageDirectory() :
+                                                        volumeRoot(id[0]);
+        if (root != null) {
+          String path = usable(new File(root, id[1]).getAbsolutePath());
+          if (path != null) {
+            return path;
+          }
+        }
+      }
+    }
+
+    /* MediaStore's DATA column is deprecated but still carries the real path. */
+    if ("content".equals(uri.getScheme())) {
+      try (Cursor c = getContentResolver().query(
+               uri, new String[] {MediaStore.MediaColumns.DATA}, null, null, null))
+      {
+        if (c != null && c.moveToFirst() && !c.isNull(0)) {
+          String path = usable(c.getString(0));
+          if (path != null) {
+            return path;
+          }
+        }
+      }
+      catch (Exception ignored) {
+        /* A provider is free to reject the column. */
+      }
+    }
+
+    /* For any other provider the descriptor is usually a real file, which
+     * /proc/self/fd names. */
+    try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(uri, "r")) {
+      if (pfd != null) {
+        String path = usable(Os.readlink("/proc/self/fd/" + pfd.getFd()));
+        if (path != null) {
+          return path;
+        }
+      }
+    }
+    catch (Exception ignored) {
+    }
+
+    /* Nothing real behind it, or all-files access is not granted yet (it is only
+     * requested after onCreate). A copy still opens; relative links will not resolve. */
+    return copyToCache(uri);
+  }
+
+  /* Only accept a path this process can actually open, so a missing permission falls
+   * through to the copy instead of ending in an error. */
+  private static String usable(String path) {
+    if (path == null) {
+      return null;
+    }
+    File file = new File(path);
+    return (file.isFile() && file.canRead()) ? file.getAbsolutePath() : null;
+  }
+
+  private File volumeRoot(String uuid) {
+    try {
+      StorageManager sm = (StorageManager)getSystemService(Context.STORAGE_SERVICE);
+      for (StorageVolume volume : sm.getStorageVolumes()) {
+        if (uuid.equalsIgnoreCase(volume.getUuid())) {
+          return volume.getDirectory();
+        }
+      }
+    }
+    catch (Exception ignored) {
+    }
+    return null;
+  }
+
+  private String copyToCache(Uri uri) throws Exception {
+    File dir = new File(getCacheDir(), "opened");
+    dir.mkdirs();
+    File out = new File(dir, displayName(uri));
+    try (InputStream is = getContentResolver().openInputStream(uri);
+         OutputStream os = new FileOutputStream(out))
+    {
+      if (is == null) {
+        return null;
+      }
+      byte[] buf = new byte[65536];
+      int n;
+      while ((n = is.read(buf)) > 0) {
+        os.write(buf, 0, n);
+      }
+    }
+    Log.w(TAG, "no path behind " + uri + "; opening a copy, relative links will not resolve");
+    return out.getAbsolutePath();
+  }
+
+  /* A provider-supplied name is untrusted and may carry separators or "..". */
+  private String displayName(Uri uri) {
+    String name = null;
+    try (Cursor c = getContentResolver().query(
+             uri, new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null))
+    {
+      if (c != null && c.moveToFirst() && !c.isNull(0)) {
+        name = c.getString(0);
+      }
+    }
+    catch (Exception ignored) {
+    }
+    if (name == null || name.isEmpty()) {
+      name = "opened.blend";
+    }
+    name = new File(name).getName().replace("..", "_");
+    return name.toLowerCase().endsWith(".blend") ? name : name + ".blend";
+  }
+
+  /* Called from native (GHOST_android_open_url). Every link in Blender ends at
+   * Python's webbrowser, which finds no browser on Android and fails silently.
+   * NEW_TASK because the browser belongs in its own task and the call does not come
+   * through an Activity context. */
+  public boolean openUrl(String url) {
+    try {
+      Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+      startActivity(intent);
+      return true;
+    }
+    catch (Exception ex) {
+      /* No browser installed, or one refused the intent. */
+      Log.w(TAG, "cannot open " + url, ex);
+      return false;
     }
   }
 
@@ -377,20 +637,70 @@ public class BlenderActivity extends NativeActivity {
       outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_FLAG_NO_FULLSCREEN;
 
       return new BaseInputConnection(this, false) {
+        /* The word the IME is still composing. Soft keyboards send no key events for
+         * ordinary characters: they call setComposingText() per keystroke with the
+         * whole word so far and commitText() only when it is finished. Blender has no
+         * composing text, so the word is mirrored into the field as it changes;
+         * without this, letters only arrive when a suggestion is picked. */
+        private String composing = "";
+
+        /** Makes the field show `text` where it currently shows `composing`. */
+        private void replaceComposing(String text) {
+          int common = 0;
+          final int max = Math.min(composing.length(), text.length());
+          while (common < max && composing.charAt(common) == text.charAt(common)) {
+            common++;
+          }
+          /* Never split a surrogate pair: half of one is not valid UTF-8 in GHOST. */
+          if (common > 0 && common < text.length() &&
+              Character.isLowSurrogate(text.charAt(common)))
+          {
+            common--;
+          }
+          /* One delete on Blender's side removes one code point. */
+          final int stale = composing.codePointCount(common, composing.length());
+          for (int i = 0; i < stale; i++) {
+            nativeOnKey(KeyEvent.KEYCODE_DEL, KeyEvent.ACTION_DOWN, 0);
+            nativeOnKey(KeyEvent.KEYCODE_DEL, KeyEvent.ACTION_UP, 0);
+          }
+          if (common < text.length()) {
+            nativeOnCommitText(text.substring(common));
+          }
+          composing = text;
+        }
+
+        @Override
+        public boolean setComposingText(CharSequence text, int newCursorPosition) {
+          replaceComposing(text.toString());
+          return true;
+        }
+
+        @Override
+        public boolean finishComposingText() {
+          /* Already in the field as typed. */
+          composing = "";
+          return true;
+        }
+
         @Override
         public boolean commitText(CharSequence text, int newCursorPosition) {
-          nativeOnCommitText(text.toString());
+          /* Usually the composition unchanged, but autocorrect and suggestions commit
+           * something different; diffing covers both. */
+          replaceComposing(text.toString());
+          composing = "";
           return true;
         }
 
         @Override
         public boolean sendKeyEvent(KeyEvent event) {
+          composing = "";
           nativeOnKey(event.getKeyCode(), event.getAction(), event.getMetaState());
           return true;
         }
 
         @Override
         public boolean deleteSurroundingText(int beforeLength, int afterLength) {
+          composing = "";
           for (int i = 0; i < beforeLength; i++) {
             nativeOnKey(KeyEvent.KEYCODE_DEL, KeyEvent.ACTION_DOWN, 0);
             nativeOnKey(KeyEvent.KEYCODE_DEL, KeyEvent.ACTION_UP, 0);
