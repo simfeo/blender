@@ -1125,7 +1125,9 @@ GHOST_TSuccess GHOST_ContextVK::swapBufferAcquire()
           vk_device,
           swapchain_,
           UINT64_MAX,
-          submission_frame_data.acquire_semaphore,
+          /* Not `submission_frame_data`: recreateSwapchain() can grow `frame_data_`, which
+           * reallocates and leaves that reference dangling (null semaphore on acquire). */
+          frame_data_[render_frame_].acquire_semaphore,
           VK_NULL_HANDLE,
           &image_index);
       if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR) {
@@ -1720,8 +1722,6 @@ GHOST_TSuccess GHOST_ContextVK::recreateSwapchain(bool use_hdr_swapchain)
     create_info.compositeAlpha = VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR;
   }
   else {
-    create_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    context_params_.use_alpha = false;
     /* The opaque bit is not guaranteed: Android surfaces commonly advertise only
      * INHERIT, and passing a bit the surface never reported leaves the swapchain
      * undefined rather than failing outright, so the damage surfaces later and
@@ -1732,7 +1732,7 @@ GHOST_TSuccess GHOST_ContextVK::recreateSwapchain(bool use_hdr_swapchain)
         VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,
         VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
     };
-  }
+    create_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     for (const VkCompositeAlphaFlagBitsKHR candidate : fallbacks) {
       if (capabilities.supportedCompositeAlpha & candidate) {
         create_info.compositeAlpha = candidate;
@@ -1743,6 +1743,8 @@ GHOST_TSuccess GHOST_ContextVK::recreateSwapchain(bool use_hdr_swapchain)
                "Swapchain compositeAlpha 0x%x (supported mask 0x%x).",
                int(create_info.compositeAlpha),
                int(capabilities.supportedCompositeAlpha));
+    context_params_.use_alpha = false;
+  }
   create_info.presentMode = present_mode;
   create_info.clipped = VK_TRUE;
   create_info.oldSwapchain = old_swapchain;
@@ -1773,7 +1775,6 @@ GHOST_TSuccess GHOST_ContextVK::recreateSwapchain(bool use_hdr_swapchain)
    * splitting the frame in flight and image specific data. */
   if (actual_image_count > frame_data_.size()) {
     CLOG_TRACE(&LOG, "Vulkan: Increasing frame data to %u frames", actual_image_count);
-    assert(actual_image_count <= frame_data_.capacity());
     frame_data_.resize(actual_image_count);
   }
   swapchain_images_.resize(actual_image_count);
@@ -1811,14 +1812,16 @@ GHOST_TSuccess GHOST_ContextVK::recreateSwapchain(bool use_hdr_swapchain)
   /* Construct new semaphores. It can be that image_count is larger than previously. We only need
    * to fill in where the handle is `VK_NULL_HANDLE`. */
   /* Previous handles from the frame data cannot be used and should be discarded. */
+  /* Re-fetched: the resize above may have reallocated `frame_data_`. */
+  GHOST_FrameDiscard &current_discard_pile = frame_data_[render_frame_].discard_pile;
   for (GHOST_Frame &frame : frame_data_) {
     if (frame.acquire_semaphore != VK_NULL_HANDLE) {
-      discard_pile.semaphores.push_back(frame.acquire_semaphore);
+      current_discard_pile.semaphores.push_back(frame.acquire_semaphore);
     }
     frame.acquire_semaphore = VK_NULL_HANDLE;
   }
   if (old_swapchain) {
-    discard_pile.swapchains.push_back(old_swapchain);
+    current_discard_pile.swapchains.push_back(old_swapchain);
   }
   initializeFrameData();
 
