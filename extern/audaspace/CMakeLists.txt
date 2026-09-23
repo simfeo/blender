@@ -912,6 +912,22 @@ endif()
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config/Audaspace.h.in ${CMAKE_CURRENT_BINARY_DIR}/Audaspace.h ESCAPE_QUOTES @ONLY)
 
+# AAudio: Android's own output API. Header and libaaudio.so come from the NDK sysroot, so there
+# is nothing to find and no option; on Android it is the only device that can open an output.
+if(ANDROID)
+	set(AAUDIO_SRC
+		plugins/aaudio/AAudioDevice.cpp
+	)
+	set(AAUDIO_HDR
+		plugins/aaudio/AAudioDevice.h
+	)
+
+	list(APPEND LIBRARIES aaudio)
+	list(APPEND SRC ${AAUDIO_SRC})
+	list(APPEND HDR ${AAUDIO_HDR})
+	list(APPEND STATIC_PLUGINS AAudioDevice)
+endif()
+
 list(APPEND HDR ${CMAKE_CURRENT_BINARY_DIR}/Audaspace.h)
 
 set(STATIC_PLUGIN_CLASSES "")
