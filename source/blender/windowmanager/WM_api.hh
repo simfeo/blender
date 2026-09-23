@@ -2203,7 +2203,9 @@ void WM_draw_cb_exit(wmWindow *win, void *handle);
  * left alone, since two keyboards fighting over the same field is worse than either.
  */
 bool WM_virtual_keyboard_is_open(const wmWindow *win);
-void WM_virtual_keyboard_toggle(wmWindow *win);
+/** The on-screen keyboard's rectangle in window coordinates, false when it is not open. */
+bool WM_virtual_keyboard_rect_get(const wmWindow *win, rcti *r_rect);
+void WM_virtual_keyboard_toggle(wmWindowManager *wm, wmWindow *win);
 /**
  * Tell the keyboard which native text field is being edited, so its bar can show what is in the
  * field while the keyboard covers it. The pointer is to the field's own string, read live, and
