@@ -21,6 +21,7 @@
 #include "Exception.h"
 #include "IReader.h"
 
+#include <chrono>
 #include <cstring>
 
 AUD_NAMESPACE_BEGIN
@@ -45,16 +46,54 @@ aaudio_data_callback_result_t AAudioDevice::mix_callback(AAudioStream* stream, v
 
 void AAudioDevice::error_callback(AAudioStream* stream, void* user_data, aaudio_result_t error)
 {
-	/* Nothing to do here on purpose. The stream is gone -- the usual cause is the output route
-	 * changing, headphones pulled out or a Bluetooth speaker connecting -- and AAudio forbids
-	 * closing or reopening it from this callback, which runs on the audio thread. Reopening would
-	 * have to be posted to another thread; until that exists, sound stops until Blender opens the
-	 * device again, which it does whenever the audio preferences are touched. */
+	AAudioDevice* device = static_cast<AAudioDevice*>(user_data);
+
+	if(error != AAUDIO_ERROR_DISCONNECTED || device->m_closing.load() || device->m_reopening.exchange(true))
+		return;
+
+	/* The previous reopen thread has already finished: it clears m_reopening as its last step. */
+	if(device->m_reopen_thread.joinable())
+		device->m_reopen_thread.join();
+	device->m_reopen_thread = std::thread(&AAudioDevice::reopen_stream, device);
+}
+
+void AAudioDevice::reopen_stream()
+{
+	{
+		std::lock_guard<std::mutex> lock(m_stream_mutex);
+
+		if(m_stream != nullptr)
+		{
+			AAudioStream_requestStop(m_stream);
+			AAudioStream_close(m_stream);
+			m_stream = nullptr;
+		}
+
+		/* The new route can take a moment to appear after the old one is gone. The mixer keeps
+		 * working in m_specs, so the stream is asked for exactly that and AAudio resamples. */
+		for(int attempt = 0; attempt < 10 && !m_closing.load() && m_stream == nullptr; attempt++)
+		{
+			if(attempt > 0)
+				std::this_thread::sleep_for(std::chrono::milliseconds(200));
+			DeviceSpecs specs = m_specs;
+			m_stream = open_stream(specs);
+		}
+
+		if(m_stream != nullptr && m_playback.load())
+			AAudioStream_requestStart(m_stream);
+	}
+
+	m_reopening.store(false);
 }
 
 void AAudioDevice::playing(bool playing)
 {
 	if(m_playback.exchange(playing) == playing)
+		return;
+
+	std::lock_guard<std::mutex> lock(m_stream_mutex);
+
+	if(m_stream == nullptr)
 		return;
 
 	if(playing)
@@ -63,21 +102,12 @@ void AAudioDevice::playing(bool playing)
 		AAudioStream_requestPause(m_stream);
 }
 
-AAudioDevice::AAudioDevice(DeviceSpecs specs, int buffersize) :
-	m_playback(false),
-	m_stream(nullptr)
+AAudioStream* AAudioDevice::open_stream(DeviceSpecs& specs)
 {
-	if(specs.channels == CHANNELS_INVALID)
-		specs.channels = CHANNELS_STEREO;
-	if(specs.format == FORMAT_INVALID)
-		specs.format = FORMAT_FLOAT32;
-	if(specs.rate == RATE_INVALID)
-		specs.rate = RATE_48000;
-
 	AAudioStreamBuilder* builder = nullptr;
 
 	if(AAudio_createStreamBuilder(&builder) != AAUDIO_OK)
-		AUD_THROW(DeviceException, "The AAudio stream builder could not be created.");
+		return nullptr;
 
 	/* AAudio only speaks 16 bit integer and 32 bit float. Anything else audaspace might ask for is
 	 * asked of it as float, which is what its mixer works in anyway. */
@@ -104,19 +134,40 @@ AAudioDevice::AAudioDevice(DeviceSpecs specs, int buffersize) :
 	AAudioStreamBuilder_setDataCallback(builder, AAudioDevice::mix_callback, this);
 	AAudioStreamBuilder_setErrorCallback(builder, AAudioDevice::error_callback, this);
 
-	const aaudio_result_t result = AAudioStreamBuilder_openStream(builder, &m_stream);
+	AAudioStream* stream = nullptr;
+	const aaudio_result_t result = AAudioStreamBuilder_openStream(builder, &stream);
 
 	AAudioStreamBuilder_delete(builder);
 
-	if(result != AAUDIO_OK || m_stream == nullptr)
-		AUD_THROW(DeviceException, "The audio device couldn't be opened with AAudio.");
+	if(result != AAUDIO_OK || stream == nullptr)
+		return nullptr;
 
 	/* What was asked for and what was given are not the same thing: the device has a rate of its
 	 * own and AAudio resamples only if it feels like it. Everything downstream mixes to m_specs, so
 	 * it has to describe the stream that actually exists or every sound plays at the wrong pitch. */
-	specs.rate = SampleRate(AAudioStream_getSampleRate(m_stream));
-	specs.channels = Channels(AAudioStream_getChannelCount(m_stream));
-	specs.format = AAudioStream_getFormat(m_stream) == AAUDIO_FORMAT_PCM_I16 ? FORMAT_S16 : FORMAT_FLOAT32;
+	specs.rate = SampleRate(AAudioStream_getSampleRate(stream));
+	specs.channels = Channels(AAudioStream_getChannelCount(stream));
+	specs.format = AAudioStream_getFormat(stream) == AAUDIO_FORMAT_PCM_I16 ? FORMAT_S16 : FORMAT_FLOAT32;
+
+	return stream;
+}
+
+AAudioDevice::AAudioDevice(DeviceSpecs specs, int buffersize) :
+	m_playback(false),
+	m_stream(nullptr),
+	m_reopening(false),
+	m_closing(false)
+{
+	if(specs.channels == CHANNELS_INVALID)
+		specs.channels = CHANNELS_STEREO;
+	if(specs.format == FORMAT_INVALID)
+		specs.format = FORMAT_FLOAT32;
+	if(specs.rate == RATE_INVALID)
+		specs.rate = RATE_48000;
+
+	m_stream = open_stream(specs);
+	if(m_stream == nullptr)
+		AUD_THROW(DeviceException, "The audio device couldn't be opened with AAudio.");
 
 	m_specs = specs;
 
@@ -125,14 +176,24 @@ AAudioDevice::AAudioDevice(DeviceSpecs specs, int buffersize) :
 
 AAudioDevice::~AAudioDevice()
 {
-	destroy();
+	m_closing.store(true);
 
-	if(m_stream != nullptr)
+	/* The stream goes first: its callback mixes through state that destroy() frees, and once it
+	 * is closed no error callback can start another reopen thread, so joining is final. */
 	{
-		AAudioStream_requestStop(m_stream);
-		AAudioStream_close(m_stream);
-		m_stream = nullptr;
+		std::lock_guard<std::mutex> lock(m_stream_mutex);
+		if(m_stream != nullptr)
+		{
+			AAudioStream_requestStop(m_stream);
+			AAudioStream_close(m_stream);
+			m_stream = nullptr;
+		}
 	}
+
+	if(m_reopen_thread.joinable())
+		m_reopen_thread.join();
+
+	destroy();
 }
 
 class AAudioDeviceFactory : public IDeviceFactory

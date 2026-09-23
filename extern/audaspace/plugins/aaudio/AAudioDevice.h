@@ -32,6 +32,8 @@
 #include <aaudio/AAudio.h>
 
 #include <atomic>
+#include <mutex>
+#include <thread>
 
 AUD_NAMESPACE_BEGIN
 
@@ -47,9 +49,38 @@ private:
 	std::atomic<bool> m_playback;
 
 	/**
-	 * The AAudio output stream.
+	 * The AAudio output stream. Replaced by #reopen_stream after a disconnect.
 	 */
 	AAudioStream* m_stream;
+
+	/**
+	 * Guards #m_stream against the reopen thread.
+	 */
+	std::mutex m_stream_mutex;
+
+	/**
+	 * Set while a reopen is pending, so a burst of error callbacks starts only one.
+	 */
+	std::atomic<bool> m_reopening;
+
+	/**
+	 * Set by the destructor so a pending reopen does not open a stream nobody will close.
+	 */
+	std::atomic<bool> m_closing;
+
+	std::thread m_reopen_thread;
+
+	/**
+	 * Opens an output stream for #m_specs and points the callbacks at this device.
+	 * \param specs Updated to what the stream actually gave.
+	 * \return The stream, or nullptr if AAudio refused.
+	 */
+	AUD_LOCAL AAudioStream* open_stream(DeviceSpecs& specs);
+
+	/**
+	 * Replaces a disconnected stream with one on the current route. Runs on #m_reopen_thread.
+	 */
+	AUD_LOCAL void reopen_stream();
 
 	/**
 	 * AAudio callback to mix the next frames into the stream's buffer.
@@ -62,8 +93,8 @@ private:
 
 	/**
 	 * AAudio callback for a stream that has become unusable, which happens when the route
-	 * changes -- headphones unplugged, a Bluetooth speaker connected. Disconnection must be
-	 * handled off the callback thread, so this only records that it happened.
+	 * changes -- headphones unplugged, a Bluetooth speaker connected. The stream cannot be closed
+	 * from the callback thread, so this starts #reopen_stream on a thread of its own.
 	 */
 	AUD_LOCAL static void error_callback(AAudioStream* stream, void* user_data, aaudio_result_t error);
 
