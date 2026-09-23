@@ -9203,6 +9203,20 @@ static int do_button(bContext *C, Block *block, Button *but, const wmEvent *even
     /* handle menu */
 
     if ((event->type == RIGHTMOUSE) && (event->modifier == 0) && (event->val == KM_PRESS)) {
+#ifdef __ANDROID__
+      /* A finger never reaches but->hold_func (tool variants such as Box, Circle and Lasso):
+       * GHOST_SystemAndroid::touchLongPressCheck turns a held finger into this right-click
+       * before any left press is sent. Run the hold instead of the context menu for a pointer
+       * without tablet data; a stylus tip reaches the hold normally and its side button stays a
+       * real right-click. Fingers lose the context menu on such buttons, a stylus keeps it. */
+      if (but->hold_func != nullptr && event->tablet.active == EVT_TABLET_NONE) {
+        data->cancel = true;
+        button_activate_state(C, but, BUTTON_STATE_EXIT);
+        but->hold_func(C, data->region, but);
+        return WM_UI_HANDLER_BREAK;
+      }
+#endif
+
       /* For some button types that are typically representing entire sets of data,
        * right-clicking to spawn the context menu should also activate the item. This makes it
        * clear which item will be operated on. Apply the button immediately, so context menu
