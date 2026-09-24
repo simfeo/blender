@@ -17,6 +17,7 @@
 
 #include "MOV_write.hh"
 
+#include "BKE_image_format.hh"
 #include "BKE_report.hh"
 #include "BKE_scene.hh"
 
@@ -1631,6 +1632,7 @@ static bool ffmpeg_filepath_get(MovieWriter *context,
   }
 
   BLI_path_abs(filepath, BKE_main_blendfile_path_from_global());
+  BKE_image_output_path_android_remap(filepath, FILE_MAX);
 
   if (!BLI_file_ensure_parent_dir_exists(filepath)) {
     CLOG_ERROR(&LOG, "Couldn't create directory for file %s: %s", filepath, std::strerror(errno));

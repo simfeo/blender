@@ -541,6 +541,20 @@ public class BlenderActivity extends NativeActivity {
     }
     if (logPath != null) {
       nativeSetLogPath(logPath);
+      publishOutputDir(new File(logPath).getParentFile());
+    }
+  }
+
+  /* Renders aimed at the factory "/tmp/" output land here, next to the log, because the
+   * probe above has just proven the folder writable and a file manager can reach it. */
+  private void publishOutputDir(File parent) {
+    File output = new File(parent, "Blender");
+    output.mkdirs();
+    try {
+      Os.setenv("BLENDER_ANDROID_OUTPUT_DIR", output.getAbsolutePath(), true);
+    }
+    catch (Exception ex) {
+      Log.w(TAG, "render output folder unavailable", ex);
     }
   }
 

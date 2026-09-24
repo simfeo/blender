@@ -6,6 +6,7 @@
  * \ingroup bke
  */
 
+#include <cstdlib>
 #include <cstring>
 
 #include "DNA_scene_types.h"
@@ -648,6 +649,21 @@ int BKE_image_path_ext_from_imtype_ensure(char *filepath,
   return do_ensure_image_extension(filepath, filepath_maxncpy, imtype, nullptr);
 }
 
+void BKE_image_output_path_android_remap(char *filepath, const size_t filepath_maxncpy)
+{
+#ifdef __ANDROID__
+  const char *output_dir = getenv("BLENDER_ANDROID_OUTPUT_DIR");
+  if (output_dir == nullptr || !STRPREFIX(filepath, "/tmp/")) {
+    return;
+  }
+  char remapped[FILE_MAX];
+  BLI_path_join(remapped, sizeof(remapped), output_dir, filepath + strlen("/tmp/"));
+  BLI_strncpy(filepath, remapped, filepath_maxncpy);
+#else
+  UNUSED_VARS(filepath, filepath_maxncpy);
+#endif
+}
+
 static Vector<path_templates::Error> do_makepicstring(
     char filepath[FILE_MAX],
     const char *base,
@@ -674,6 +690,7 @@ static Vector<path_templates::Error> do_makepicstring(
   }
 
   BLI_path_abs(filepath, relbase);
+  BKE_image_output_path_android_remap(filepath, FILE_MAX);
 
   if (use_frames) {
     BLI_path_frame(filepath, FILE_MAX, frame, 4);

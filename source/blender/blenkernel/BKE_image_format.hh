@@ -76,6 +76,13 @@ Vector<bke::path_templates::Error> BKE_image_path_from_imtype(
     const char *suffix);
 
 /**
+ * Android has no `/tmp`, yet it is the factory default render output, so an absolute path under
+ * it is moved into the folder the app published as `BLENDER_ANDROID_OUTPUT_DIR`. Elsewhere this
+ * does nothing.
+ */
+void BKE_image_output_path_android_remap(char *filepath, size_t filepath_maxncpy);
+
+/**
  * The number of extensions an image may have (`.jpg`, `.jpeg` for example).
  * Add 1 as the array is nil terminated.
  */
