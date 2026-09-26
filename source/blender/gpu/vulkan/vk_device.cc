@@ -35,67 +35,67 @@ namespace gpu {
 
 void VKExtensions::log() const
 {
-  CLOG_DEBUG(&LOG,
-             "Device features\n"
-             " - [%c] fragment shader barycentric\n"
-             " - [%c] wide lines\n"
-             " - [%c] multi draw indirect\n"
-             " - [%c] shader clip distance\n"
-             "Device extensions\n"
-             " - [%c] dynamic rendering\n"
-             " - [%c] provoking vertex\n"
-             " - [%c] dynamic rendering local read\n"
-             " - [%c] dynamic rendering unused attachments\n"
-             " - [%c] extended dynamic state\n"
-             " - [%c] external memory\n"
-             " - [%c] graphics pipeline library\n"
-             " - [%c] host image copy\n"
-             " - [%c] line rasterization\n"
-             " - [%c] maintenance4\n"
-             " - [%c] memory priority\n"
-             " - [%c] pageable device local memory\n"
-             " - [%c] provoking vertex\n"
-             " - [%c] shader stencil export\n"
-             " - [%c] shader output viewport index and layer\n"
-             " - [%c] spirv 1.4\n"
-             " - [%c] ray queries\n"
-             " - [%c] vertex input dynamic state\n"
-             " - [%c] vertex pipeline stores and atomics",
-             fragment_shader_barycentric ? 'X' : ' ',
-             wide_lines ? 'X' : ' ',
-             multi_draw_indirect ? 'X' : ' ',
-             shader_clip_distance ? 'X' : ' ',
-             dynamic_rendering ? 'X' : ' ',
-             provoking_vertex ? 'X' : ' ',
-             dynamic_rendering_local_read ? 'X' : ' ',
-             dynamic_rendering_unused_attachments ? 'X' : ' ',
-             extended_dynamic_state ? 'X' : ' ',
-             external_memory ? 'X' : ' ',
-             graphics_pipeline_library ? 'X' : ' ',
-             host_image_copy ? 'X' : ' ',
-             line_rasterization ? 'X' : ' ',
-             maintenance4 ? 'X' : ' ',
-             memory_priority ? 'X' : ' ',
-             pageable_device_local_memory ? 'X' : ' ',
-             provoking_vertex ? 'X' : ' ',
-             GPU_stencil_export_support() ? 'X' : ' ',
-             shader_viewport_index_layer ? 'X' : ' ',
-             spirv_1_4 ? 'X' : ' ',
-             GPU_ray_query_support() ? 'X' : ' ',
-             vertex_input_dynamic_state ? 'X' : ' ',
-             GPU_vertex_pipeline_stores_and_atomics_support() ? 'X' : ' ');
+  CLOG_INFO(&LOG,
+            "Device features\n"
+            " - [%c] fragment shader barycentric\n"
+            " - [%c] wide lines\n"
+            " - [%c] multi draw indirect\n"
+            " - [%c] shader clip distance\n"
+            "Device extensions\n"
+            " - [%c] dynamic rendering\n"
+            " - [%c] provoking vertex\n"
+            " - [%c] dynamic rendering local read\n"
+            " - [%c] dynamic rendering unused attachments\n"
+            " - [%c] extended dynamic state\n"
+            " - [%c] external memory\n"
+            " - [%c] graphics pipeline library\n"
+            " - [%c] host image copy\n"
+            " - [%c] line rasterization\n"
+            " - [%c] maintenance4\n"
+            " - [%c] memory priority\n"
+            " - [%c] pageable device local memory\n"
+            " - [%c] provoking vertex\n"
+            " - [%c] shader stencil export\n"
+            " - [%c] shader output viewport index and layer\n"
+            " - [%c] spirv 1.4\n"
+            " - [%c] ray queries\n"
+            " - [%c] vertex input dynamic state\n"
+            " - [%c] vertex pipeline stores and atomics",
+            fragment_shader_barycentric ? 'X' : ' ',
+            wide_lines ? 'X' : ' ',
+            multi_draw_indirect ? 'X' : ' ',
+            shader_clip_distance ? 'X' : ' ',
+            dynamic_rendering ? 'X' : ' ',
+            provoking_vertex ? 'X' : ' ',
+            dynamic_rendering_local_read ? 'X' : ' ',
+            dynamic_rendering_unused_attachments ? 'X' : ' ',
+            extended_dynamic_state ? 'X' : ' ',
+            external_memory ? 'X' : ' ',
+            graphics_pipeline_library ? 'X' : ' ',
+            host_image_copy ? 'X' : ' ',
+            line_rasterization ? 'X' : ' ',
+            maintenance4 ? 'X' : ' ',
+            memory_priority ? 'X' : ' ',
+            pageable_device_local_memory ? 'X' : ' ',
+            provoking_vertex ? 'X' : ' ',
+            GPU_stencil_export_support() ? 'X' : ' ',
+            shader_viewport_index_layer ? 'X' : ' ',
+            spirv_1_4 ? 'X' : ' ',
+            GPU_ray_query_support() ? 'X' : ' ',
+            vertex_input_dynamic_state ? 'X' : ' ',
+            GPU_vertex_pipeline_stores_and_atomics_support() ? 'X' : ' ');
 }
 
 void VKWorkarounds::log() const
 {
-  CLOG_DEBUG(&LOG,
-             "Activated workarounds\n"
-             " - [%c] Not 16/32 bit aligned image formats\n"
-             " - [%c] No texture pool\n"
-             " - [%c] Compute pipeline fallback",
-             not_aligned_pixel_formats ? 'X' : ' ',
-             GCaps.texture_pool_workaround ? 'X' : ' ',
-             compute_pipeline_fallback ? 'X' : ' ');
+  CLOG_INFO(&LOG,
+            "Activated workarounds\n"
+            " - [%c] Not 16/32 bit aligned image formats\n"
+            " - [%c] No texture pool\n"
+            " - [%c] Compute pipeline fallback",
+            not_aligned_pixel_formats ? 'X' : ' ',
+            GCaps.texture_pool_workaround ? 'X' : ' ',
+            compute_pipeline_fallback ? 'X' : ' ');
 }
 
 void VKDevice::reinit()

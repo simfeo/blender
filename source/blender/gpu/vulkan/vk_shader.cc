@@ -606,6 +606,7 @@ bool VKShader::finalize(const shader::ShaderCreateInfo *info)
   }
 
   if (do_geometry_shader_injection(info)) {
+    CLOG_INFO(&LOG, "Geometry shader injected for %s", name_get().c_str());
     std::string source = workaround_geometry_shader_source_create(*info);
     Vector<StringRefNull> sources;
     sources.append("version");

@@ -621,10 +621,13 @@ void VKBackend::platform_init(const VKDevice &device)
   }
 
   CLOG_INFO(&LOG,
-            "Using vendor [%s] device [%s] driver version [%s].",
+            "Using vendor [%s] device [%s] driver version [%s] api [%u.%u.%u].",
             vendor_name.c_str(),
             device.vk_physical_device_properties_.deviceName,
-            driver_version.c_str());
+            driver_version.c_str(),
+            VK_API_VERSION_MAJOR(device.vk_physical_device_properties_.apiVersion),
+            VK_API_VERSION_MINOR(device.vk_physical_device_properties_.apiVersion),
+            VK_API_VERSION_PATCH(device.vk_physical_device_properties_.apiVersion));
 }
 
 void VKBackend::detect_workarounds(VKDevice &device)
