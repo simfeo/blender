@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark rather than upstream's white: the logo carries its own colour and
+         reads better against a light wallpaper. -->
+    <color name="ic_launcher_background">#232323</color>
+</resources>

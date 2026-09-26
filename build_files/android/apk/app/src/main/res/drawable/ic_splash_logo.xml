@@ -1,17 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The launcher icon's logo without its background square, for the system
-     splash screen. The splash paints its own background, so a second one here
-     would show up as a lighter rectangle inside it. Geometry is kept identical
-     to ic_launcher.xml so the two read as the same mark. -->
+<!-- The Blender logo without a background, for the system splash screen. The
+     splash paints its own background, so a second one here would show up as a
+     lighter rectangle inside it. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="1800"
     android:viewportHeight="1800">
 
-    <!-- Half the launcher icon's 0.9. The system splash draws this inside a
-         mask and only the inner portion of the canvas survives, so at the
-         launcher's size the logo was being clipped at the edges. -->
+    <!-- The system splash draws this inside a mask and only the inner portion
+         of the canvas survives, so at full size the logo was clipped at the
+         edges. -->
     <group
         android:pivotX="900"
         android:pivotY="900"
@@ -24,7 +23,7 @@
         android:translateX="-5925.9322"
         android:translateY="10402.77">
 
-        <!-- The white ring between the body and the eye; see ic_launcher.xml. -->
+        <!-- The white ring between the body and the eye. -->
         <group
             android:pivotX="250.7367"
             android:pivotY="-333.3338"
