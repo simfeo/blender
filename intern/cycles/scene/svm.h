@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 
 #include "scene/shader.h"
@@ -101,11 +103,8 @@ class SVMCompiler {
   {
     const ShaderNodeType resolved_type = node_type(shader_node, type, use_derivatives);
     current_svm_nodes.push_back_slow(resolved_type);
-    const int *data = reinterpret_cast<const int *>(&node);
     svm_node_types_used[resolved_type] = true;
-    for (size_t i = 0; i < sizeof(T) / sizeof(int); i++) {
-      current_svm_nodes.push_back_slow(data[i]);
-    }
+    add_node_data(node);
     if (shader_node) {
       shader_node->added_to_svm = true;
     }
@@ -128,9 +127,14 @@ class SVMCompiler {
   void add_node_data(const T &data)
     requires(std::is_class_v<T> && sizeof(T) % sizeof(int) == 0 && alignof(T) <= sizeof(uint))
   {
-    const int *ptr = reinterpret_cast<const int *>(&data);
-    for (size_t i = 0; i < sizeof(T) / sizeof(int); i++) {
-      current_svm_nodes.push_back_slow(ptr[i]);
+    /* Copy bytes: reading the struct through an int pointer breaks strict aliasing for its enum
+     * and uint8_t members, and the Android NDK compiler then drops their stores, emitting
+     * uninitialized stack memory (e.g. a garbage Principled BSDF normal offset). */
+    std::array<int, sizeof(T) / sizeof(int)> words;
+    const char *bytes = reinterpret_cast<const char *>(&data);
+    std::copy(bytes, bytes + sizeof(T), reinterpret_cast<char *>(words.data()));
+    for (const int word : words) {
+      current_svm_nodes.push_back_slow(word);
     }
   }
   void add_node_data_float4(const float4 &f);
