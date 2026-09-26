@@ -4,21 +4,27 @@ linking to external resources instead of including content in-line.
 See 'release/text/readme.html' for the end user read-me.
 -->
 
+Blender for Android (unofficial port)
+=====================================
+
+**This is an unofficial fork: Blender ported to Android (arm64, Vulkan).**
+
+- Website, which APK to pick, device requirements: [blenderandroid.github.io](https://blenderandroid.github.io)
+- Ready-made APKs: [Releases](https://github.com/simfeo/blender/releases)
+- Building from source: [build_files/android/BUILDING.md](../build_files/android/BUILDING.md)
+- Tested on a Samsung Galaxy Tab S7 FE (Adreno 642L, Vulkan 1.1) and a
+  Galaxy S22 Ultra SM-S908B (Xclipse 920, Vulkan 1.3).
+
+Everything below is the upstream Blender read-me.
+
+---
+
 > [!IMPORTANT]
 > Cloning from this [GitHub mirror](https://github.com/blender/blender) may cause Git LFS errors. To avoid this, use `GIT_LFS_SKIP_SMUDGE=1` when doing your initial clone.  
 > See [the documentation](https://developer.blender.org/docs/handbook/contributing/using_git/#github-mirror) for full instructions.
 
 Blender
 =======
-
-> **This is an unofficial fork: Blender ported to Android (arm64, Vulkan).**
->
-> - Ready-made APKs: [Releases](https://github.com/simfeo/blender/releases)
-> - Building from source: [build_files/android/BUILDING.md](../build_files/android/BUILDING.md)
-> - Tested on a Samsung Galaxy Tab S7 FE (Adreno 642L, Vulkan 1.1) and a
->   Galaxy S22 Ultra SM-S908B (Xclipse 920, Vulkan 1.3).
->
-> Everything below is the upstream Blender read-me.
 
 Blender is the free and open source 3D creation suite.
 It supports the entirety of the 3D pipeline—modeling, rigging, animation, simulation, rendering, compositing,
