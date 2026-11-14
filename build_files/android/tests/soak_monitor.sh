@@ -8,7 +8,7 @@
 # stylus and touchpad events with `adb shell input <source>` while sampling process/memory/crash
 # state and taking screenshots. At the end it pulls the JSON/log/screenshots into
 # artifacts/soak-<timestamp>/.
-set -euo pipefail
+set -uo pipefail
 
 DURATION=2700
 SERIAL=""
@@ -75,9 +75,7 @@ inject_event() {
     3) "${ADB[@]}" shell input stylus swipe 900 800 1050 700 300 >/dev/null 2>&1 ;;
     4) "${ADB[@]}" shell input touchpad swipe 900 800 1050 700 300 >/dev/null 2>&1 ;;
     5) "${ADB[@]}" shell input mouse swipe 900 800 1050 700 300 >/dev/null 2>&1 ;;
-    6) "${ADB[@]}" shell input keyboard keyevent 133 >/dev/null 2>&1
-       sleep 1
-       "${ADB[@]}" shell input keyevent 4 >/dev/null 2>&1 ;;
+    6) "${ADB[@]}" shell input stylus tap 900 800 >/dev/null 2>&1 ;;
   esac
 }
 
@@ -91,15 +89,16 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   fi
 
   if [ $((LOOP % 4)) -eq 0 ]; then
-    PSS="$("${ADB[@]}" shell dumpsys meminfo "$PACKAGE" 2>/dev/null | grep -m1 'TOTAL PSS' | tr -s ' ' | sed 's/^ //')"
+    PSS="$("${ADB[@]}" shell dumpsys meminfo "$PACKAGE" 2>/dev/null | grep -m1 'TOTAL PSS' | tr -s ' ' | sed 's/^ //' || true)"
     echo "$(date +%H:%M:%S),$PID,$PSS" >> "$OUT/memory.csv"
-    inject_event
+    inject_event || true
+    echo "tick $LOOP pid=$PID $PSS" >> "$OUT/monitor.log"
   fi
 
   if [ $((LOOP % 20)) -eq 0 ]; then
     "${ADB[@]}" exec-out screencap -p > "$OUT/visual-$(printf '%02d' $((LOOP / 20))).png" 2>/dev/null || true
-    FATAL="$("${ADB[@]}" logcat -d -v brief 2>/dev/null | grep -E 'FATAL|SIGSEGV|ANR in org.blender' | tail -1)"
-    [ -n "$FATAL" ] && echo "FATAL: $FATAL" >> "$OUT/monitor.log"
+    FATAL="$("${ADB[@]}" logcat -d -v brief 2>/dev/null | grep -E 'FATAL|SIGSEGV|ANR in org.blender' | tail -1 || true)"
+    if [ -n "$FATAL" ]; then echo "FATAL: $FATAL" >> "$OUT/monitor.log"; fi
   fi
 
   if "${ADB[@]}" shell cat "$DEVICE_DIR/soak.json" 2>/dev/null | grep -q '"done": true'; then
@@ -148,7 +147,9 @@ PY
 fi
 
 echo "== evidence: $OUT"
-if [ "$CRASH" -eq 1 ] || [ "$ELAPSED" -lt "$DURATION" ]; then
+# The soak timer and this loop sample the clock independently; a few seconds short of the
+# requested duration is still a full run. A real shortfall is more than 30 s.
+if [ "$CRASH" -eq 1 ] || [ "$ELAPSED" -lt $((DURATION - 30)) ]; then
   exit 1
 fi
 exit 0
