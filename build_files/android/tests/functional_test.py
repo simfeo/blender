@@ -552,6 +552,186 @@ def test_memory_read():
     return "maxrss_kb=%d" % usage.ru_maxrss
 
 
+def test_image_reload():
+    path = os.path.join(ROOT, "test_image.png")
+    if file_size(path) <= 0:
+        test_image_create_save()
+    image = bpy.data.images.load(path, check_existing=False)
+    assert tuple(image.size) == (64, 64), image.size
+    image.reload()
+    assert tuple(image.size) == (64, 64), image.size
+    return "size=%s" % (tuple(image.size),)
+
+
+def test_image_colorspace():
+    image = bpy.data.images.get("TestImage")
+    if image is None:
+        test_image_reload()
+        image = bpy.data.images.get("TestImage")
+    if image is None:
+        raise SkipTest("no test image")
+    image.colorspace_settings.name = "Non-Color"
+    assert image.colorspace_settings.name == "Non-Color"
+    return "colorspace=%s" % image.colorspace_settings.name
+
+
+def test_timeline():
+    scene = bpy.context.scene
+    scene.frame_set(10)
+    assert scene.frame_current == 10, scene.frame_current
+    scene.frame_set(1)
+    assert scene.frame_current == 1
+    return "frame_set ok"
+
+
+def test_pose_bone():
+    bpy.ops.object.armature_add(location=(0.0, 0.0, 0.0))
+    armature = bpy.context.active_object
+    bpy.ops.object.mode_set(mode="POSE")
+    bone = armature.pose.bones[0]
+    bone.rotation_mode = "XYZ"
+    bone.rotation_euler = (0.2, 0.0, 0.0)
+    bpy.context.view_layer.update()
+    bpy.ops.object.mode_set(mode="OBJECT")
+    assert tuple(round(v, 3) for v in armature.pose.bones[0].rotation_euler) == (0.2, 0.0, 0.0)
+    return "pose bone rotated"
+
+
+def test_geometry_scatter():
+    obj = ensure_cube()
+    ng = bpy.data.node_groups.new("TestScatter", "GeometryNodeTree")
+    ng.interface.new_socket("Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
+    ng.interface.new_socket("Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
+    group_in = ng.nodes.new("NodeGroupInput")
+    group_out = ng.nodes.new("NodeGroupOutput")
+    distribute = ng.nodes.new("GeometryNodeDistributePointsOnFaces")
+    instance = ng.nodes.new("GeometryNodeInstanceOnPoints")
+    cube = ng.nodes.new("GeometryNodeMeshCube")
+    ng.links.new(group_in.outputs["Geometry"], distribute.inputs["Mesh"])
+    ng.links.new(distribute.outputs["Points"], instance.inputs["Points"])
+    ng.links.new(cube.outputs["Mesh"], instance.inputs["Instance"])
+    ng.links.new(instance.outputs["Instances"], group_out.inputs["Geometry"])
+    mod = obj.modifiers.new("GNScatter", "NODES")
+    mod.node_group = ng
+    bpy.context.view_layer.update()
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    evaluated = obj.evaluated_get(depsgraph)
+    assert evaluated is not None
+    return "nodes=%d" % len(ng.nodes)
+
+
+def test_append_link():
+    path = os.path.join(ROOT, "test_library.blend")
+    ensure_cube()
+    # copy=True writes the library without making it the current file; loading from the current
+    # file is rejected by bpy.data.libraries.load.
+    bpy.ops.wm.save_as_mainfile(filepath=path, copy=True)
+    with bpy.data.libraries.load(path, link=True) as (data_from, data_to):
+        data_to.objects = data_from.objects[:1]
+    assert len(data_to.objects) >= 1
+    obj = data_to.objects[0]
+    assert obj is not None and obj.library is not None, obj
+    return "linked=%s" % obj.name
+
+
+def test_render_formats():
+    scene = bpy.context.scene
+    ensure_camera_light()
+    scene.render.use_compositing = False
+    scene.render.use_sequencer = False
+    scene.render.engine = "BLENDER_EEVEE"
+    scene.render.resolution_x = 96
+    scene.render.resolution_y = 72
+    scene.render.resolution_percentage = 100
+    scene.eevee.taa_render_samples = 1
+    results = []
+    for file_format, extension in (("JPEG", ".jpg"), ("OPEN_EXR", ".exr")):
+        path = os.path.join(ROOT, "test_format" + extension)
+        scene.render.image_settings.file_format = file_format
+        scene.render.filepath = path
+        bpy.ops.render.render(write_still=True)
+        size = file_size(path)
+        assert size > 0, (file_format, size)
+        results.append("%s=%d" % (file_format, size))
+    return " ".join(results)
+
+
+def test_large_grid():
+    bpy.ops.mesh.primitive_grid_add(x_subdivisions=300, y_subdivisions=300, size=2.0)
+    obj = bpy.context.active_object
+    vertices = len(obj.data.vertices)
+    assert vertices > 80000, vertices
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    obj.evaluated_get(depsgraph)
+    return "vertices=%d" % vertices
+
+
+def test_selection():
+    obj = ensure_cube()
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    assert obj.select_get()
+    obj.select_set(False)
+    assert not obj.select_get()
+    return "selection ok"
+
+
+def test_material_transparency():
+    mat = bpy.data.materials.get("TestMaterial")
+    if mat is None:
+        test_material_principled()
+        mat = bpy.data.materials.get("TestMaterial")
+    if hasattr(mat, "surface_render_method"):
+        mat.surface_render_method = "DITHERED"
+        detail = "surface_render_method=DITHERED"
+    else:
+        mat.blend_method = "BLEND"
+        detail = "blend_method=BLEND"
+    return detail
+
+
+def test_external_script():
+    path = os.path.join(ROOT, "external_test.py")
+    with open(path, "w") as handle:
+        handle.write("value = 21 * 2\n")
+    namespace = {}
+    with open(path) as handle:
+        exec(compile(handle.read(), path, "exec"), namespace)
+    assert namespace["value"] == 42
+    return "external script value=42"
+
+
+def test_vse_sound():
+    import wave
+
+    path = os.path.join(ROOT, "test_tone.wav")
+    with wave.open(path, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(22050)
+        handle.writeframes(b"\x00\x00" * 2205)
+    scene = bpy.context.scene
+    scene.sequence_editor_create()
+    editor = scene.sequence_editor
+    strip = editor.strips.new_sound(
+        name="TestTone",
+        filepath=path,
+        channel=2,
+        frame_start=1,
+    )
+    assert strip is not None
+    assert strip.type == "SOUND", strip.type
+    return "sound strip=%s" % strip.name
+
+
+def test_repeated_renders():
+    results = []
+    for index in range(5):
+        detail = _render("repeat_%d" % index, "BLENDER_EEVEE", 1)
+        results.append(detail.split("bytes=")[-1])
+    return "5 renders bytes=%s" % ",".join(results)
+
+
 TESTS = [
     ("A13", "Python runtime", test_version),
     ("B01", "GPU info", test_gpu_info),
@@ -590,6 +770,19 @@ TESTS = [
     ("F01", "EEVEE render", test_eevee_render),
     ("F02", "Cycles CPU render", test_cycles_render),
     ("F03", "Render animation", test_render_animation),
+    ("I04", "Image reload", test_image_reload),
+    ("I06", "Image color space", test_image_colorspace),
+    ("G02", "Timeline frame set", test_timeline),
+    ("G05", "Pose bone", test_pose_bone),
+    ("H02", "Geometry scatter", test_geometry_scatter),
+    ("J09", "Append/link library", test_append_link),
+    ("F04", "JPEG/EXR render", test_render_formats),
+    ("M02", "Large grid", test_large_grid),
+    ("B06", "Selection", test_selection),
+    ("E06", "Material transparency", test_material_transparency),
+    ("K02", "External script", test_external_script),
+    ("L01", "VSE sound strip", test_vse_sound),
+    ("M05", "Five renders", test_repeated_renders),
     ("M0x", "Memory usage", test_memory_read),
 ]
 
