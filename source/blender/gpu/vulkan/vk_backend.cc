@@ -701,7 +701,9 @@ void VKBackend::detect_workarounds(VKDevice &device)
   {
     char value[PROP_VALUE_MAX] = {};
     if (__system_property_get("debug.blender.renderpass", value) > 0 && value[0] != '\0') {
-      extensions.dynamic_rendering = atoi(value) != 0;
+      /* The property names the path to take, not the feature to keep: 1 asks for the render pass
+       * fallback, which means dynamic rendering must be turned off. */
+      extensions.dynamic_rendering = atoi(value) == 0;
     }
   }
 #endif
