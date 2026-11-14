@@ -732,6 +732,38 @@ def test_repeated_renders():
     return "5 renders bytes=%s" % ",".join(results)
 
 
+def test_image_texture_node():
+    mat = bpy.data.materials.get("TestMaterial")
+    if mat is None:
+        test_material_principled()
+        mat = bpy.data.materials.get("TestMaterial")
+    image = bpy.data.images.get("TestImage")
+    if image is None:
+        test_image_reload()
+        image = bpy.data.images.get("TestImage")
+    tree = mat.node_tree
+    node = tree.nodes.new("ShaderNodeTexImage")
+    node.image = image
+    bsdf = tree.nodes.get("Principled BSDF")
+    tree.links.new(node.outputs["Color"], bsdf.inputs["Base Color"])
+    assert node.image is image
+    return "image_node=%s" % image.name
+
+
+def test_node_group_library():
+    path = os.path.join(ROOT, "test_node_library.blend")
+    group = bpy.data.node_groups.new("TestLibraryGroup", "GeometryNodeTree")
+    group.use_fake_user = True
+    # copy=True saves a library without making it the current file.
+    bpy.ops.wm.save_as_mainfile(filepath=path, copy=True)
+    with bpy.data.libraries.load(path, link=True) as (data_from, data_to):
+        data_to.node_groups = data_from.node_groups[:1]
+    assert len(data_to.node_groups) >= 1, len(data_from.node_groups)
+    linked = data_to.node_groups[0]
+    assert linked is not None and linked.library is not None, linked
+    return "linked_group=%s" % linked.name
+
+
 TESTS = [
     ("A13", "Python runtime", test_version),
     ("B01", "GPU info", test_gpu_info),
@@ -781,6 +813,8 @@ TESTS = [
     ("B06", "Selection", test_selection),
     ("E06", "Material transparency", test_material_transparency),
     ("K02", "External script", test_external_script),
+    ("E04", "Image texture node", test_image_texture_node),
+    ("H03", "Node group library link", test_node_group_library),
     ("L01", "VSE sound strip", test_vse_sound),
     ("M05", "Five renders", test_repeated_renders),
     ("M0x", "Memory usage", test_memory_read),
