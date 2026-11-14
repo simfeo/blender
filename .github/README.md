@@ -20,6 +20,13 @@ What this fork adds on top of the port:
 - **`debug.blender.renderpass`**, which forces the Vulkan render-pass fallback on a device that
   supports dynamic rendering. Without it the fallback path — the one every Vulkan 1.1 tablet
   depends on — cannot be exercised on a newer device at all.
+- **The session survives being backgrounded.** Android can reclaim the app without a dialog, so a
+  pause now writes the auto-save and stops the frame loop; low-memory notifications release the
+  GPU caches that can be rebuilt.
+- **Long renders keep the screen on** and hold a foreground service for their duration, instead of
+  being suspended once the screen times out.
+- **First launch no longer raises the "not responding" dialog.** The hundred-megabyte runtime is
+  unpacked on a background thread and native Blender waits for it.
 
 **Testing status: one device only.** Everything here has been tested on a **Samsung Galaxy Tab S9+**
 (SM-X810 / SM-X816B, Snapdragon 8 Gen 2, Adreno 740, Vulkan 1.3, 12 GB, S Pen, DeX). No other
