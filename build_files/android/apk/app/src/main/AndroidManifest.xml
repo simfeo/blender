@@ -97,9 +97,14 @@
 
         <!-- Started and stopped around a render by BlenderActivity.setBusy(). Keeps the process
              in the foreground, and the screen on, for as long as the render runs. -->
+        <!-- The render blocks the main thread; a foreground service in the same process cannot
+             reach onStartCommand/startForeground within Android's 5 second deadline and the
+             system kills the app with ForegroundServiceDidNotStartInTimeException. Running the
+             service in its own process lets its main thread call startForeground immediately. -->
         <service
             android:name="org.blender.blender.BlenderRenderService"
             android:exported="false"
+            android:process=":render"
             android:foregroundServiceType="dataSync" />
     </application>
 </manifest>
