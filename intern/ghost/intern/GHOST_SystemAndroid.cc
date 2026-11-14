@@ -37,6 +37,13 @@
 
 static android_app *g_android_app = nullptr;
 
+/* Defined with the other JNI bridges, further down the file.
+ *
+ * The NDK has no equivalent of Java's `KeyEvent.getUnicodeChar()`, and mapping keycodes to
+ * characters in C bakes in one keyboard layout, which is wrong for every AZERTY or QWERTZ tablet
+ * cover sold in Europe. Asking the platform keeps the layout the device is actually set to. */
+static int32_t android_key_unicode_char(android_app *app, int32_t keycode, int32_t meta_state);
+
 /* Hold a finger this long without moving to get a right-click. */
 static constexpr uint64_t TOUCH_LONG_PRESS_MS = 500;
 /* Movement past this (in pixels) makes the press a left-button drag. Sized for a
@@ -677,6 +684,15 @@ static GHOST_TKey convertAndroidKey(int32_t keycode)
   if (keycode >= AKEYCODE_0 && keycode <= AKEYCODE_9) {
     return GHOST_TKey(GHOST_kKey0 + (keycode - AKEYCODE_0));
   }
+  /* Function keys are the ones a phone never has and Blender leans on hardest: F2 renames,
+   * F3 opens the operator search, F9 redoes the last operator, F11/F12 render. They arrive on
+   * a hardware keyboard only, and the ranges are contiguous in both enums. */
+  if (keycode >= AKEYCODE_F1 && keycode <= AKEYCODE_F12) {
+    return GHOST_TKey(GHOST_kKeyF1 + (keycode - AKEYCODE_F1));
+  }
+  if (keycode >= AKEYCODE_NUMPAD_0 && keycode <= AKEYCODE_NUMPAD_9) {
+    return GHOST_TKey(GHOST_kKeyNumpad0 + (keycode - AKEYCODE_NUMPAD_0));
+  }
   switch (keycode) {
     case AKEYCODE_SPACE:
       return GHOST_kKeySpace;
@@ -699,9 +715,97 @@ static GHOST_TKey convertAndroidKey(int32_t keycode)
       return GHOST_kKeyUpArrow;
     case AKEYCODE_DPAD_DOWN:
       return GHOST_kKeyDownArrow;
+    /* Punctuation. Their GHOST codes are the ASCII characters, so a text field receives them
+     * through `utf8_buf` below; the key is only needed for keymaps. */
+    case AKEYCODE_LEFT_BRACKET:
+      return GHOST_kKeyLeftBracket;
+    case AKEYCODE_RIGHT_BRACKET:
+      return GHOST_kKeyRightBracket;
+    case AKEYCODE_BACKSLASH:
+      return GHOST_kKeyBackslash;
+    case AKEYCODE_SEMICOLON:
+      return GHOST_kKeySemicolon;
+    case AKEYCODE_APOSTROPHE:
+      return GHOST_kKeyQuote;
+    case AKEYCODE_COMMA:
+      return GHOST_kKeyComma;
+    case AKEYCODE_PERIOD:
+      return GHOST_kKeyPeriod;
+    case AKEYCODE_SLASH:
+      return GHOST_kKeySlash;
+    case AKEYCODE_GRAVE:
+      return GHOST_kKeyAccentGrave;
+    case AKEYCODE_MINUS:
+      return GHOST_kKeyMinus;
+    case AKEYCODE_EQUALS:
+      return GHOST_kKeyEqual;
+    /* Editing and navigation. MOVE_HOME/MOVE_END are the keyboard's Home/End; AKEYCODE_HOME is
+     * the system button and must not turn into Blender's Home key. */
+    case AKEYCODE_MOVE_HOME:
+      return GHOST_kKeyHome;
+    case AKEYCODE_MOVE_END:
+      return GHOST_kKeyEnd;
+    case AKEYCODE_PAGE_UP:
+      return GHOST_kKeyUpPage;
+    case AKEYCODE_PAGE_DOWN:
+      return GHOST_kKeyDownPage;
+    case AKEYCODE_INSERT:
+      return GHOST_kKeyInsert;
+    case AKEYCODE_SYSRQ:
+      return GHOST_kKeyPrintScreen;
+    case AKEYCODE_MENU:
+      return GHOST_kKeyApp;
+    /* Numpad. The viewport shortcuts (7/1/3 views, . to frame) live here. */
+    case AKEYCODE_NUMPAD_DIVIDE:
+      return GHOST_kKeyNumpadSlash;
+    case AKEYCODE_NUMPAD_MULTIPLY:
+      return GHOST_kKeyNumpadAsterisk;
+    case AKEYCODE_NUMPAD_SUBTRACT:
+      return GHOST_kKeyNumpadMinus;
+    case AKEYCODE_NUMPAD_ADD:
+      return GHOST_kKeyNumpadPlus;
+    case AKEYCODE_NUMPAD_DOT:
+      return GHOST_kKeyNumpadPeriod;
+    case AKEYCODE_NUMPAD_ENTER:
+      return GHOST_kKeyNumpadEnter;
+    case AKEYCODE_NUMPAD_EQUALS:
+      return GHOST_kKeyEqual;
     default:
       return GHOST_kKeyUnknown;
   }
+}
+
+/* Encode one Unicode code point as NUL terminated UTF-8 in a 6 byte buffer (the size of
+ * `GHOST_TEventKeyData.utf8_buf`). Returns false for code points outside Unicode. */
+static bool utf8_from_codepoint(uint32_t code, char out[6])
+{
+  if (code < 0x80) {
+    out[0] = char(code);
+    out[1] = '\0';
+    return true;
+  }
+  if (code < 0x800) {
+    out[0] = char(0xC0 | (code >> 6));
+    out[1] = char(0x80 | (code & 0x3F));
+    out[2] = '\0';
+    return true;
+  }
+  if (code < 0x10000) {
+    out[0] = char(0xE0 | (code >> 12));
+    out[1] = char(0x80 | ((code >> 6) & 0x3F));
+    out[2] = char(0x80 | (code & 0x3F));
+    out[3] = '\0';
+    return true;
+  }
+  if (code < 0x110000) {
+    out[0] = char(0xF0 | (code >> 18));
+    out[1] = char(0x80 | ((code >> 12) & 0x3F));
+    out[2] = char(0x80 | ((code >> 6) & 0x3F));
+    out[3] = char(0x80 | (code & 0x3F));
+    out[4] = '\0';
+    return true;
+  }
+  return false;
 }
 
 int32_t GHOST_SystemAndroid::handleKeyEvent(AInputEvent *event)
@@ -713,8 +817,31 @@ int32_t GHOST_SystemAndroid::handleKeyEvent(AInputEvent *event)
   }
   const bool down = AKeyEvent_getAction(event) == AKEY_EVENT_ACTION_DOWN;
   const bool repeat = AKeyEvent_getRepeatCount(event) > 0;
-  pushEvent(std::make_unique<GHOST_EventKey>(
-      getMilliSeconds(), down ? GHOST_kEventKeyDown : GHOST_kEventKeyUp, window_, key, repeat));
+
+  /* Text from a physical keyboard. Blender inserts text only from `utf8_buf`, and a hardware
+   * keyboard never reaches the IME bridge, so leaving this empty made every text field
+   * read-only once the tablet was docked to a keyboard.
+   *
+   * ASCII is held back while a command modifier is down: Ctrl+C and friends are handled per key
+   * by the text field's own handlers, and feeding the letter as text as well would type "c" on
+   * every copy. Non-ASCII is still emitted, because AltGr characters arrive as Ctrl+Alt on
+   * several layouts. */
+  char utf8_buf[6] = {0};
+  if (down) {
+    const int32_t unicode = android_key_unicode_char(
+        g_android_app, AKeyEvent_getKeyCode(event), meta_state_);
+    const bool command_modifier = (meta_state_ & (AMETA_CTRL_ON | AMETA_ALT_ON)) != 0;
+    if (unicode >= 0x20 && unicode != 0x7F && (!command_modifier || unicode >= 0x80)) {
+      utf8_from_codepoint(uint32_t(unicode), utf8_buf);
+    }
+  }
+
+  pushEvent(std::make_unique<GHOST_EventKey>(getMilliSeconds(),
+                                             down ? GHOST_kEventKeyDown : GHOST_kEventKeyUp,
+                                             window_,
+                                             key,
+                                             repeat,
+                                             utf8_buf));
   return 1;
 }
 
@@ -886,6 +1013,41 @@ static JNIEnv *android_jni_env(android_app *app)
     return env;
   }
   return vm->AttachCurrentThread(&env, nullptr) == JNI_OK ? env : nullptr;
+}
+
+/* The character a key press would type, resolved by the platform against the keyboard layout the
+ * user selected. Returns 0 for keys that type nothing (arrows, modifiers, Esc). */
+static int32_t android_key_unicode_char(android_app *app, int32_t keycode, int32_t meta_state)
+{
+  if (!app || !app->activity || !app->activity->clazz) {
+    return 0;
+  }
+  JNIEnv *env = android_jni_env(app);
+  if (!env) {
+    return 0;
+  }
+  jclass cls = env->GetObjectClass(app->activity->clazz);
+  if (!cls) {
+    env->ExceptionClear();
+    return 0;
+  }
+  int32_t result = 0;
+  jmethodID method = env->GetStaticMethodID(cls, "unicodeChar", "(II)I");
+  if (method) {
+    const jint value = env->CallStaticIntMethod(cls, method, jint(keycode), jint(meta_state));
+    if (env->ExceptionCheck()) {
+      env->ExceptionClear();
+    }
+    else if (value > 0) {
+      result = int32_t(value);
+    }
+  }
+  else {
+    /* An APK built before this method existed: keys still work as shortcuts, text does not. */
+    env->ExceptionClear();
+  }
+  env->DeleteLocalRef(cls);
+  return result;
 }
 
 /* Fetch the ClipboardManager for the activity, or null. */

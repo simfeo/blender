@@ -149,6 +149,22 @@ public class BlenderActivity extends NativeActivity {
     return Character.toUpperCase(text.charAt(0)) + text.substring(1);
   }
 
+  /**
+   * Character a key press would type, or 0 for keys that type nothing.
+   *
+   * Called from GHOST for every key event: the NDK exposes no equivalent of
+   * KeyEvent.getUnicodeChar(), so without this a hardware keyboard can drive
+   * shortcuts but cannot put text into a text field. Resolving it here keeps
+   * whatever layout the device is set to (AZERTY, QWERTZ, Dvorak) instead of
+   * hard-coding a US table in C.
+   */
+  public static int unicodeChar(int keyCode, int metaState) {
+    int value = new KeyEvent(KeyEvent.ACTION_DOWN, keyCode).getUnicodeChar(metaState);
+    /* A negative result carries a COMBINING_ACCENT flag rather than a character;
+     * dead keys are left to the IME path. */
+    return value < 0 ? 0 : value;
+  }
+
   /* Unset Build fields read "unknown", which would be printed. */
   private static String joinNonEmpty(String a, String b) {
     StringBuilder out = new StringBuilder();
