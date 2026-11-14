@@ -15,6 +15,7 @@
 #include <android/log.h>
 #include <android_native_app_glue.h>
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <jni.h>
@@ -139,10 +140,18 @@ struct bContext;
 /* Implemented in creator: runs Blender init + WM_main_entry, hands C back. */
 int GHOST_android_launch(int argc, const char **argv);
 void WM_main_loop_body(bContext *C);
+bool WM_autosave_write_background(bContext *C);
+void RE_FreeGPUTextureCaches();
 }  // namespace blender
 
 static blender::bContext *g_context = nullptr;
 static bool g_blender_launched = false;
+/* Set while the activity is paused. The loop stops calling into Blender and blocks on the event
+ * queue, so a backgrounded app costs nothing. */
+static bool g_paused = false;
+/* Switching between two apps fires PAUSE/RESUME repeatedly; the auto-save is not free on a large
+ * scene, so it runs at most once per this interval. */
+static std::chrono::steady_clock::time_point g_last_background_save;
 
 namespace blender {
 /* Called by the creator once init finished, to hand the context to the loop. */
@@ -183,6 +192,54 @@ static std::vector<std::string> ghost_android_read_launch_args(android_app *app)
   return args;
 }
 
+/* Android can reclaim a backgrounded app at any moment: no dialog, no chance to run an exit
+ * handler, and on low-memory devices that is the normal way an app ends. Blender's own recovery
+ * path is the auto-save file, so write one on the way out. */
+static void ghost_android_save_before_background()
+{
+  if (g_context == nullptr) {
+    return;
+  }
+  const auto now = std::chrono::steady_clock::now();
+  if (now - g_last_background_save < std::chrono::seconds(10)) {
+    return;
+  }
+  g_last_background_save = now;
+  if (blender::WM_autosave_write_background(g_context)) {
+    __android_log_print(ANDROID_LOG_INFO, "blender", "Auto-save written before backgrounding");
+  }
+  else {
+    __android_log_print(ANDROID_LOG_WARN, "blender", "Auto-save before backgrounding failed");
+  }
+}
+
+/* BlenderActivity unpacks the runtime on a background thread, because doing it on the UI thread
+ * made first launch show Android's "not responding" dialog. Nothing on this thread can run before
+ * those files exist, and this is not the UI thread, so waiting here costs nothing. */
+static void ghost_android_wait_for_runtime(android_app *app)
+{
+  const char *path = getenv("BLENDER_ANDROID_READY_FILE");
+  if (path == nullptr || path[0] == '\0') {
+    /* An APK built before the runtime moved off the UI thread. Nothing to wait for. */
+    return;
+  }
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(180);
+  struct stat marker;
+  while (stat(path, &marker) != 0) {
+    if (app->destroyRequested) {
+      return;
+    }
+    if (std::chrono::steady_clock::now() >= deadline) {
+      /* Better a parse error from Python than a splash screen that never ends. */
+      __android_log_print(
+          ANDROID_LOG_WARN, "blender", "Runtime still missing after 180s, starting anyway: %s", path);
+      return;
+    }
+    usleep(50 * 1000);
+  }
+  __android_log_print(ANDROID_LOG_INFO, "blender", "[BlenderAndroid] runtime ready");
+}
+
 static void on_app_cmd(android_app *app, int32_t cmd)
 {
   switch (cmd) {
@@ -196,6 +253,26 @@ static void on_app_cmd(android_app *app, int32_t cmd)
       if (GHOST_ISystem::getSystem()) {
         android_system()->handleWindowFocus(false);
       }
+      break;
+
+    /* Paused: save, then stop driving Blender. The surface is gone by now (TERM_WINDOW came
+     * first), so there is nothing to draw and the loop blocks on the queue instead of spinning. */
+    case APP_CMD_PAUSE:
+      g_paused = true;
+      ghost_android_save_before_background();
+      break;
+
+    case APP_CMD_RESUME:
+    case APP_CMD_START:
+      g_paused = false;
+      break;
+
+    /* The system is short on memory. Give back what can be rebuilt -- the render result and
+     * compositor GPU caches -- rather than wait to be killed. Unused, not everything: the caches
+     * of a running job must stay. */
+    case APP_CMD_LOW_MEMORY:
+      blender::RE_FreeGPUTextureCaches();
+      __android_log_print(ANDROID_LOG_INFO, "blender", "Low memory: released cached GPU resources");
       break;
 
     case APP_CMD_INIT_WINDOW:
@@ -242,6 +319,7 @@ static void on_app_cmd(android_app *app, int32_t cmd)
         for (const char *arg : argv) {
           __android_log_print(ANDROID_LOG_INFO, "blender", "[BlenderAndroid] argv: %s", arg);
         }
+        ghost_android_wait_for_runtime(app);
         blender::GHOST_android_launch(int(argv.size()), argv.data());
         /* A later tap arrives through onNewIntent and must not find a stale path. */
         unsetenv("BLENDER_ANDROID_OPEN_FILE");
@@ -351,7 +429,7 @@ extern "C" void android_main(struct android_app *app)
      * runs the whole init inside `source->process` and sets `g_context`
      * mid-drain, so the timeout must be re-evaluated after each event rather
      * than captured once — otherwise the loop blocks forever and never renders. */
-    int timeout = g_context ? 0 : -1;
+    int timeout = (g_context != nullptr && !g_paused) ? 0 : -1;
     while (ALooper_pollOnce(timeout, nullptr, &events, (void **)&source) >= 0) {
       if (source) {
         source->process(app, source);
@@ -359,12 +437,10 @@ extern "C" void android_main(struct android_app *app)
       if (app->destroyRequested) {
         return;
       }
-      if (g_context) {
-        timeout = 0;
-      }
+      timeout = (g_context != nullptr && !g_paused) ? 0 : -1;
     }
 
-    if (g_context) {
+    if (g_context != nullptr && !g_paused) {
       blender::WM_main_loop_body(g_context);
     }
   }

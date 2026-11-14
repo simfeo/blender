@@ -2251,6 +2251,17 @@ bool WM_autosave_is_scheduled(wmWindowManager *wm);
 bool WM_autosave_write(wmWindowManager *wm, Main *bmain, ReportList *reports);
 
 /**
+ * Write an auto-save right now, for platforms that can kill the process without letting it quit.
+ *
+ * Android has no "save on exit": the system may reclaim a backgrounded app at any moment, with
+ * no dialog and no chance to run an exit handler. A pause writes the auto-save file instead, so
+ * the next start offers to recover the work.
+ *
+ * \return success, false if there is no context yet or the file could not be written.
+ */
+bool WM_autosave_write_background(bContext *C);
+
+/**
  * Lock the interface for any communication.
  * For #WM_locked_interface_set_with_flags, #lock_flags is #ARegionDrawLockFlags
  */
