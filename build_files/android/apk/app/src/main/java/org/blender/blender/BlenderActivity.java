@@ -682,6 +682,13 @@ public class BlenderActivity extends NativeActivity {
       Log.w(TAG, "could not publish the ready marker path", ex);
     }
 
+    /* Drop any marker left by the previous install before native starts, or it reads a runtime
+     * that extractRuntimeIfNeeded() is about to delete and unpack. Deleting here, on the UI
+     * thread before super.onCreate(), is what orders the two. */
+    if (!ready.delete() && ready.exists()) {
+      Log.w(TAG, "could not remove the stale ready marker");
+    }
+
     Thread thread = new Thread(() -> {
       try {
         extractRuntimeIfNeeded();
