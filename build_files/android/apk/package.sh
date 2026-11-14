@@ -377,7 +377,9 @@ fi
   --manifest "$SCRIPT_DIR/app/src/main/AndroidManifest.xml" \
   "$STAGE/rescompiled/res.zip" \
   -A "$ASSETS" -0 zip \
-  --min-sdk-version "$ANDROID_API" --target-sdk-version "$ANDROID_TARGET_API"
+  --min-sdk-version "$ANDROID_API" --target-sdk-version "$ANDROID_TARGET_API" \
+  --version-code "${BLENDER_ANDROID_VERSION_CODE:-5030001}" \
+  --version-name "${BLENDER_ANDROID_VERSION_NAME:-5.3.0}"
 
 echo "[apk] assembling"
 cp "$STAGE/base.apk" "$OUT"

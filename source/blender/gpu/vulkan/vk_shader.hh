@@ -52,6 +52,11 @@ class VKShader : public Shader {
    */
   bool has_precompiled_pipelines_ = false;
   bool use_ray_query_ = false;
+  /**
+   * A graphics pipeline for this shader was refused by the driver. The pipeline map remembers
+   * the failure per pipeline state, so this only limits the warning to one per shader.
+   */
+  bool graphics_pipeline_failed_warned_ = false;
 
   /**
    * Maximum input attachment index used by this shader's subpass inputs.

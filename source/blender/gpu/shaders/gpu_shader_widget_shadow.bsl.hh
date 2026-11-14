@@ -27,30 +27,34 @@ struct WidgetShadow {
   [[push_constant]] float4 parameters[4];
 };
 
+/**
+ * Return one of the nine points of the bottom-left corner arc.
+ *
+ * The four corner arcs are the same nine points rotated by 90 degrees. Keeping only one arc and
+ * selecting it with a switch avoids indexing a constant array with the vertex attribute: Adreno
+ * 740's Vulkan compiler lowers that to a private array and then fails to link the pipeline.
+ */
+float2 shadow_corner_point(uint index)
+{
+  switch (index) {
+    case 0u: return float2(0.0f, 1.0f);
+    case 1u: return float2(0.02f, 0.805f);
+    case 2u: return float2(0.067f, 0.617f);
+    case 3u: return float2(0.169f, 0.45f);
+    case 4u: return float2(0.293f, 0.293f);
+    case 5u: return float2(0.45f, 0.169f);
+    case 6u: return float2(0.617f, 0.076f);
+    case 7u: return float2(0.805f, 0.02f);
+    case 8u: return float2(1.0f, 0.0f);
+    default: return float2(0.0f, 0.0f);
+  }
+}
+
 [[vertex]] void shadow_vert([[resource_table]] const WidgetShadow &srt,
                             [[in]] const VertInShadow &v_in,
                             [[out]] VertOutShadow &v_out,
                             [[position]] float4 &out_pos)
 {
-  /* NOTE(Metal): Declaring constant array in function scope to avoid increasing local shader
-   * memory pressure. */
-  const float2 cornervec[36] = {
-      float2(0.0f, 1.0f),       float2(0.02f, 0.805f),    float2(0.067f, 0.617f),
-      float2(0.169f, 0.45f),    float2(0.293f, 0.293f),   float2(0.45f, 0.169f),
-      float2(0.617f, 0.076f),   float2(0.805f, 0.02f),    float2(1.0f, 0.0f),
-      float2(-1.0f, 0.0f),      float2(-0.805f, 0.02f),   float2(-0.617f, 0.067f),
-      float2(-0.45f, 0.169f),   float2(-0.293f, 0.293f),  float2(-0.169f, 0.45f),
-      float2(-0.076f, 0.617f),  float2(-0.02f, 0.805f),   float2(0.0f, 1.0f),
-      float2(0.0f, -1.0f),      float2(-0.02f, -0.805f),  float2(-0.067f, -0.617f),
-      float2(-0.169f, -0.45f),  float2(-0.293f, -0.293f), float2(-0.45f, -0.169f),
-      float2(-0.617f, -0.076f), float2(-0.805f, -0.02f),  float2(-1.0f, 0.0f),
-      float2(1.0f, 0.0f),       float2(0.805f, -0.02f),   float2(0.617f, -0.067f),
-      float2(0.45f, -0.169f),   float2(0.293f, -0.293f),  float2(0.169f, -0.45f),
-      float2(0.076f, -0.617f),  float2(0.02f, -0.805f),   float2(0.0f, -1.0f)};
-
-  const float2 center_offset[4] = {
-      float2(1.0f, 1.0f), float2(-1.0f, 1.0f), float2(-1.0f, -1.0f), float2(1.0f, -1.0f)};
-
   /* Unpack parameters. */
   float4 recti = srt.parameters[0];
   float4 rect = srt.parameters[1];
@@ -81,19 +85,43 @@ struct WidgetShadow {
   float shadow_width = rads - radsi;
   float shadow_width_top = rect.w - recti.w;
 
-  float rad_inner = radsi * roundCorners[cflag];
+  /* `cflag` is a vertex attribute; select the corner data without indexing an array or vector
+   * dynamically (Adreno 740 fails to link such shaders). */
+  float round_corner = (cflag == 0u) ? roundCorners.x :
+                       (cflag == 1u) ? roundCorners.y :
+                       (cflag == 2u) ? roundCorners.z :
+                                       roundCorners.w;
+  float2 c = float2((cflag == 0u || cflag == 3u) ? 1.0f : -1.0f,
+                    (cflag == 0u || cflag == 1u) ? 1.0f : -1.0f);
+
+  float rad_inner = radsi * round_corner;
   float rad_outer = rad_inner + shadow_width;
   float radius = (is_inner) ? rad_inner : rad_outer;
 
   float shadow_offset = (is_inner && (cflag > BOTTOM_RIGHT)) ? (shadow_width - shadow_width_top) :
                                                                0.0f;
 
-  float2 c = center_offset[cflag];
   float2 center_outer = rad_outer * c;
   float2 center = radius * c;
 
   /* First expand all vertices to the outer shadow border. */
-  float2 v = rad_outer * cornervec[cflag * 9u + vofs];
+  float2 corner = shadow_corner_point(vofs);
+  float2 rotated_corner;
+  switch (cflag) {
+    case 0u:
+      rotated_corner = corner;
+      break;
+    case 1u:
+      rotated_corner = float2(-corner.y, corner.x);
+      break;
+    case 2u:
+      rotated_corner = float2(-corner.x, -corner.y);
+      break;
+    default:
+      rotated_corner = float2(corner.y, -corner.x);
+      break;
+  }
+  float2 v = rad_outer * rotated_corner;
 
   /* Now shrink the inner vertices onto the inner rectangle.
    * At the top corners we keep the vertical offset to distribute a few of the vertices along the
