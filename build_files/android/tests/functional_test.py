@@ -764,6 +764,51 @@ def test_node_group_library():
     return "linked_group=%s" % linked.name
 
 
+def test_vse_movie():
+    path = "/sdcard/Download/Blender/tests/test_video.mp4"
+    assert file_size(path) > 0
+    scene = bpy.context.scene
+    scene.sequence_editor_create()
+    editor = scene.sequence_editor
+    try:
+        strip = editor.strips.new_movie(
+            name="TestMovie",
+            filepath=path,
+            channel=3,
+            frame_start=1,
+        )
+    except TypeError:
+        strip = editor.strips.new_movie(
+            name="TestMovie",
+            filepath=path,
+            channel=3,
+            frame_start=1,
+            fit_method="FIT",
+        )
+    assert strip is not None
+    assert strip.type == "MOVIE", strip.type
+    return "movie strip=%s" % strip.name
+
+
+def test_vse_render():
+    path = os.path.join(ROOT, "test_vse_render.png")
+    scene = bpy.context.scene
+    if scene.sequence_editor is None:
+        test_vse_movie()
+    scene.render.use_sequencer = True
+    scene.render.use_compositing = False
+    scene.render.resolution_x = 128
+    scene.render.resolution_y = 96
+    scene.render.resolution_percentage = 100
+    scene.render.image_settings.file_format = "PNG"
+    scene.render.filepath = path
+    scene.frame_set(1)
+    bpy.ops.render.render(write_still=True)
+    size = file_size(path)
+    assert size > 0, size
+    return "vse_render_bytes=%d" % size
+
+
 TESTS = [
     ("A13", "Python runtime", test_version),
     ("B01", "GPU info", test_gpu_info),
@@ -816,6 +861,8 @@ TESTS = [
     ("E04", "Image texture node", test_image_texture_node),
     ("H03", "Node group library link", test_node_group_library),
     ("L01", "VSE sound strip", test_vse_sound),
+    ("L03", "VSE movie strip", test_vse_movie),
+    ("L05", "VSE render", test_vse_render),
     ("M05", "Five renders", test_repeated_renders),
     ("M0x", "Memory usage", test_memory_read),
 ]
