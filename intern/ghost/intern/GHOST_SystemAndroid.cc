@@ -31,6 +31,7 @@
 #include <android/native_window.h>
 #include <android_native_app_glue.h>
 
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <ctime>
@@ -1194,6 +1195,64 @@ static bool android_call_activity_bool_string(android_app *app,
   const bool result = env->CallBooleanMethod(activity, mid, arg) == JNI_TRUE;
   env->DeleteLocalRef(arg);
   return result;
+}
+
+/* Call a void method taking one boolean on the BlenderActivity instance. */
+static GHOST_TSuccess android_call_activity_void_bool(android_app *app,
+                                                      const char *method,
+                                                      bool argument)
+{
+  if (!app || !app->activity || !app->activity->clazz) {
+    return GHOST_kFailure;
+  }
+  JNIEnv *env = android_jni_env(app);
+  if (!env) {
+    return GHOST_kFailure;
+  }
+  jobject activity = app->activity->clazz;
+  jclass cls = env->GetObjectClass(activity);
+  if (!cls) {
+    env->ExceptionClear();
+    return GHOST_kFailure;
+  }
+  jmethodID mid = env->GetMethodID(cls, method, "(Z)V");
+  if (!mid) {
+    env->ExceptionClear();
+    env->DeleteLocalRef(cls);
+    return GHOST_kFailure;
+  }
+  env->CallVoidMethod(activity, mid, jboolean(argument));
+  env->DeleteLocalRef(cls);
+  if (env->ExceptionCheck()) {
+    env->ExceptionClear();
+    return GHOST_kFailure;
+  }
+  return GHOST_kSuccess;
+}
+
+/* Long tasks ask the activity to keep the screen on and the process in the foreground, so a
+ * render that outlasts the screen timeout is not suspended half way through. The depth is counted
+ * here because an animation render nests: once for the whole loop, once per frame.
+ *
+ * Declared where used rather than in a header, like the URL opener below. */
+static std::atomic<int> g_busy_depth{0};
+static std::atomic<bool> g_busy_published{false};
+
+extern "C" void GHOST_android_set_busy(bool busy)
+{
+  if (busy) {
+    g_busy_depth.fetch_add(1);
+  }
+  else {
+    int current = g_busy_depth.load();
+    while (current > 0 && !g_busy_depth.compare_exchange_weak(current, current - 1)) {
+    }
+  }
+  const bool active = g_busy_depth.load() > 0;
+  if (g_busy_published.exchange(active) == active) {
+    return;
+  }
+  android_call_activity_void_bool(g_android_app, "setBusy", active);
 }
 
 /* Hand a URL to the device's browser. Declared where it is used rather than in a

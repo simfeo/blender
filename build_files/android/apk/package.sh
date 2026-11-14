@@ -348,11 +348,12 @@ echo "[apk] bundled $(ls "$JNI" | wc -l | tr -d ' ') native libraries ($(du -sh 
 ( cd "$PAYLOAD" && zip -qr -X "$ASSETS/blender_runtime.zip" . )
 echo "[apk] runtime payload: $(du -sh "$ASSETS/blender_runtime.zip" | cut -f1)"
 
-echo "[apk] compiling BlenderActivity"
+echo "[apk] compiling Java sources"
 mkdir -p "$STAGE/javac" "$STAGE/dex"
 "$JAVA_HOME/bin/javac" -classpath "$ANDROID_JAR" -source 17 -target 17 \
   -d "$STAGE/javac" \
-  "$SCRIPT_DIR/app/src/main/java/org/blender/blender/BlenderActivity.java"
+  "$SCRIPT_DIR/app/src/main/java/org/blender/blender/BlenderActivity.java" \
+  "$SCRIPT_DIR/app/src/main/java/org/blender/blender/BlenderRenderService.java"
 "$BT/d8" --min-api "$ANDROID_API" --output "$STAGE/dex" \
   $(find "$STAGE/javac" -name '*.class')
 
