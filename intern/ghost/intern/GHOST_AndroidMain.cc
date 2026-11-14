@@ -231,6 +231,10 @@ static const char *ghost_android_cmd_name(int32_t cmd)
       return "TERM_WINDOW";
     case APP_CMD_WINDOW_RESIZED:
       return "WINDOW_RESIZED";
+    case APP_CMD_WINDOW_REDRAW_NEEDED:
+      return "WINDOW_REDRAW_NEEDED";
+    case APP_CMD_CONTENT_RECT_CHANGED:
+      return "CONTENT_RECT_CHANGED";
     case APP_CMD_CONFIG_CHANGED:
       return "CONFIG_CHANGED";
     case APP_CMD_GAINED_FOCUS:
