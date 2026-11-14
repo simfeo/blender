@@ -115,6 +115,45 @@ unpacked in `onCreate`, on the UI thread — on the one launch every new user se
 - The marker is written even when preparation failed, so a broken extraction becomes Python
   reporting missing files instead of a splash screen that never ends.
 
+## Device test log (Galaxy Tab S9+)
+
+Device: SM-X810, Android 16 (API 36), Snapdragon 8 Gen 2, Adreno 740, driver build
+`3df4c357f0` dated 2026-01-27, 12 GB, page size 4 KB. APK: `lite`, debug-signed.
+
+### A driver bug that stops every build, including the original port's
+
+`gpu_shader_2D_widget_shadow` fails on this driver:
+
+```
+AdrenoVK-0: Failed to link shaders.
+blender: gpu.vulkan | ERROR Failed to compile graphics pipeline
+         `gpu_shader_2D_widget_shadow`: VK_ERROR_UNKNOWN
+fatal signal 11 in qglinternal::vkCmdBindPipeline
+```
+
+It is not specific to this fork. The same crash happens with the original port's `full` and `lite`
+APKs from `android-alpha-4`, and with Wanderson Magalhaes' stable `v5.3.0` APK. All three die on
+the first frame that draws a popup shadow. The guard in `vk_command_buffer_wrapper.cc` is what
+lets this fork run past it; the shadow effect is the only thing lost.
+
+### Results with this fork's build
+
+| Test | Result |
+| --- | --- |
+| Cold start, first launch after install | No "not responding" dialog; runtime ready in < 1 s, UI up in ~4 s |
+| Touch | Works: taps, viewport selection, menus |
+| Text input from a keyboard | Works: typed `cube` into the topbar search field; Blender's on-screen keyboard appears for text fields |
+| Background | `PAUSE` writes the auto-save (`Auto-save written before backgrounding`), loop stops, resume keeps the session |
+| Render | EEVEE 64 samples in 3.0-5.5 s; `BlenderRenderService` starts and stops around every render |
+| `debug.blender.renderpass 1` | Works: `[ ] dynamic rendering` and `blender-rpfb` cache lines, i.e. the Vulkan 1.1 path on a 1.3 device |
+| UI language | Follows the device locale (Chinese UI on a Chinese tablet) |
+
+### Not tested here
+
+Physical keyboard hardware and non-US layouts, S Pen pressure and tilt, DeX and external
+displays, renders long enough to hit the screen timeout, the full feature set (Cycles, USD,
+ffmpeg), and the Turnip flavour.
+
 ## Verification status
 
 None of this has been built into an APK or run on a device yet. What was checked while writing it:
