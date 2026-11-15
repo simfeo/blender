@@ -47,11 +47,18 @@ if [ -f "$PREFIX/lib/libOpenImageDenoise_core.a" ]; then
 fi
 
 # --- ISPC (host compiler for the CPU kernels) --------------------------------
-if [ ! -x "$ISPC" ]; then
-  log "downloading ISPC $ISPC_VERSION"
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64)  ISPC_ARCHIVE="macOS.arm64" ;;
+  Darwin-*)      ISPC_ARCHIVE="macOS.x86_64" ;;
+  Linux-aarch64) ISPC_ARCHIVE="linux.aarch64" ;;
+  *)             ISPC_ARCHIVE="linux" ;;
+esac
+# A cached ISPC for another host is present but cannot run, so test by running it.
+if ! "$ISPC" --version >/dev/null 2>&1; then
+  log "downloading ISPC $ISPC_VERSION ($ISPC_ARCHIVE)"
   rm -rf "$ISPC_DIR"
   mkdir -p "$ISPC_DIR"
-  curl -fL "https://github.com/ispc/ispc/releases/download/v$ISPC_VERSION/ispc-v$ISPC_VERSION-linux.tar.gz" \
+  curl -fL "https://github.com/ispc/ispc/releases/download/v$ISPC_VERSION/ispc-v$ISPC_VERSION-$ISPC_ARCHIVE.tar.gz" \
     | tar -xz -C "$ISPC_DIR" --strip-components=1
 fi
 # The help text wraps the OS list, so join it before matching.
