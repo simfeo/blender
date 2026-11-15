@@ -76,7 +76,8 @@ static int node_shader_gpu_light_evaluation(GPUMaterial *mat,
   const int mode = node->custom1;
 
   if (!in[0].link) {
-    /* Error: not linked to a light accumulation node */
+    /* Error: not linked to a light accumulation zone. */
+    BLI_assert_unreachable();
     return false;
   }
 
@@ -134,6 +135,7 @@ void register_node_type_sh_light_evaluation()
   sh_node_type_base(&ntype, "ShaderNodeLightEvaluation"_ustr, SH_NODE_LIGHT_EVALUATION);
   ntype.ui_name = "Light Evaluation";
   ntype.ui_description = "Light Evaluation";
+  ntype.enum_name_legacy = "LIGHT_EVALUATION";
   ntype.nclass = NODE_CLASS_INPUT;
   ntype.declare = file_ns::node_declare;
   ntype.draw_buttons = file_ns::node_shader_buts_light_evaluation;

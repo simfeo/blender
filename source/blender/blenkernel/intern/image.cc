@@ -4261,11 +4261,13 @@ static ImBuf *image_load_sequence_multilayer(Image *ima, ImageUser *iuser, int e
       ibuf->fileframe = frame;
       image_assign_ibuf(ima, ibuf, iuser ? iuser->multi_index : 0, entry);
     }
-    // else printf("pass not found\n");
+    else if (rpass == nullptr && iuser) {
+      iuser->multi_index = IMA_INDEX_MISSING_LAYER;
+    }
   }
 
   /* Cache null to indicate failed load. */
-  if (ibuf == nullptr && ima->rr == nullptr) {
+  if (ibuf == nullptr && (ima->rr == nullptr || iuser)) {
     image_assign_ibuf(ima, nullptr, iuser ? iuser->multi_index : 0, entry);
   }
 
@@ -4576,7 +4578,20 @@ static int image_get_multiview_index(Image *ima, ImageUser *iuser)
 void BKE_image_populate_cache_from_autosave(Image *ima)
 {
   if (!(ima->flag & IMA_AUTOSAVE_TEMPPACK)) {
-    return;
+    const int count = BLI_listbase_count(&ima->autosave_packedfiles);
+    if (count != 0) {
+      /* Logically, this shouldn't happen but avoid returning early and leaving the file in an
+       * invalid state if we encounter this situation. */
+      CLOG_ERROR(
+          &LOG,
+          "Image (%s) has %d autosaved files but no `IMA_AUTOSAVE_TEMPPACK` flag! Restoring flag.",
+          ima->id.name,
+          count);
+      ima->flag |= IMA_AUTOSAVE_TEMPPACK;
+    }
+    else {
+      return;
+    }
   }
 
   std::scoped_lock lock(ima->runtime->cache_mutex);
@@ -4633,11 +4648,17 @@ static ImBuf *image_get_ibuf_multilayer(Image *ima, ImageUser *iuser)
 
       image_assign_ibuf(ima, ibuf, iuser ? iuser->multi_index : IMA_NO_INDEX, 0);
     }
+    else if (rpass == nullptr && iuser) {
+      iuser->multi_index = IMA_INDEX_MISSING_LAYER;
+    }
   }
 
-  /* Cache null to indicate failed load. */
+  /* Cache null to indicate failed load. A failed file load applies to all passes. */
   if (ibuf == nullptr && ima->rr == nullptr) {
-    image_assign_ibuf(ima, nullptr, iuser ? iuser->multi_index : IMA_NO_INDEX, 0);
+    image_assign_ibuf(ima, nullptr, IMA_NO_INDEX, 0);
+  }
+  else if (ibuf == nullptr && iuser) {
+    image_assign_ibuf(ima, nullptr, iuser->multi_index, 0);
   }
 
   return ibuf;
@@ -4835,7 +4856,8 @@ static ImBuf *image_get_cached_ibuf(
       ibuf = image_get_cached_ibuf_for_index_entry(ima, index, 0, r_is_cached_empty);
     }
     else if (ima->type == IMA_TYPE_MULTILAYER) {
-      ibuf = image_get_cached_ibuf_for_index_entry(ima, index, 0, r_is_cached_empty);
+      ibuf = image_get_cached_ibuf_for_index_entry(
+          ima, ima->rr ? index : IMA_NO_INDEX, 0, r_is_cached_empty);
     }
   }
   else if (ima->source == IMA_SRC_GENERATED) {

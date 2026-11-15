@@ -13,6 +13,7 @@
 #include "RNA_prototypes.hh"
 
 #include "BKE_compositor.hh"
+#include "BKE_compute_context_cache.hh"
 #include "BKE_compute_contexts.hh"
 #include "BKE_node.hh"
 #include "BKE_node_runtime.hh"
@@ -163,12 +164,12 @@ static Result *get_effect_input(Context &context,
 void SceneCompositorEffectsOperation::execute()
 {
   const Scene &scene = this->context().get_scene();
-  const bke::DataBlockComputeContext scene_compute_context(nullptr, scene.id);
+  const bke::DataBlockComputeContext &scene_compute_context =
+      this->context().compute_context_cache().for_data_block(nullptr, scene.id);
 
   const bool needs_viewer_output = flag_is_set(this->context().needed_side_effect_output_types(),
                                                SideEffectOutputTypes::ViewerNode);
-  const bool has_viewer_output = needs_viewer_output &&
-                                 this->context().get_viewer_compute_context_hash().has_value();
+  const bool has_viewer_output = needs_viewer_output && this->context().viewer_compute_context();
 
   std::unique_ptr<NodeGroupOperation> last_operation;
   const bke::compositor::ExecutionMode execution_mode = get_execution_mode(this->context());
@@ -181,8 +182,9 @@ void SceneCompositorEffectsOperation::execute()
       continue;
     }
 
-    const bke::SceneCompositorEffectComputeContext effect_compute_context(&scene_compute_context,
-                                                                          effect);
+    const bke::SceneCompositorEffectComputeContext &effect_compute_context =
+        this->context().compute_context_cache().for_scene_compositor_effect(&scene_compute_context,
+                                                                            effect);
 
     const bNodeTree &node_group = *effect.node_group;
     NodeGroupOperation *effect_operation = new NodeGroupOperation(
@@ -203,6 +205,7 @@ void SceneCompositorEffectsOperation::execute()
 
     /* Set the reference count for the outputs, only the first color output is actually needed,
      * while the rest are ignored. */
+    bool effect_has_output = false;
     node_group.ensure_interface_cache();
     for (const bNodeTreeInterfaceSocket *output_socket : node_group.interface_outputs()) {
       const bool is_first_output = output_socket == node_group.interface_outputs().first();
@@ -210,6 +213,7 @@ void SceneCompositorEffectsOperation::execute()
       const bool is_color = output_result.type() == ResultType::Color;
       const bool is_needed = is_effect_output_needed && is_first_output && is_color;
       output_result.set_reference_count(is_needed ? 1 : 0);
+      effect_has_output = effect_has_output || is_needed;
     }
 
     PointerRNA effect_ptr = RNA_pointer_create_discrete(
@@ -258,8 +262,8 @@ void SceneCompositorEffectsOperation::execute()
 
     last_operation.reset(effect_operation);
 
-    /* If the effect output is not needed, then we needn't compute later effects. */
-    if (!is_effect_output_needed) {
+    /* If the effect does not have an output, then we needn't compute later effects. */
+    if (!effect_has_output) {
       break;
     }
   }

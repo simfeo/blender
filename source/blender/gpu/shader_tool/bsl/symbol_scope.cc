@@ -57,7 +57,10 @@ Result<SymbolFunction *> SymbolScope::lookup_function(const SymbolTable &table,
     /* Try to resolve type constructors (only for builtins for now). */
     if (auto [cls, err_cls] = lookup_class(table, id); !cls->is_error && cls && cls->is_builtin())
     {
-      return {table.root->lookup_function(cls->identifier), {}};
+      /* Some builtin types have no constructor (e.g. `bool32_t`). */
+      if (SymbolFunction *ctor = table.root->lookup_function(cls->identifier)) {
+        return {ctor, {}};
+      }
     }
     return {func, err ? err : AstNodeException{id, Diag::UnknownFunction, string(id.str())}};
   }
@@ -228,6 +231,19 @@ T *SymbolScope::lookup_generic(const SymbolTable &table,
     return v;
   }
 
+  /* Try to resolve in class scope if this is a member function scope (contains 'this_'). */
+  if (auto it = variables.find("this_"); it != variables.end()) {
+    LOOKUP_LOG("[Lookup] Member function scope ('this_' found). Checking class scope...\n")
+    const SymbolVariable *this_var = it->second.second;
+    /* Resolve class pointer/type from `this_` symbol */
+    const SymbolClass *cls = this_var->type;
+    const SymbolScope *this_scope = static_cast<const SymbolScope *>(cls);
+    if (auto v = this_scope->lookup_generic<T>(table, id, loc); v && !v->is_error) {
+      LOOKUP_LOG("[Lookup] Symbol found in class scope '" << cls->identifier << "'.\n")
+      return v;
+    }
+  }
+
   /* Delegate to parent scope if not found locally. */
   if (parent) {
     LOOKUP_LOG("[Lookup] Not found locally. Delegating to parent scope\n")
@@ -353,17 +369,20 @@ T *SymbolScope::lookup_generic_nested(const SymbolTable &table,
 
 SymbolClass *SymbolScope::lookup_class(string id) const
 {
-  return classes.find(id)->second.second;
+  auto it = classes.find(id);
+  return it != classes.end() ? it->second.second : nullptr;
 }
 
 SymbolFunction *SymbolScope::lookup_function(string id) const
 {
-  return functions.find(id)->second.second;
+  auto it = functions.find(id);
+  return it != functions.end() ? it->second.second : nullptr;
 }
 
 SymbolVariable *SymbolScope::lookup_variable(string id) const
 {
-  return variables.find(id)->second.second;
+  auto it = variables.find(id);
+  return it != variables.end() ? it->second.second : nullptr;
 }
 
 SymbolClass *SymbolScope::as_class()

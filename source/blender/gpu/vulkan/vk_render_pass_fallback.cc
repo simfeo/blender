@@ -14,9 +14,6 @@
 #include "render_graph/vk_command_buffer_wrapper.hh"
 #include "vk_backend.hh"
 #include "vk_device.hh"
-#include "vk_resource_pool.hh"
-
-#include "BLI_vector.hh"
 
 #ifdef __ANDROID__
 #  include <android/log.h>
@@ -214,28 +211,27 @@ VkFramebuffer VKRenderPassFallback::framebuffer_get(
   });
 }
 
-void VKRenderPassFallback::discard_framebuffers_for_view(VkImageView vk_image_view,
-                                                         VKDiscardPool &pool)
+Vector<VkFramebuffer> VKRenderPassFallback::take_framebuffers_for_view(VkImageView vk_image_view)
 {
+  Vector<VkFramebuffer> taken;
   if (vk_device_ == VK_NULL_HANDLE || vk_image_view == VK_NULL_HANDLE) {
-    return;
+    return taken;
   }
   Vector<FramebufferKey> to_remove;
-  {
-    std::scoped_lock lock(mutex_);
-    for (auto item : framebuffers_.items()) {
-      for (uint32_t i = 0; i < item.key.view_count; i++) {
-        if (item.key.views[i] == vk_image_view) {
-          pool.discard_framebuffer(item.value);
-          to_remove.append(item.key);
-          break;
-        }
+  std::scoped_lock lock(mutex_);
+  for (auto item : framebuffers_.items()) {
+    for (uint32_t i = 0; i < item.key.view_count; i++) {
+      if (item.key.views[i] == vk_image_view) {
+        taken.append(item.value);
+        to_remove.append(item.key);
+        break;
       }
     }
-    for (const FramebufferKey &key : to_remove) {
-      framebuffers_.remove_contained(key);
-    }
   }
+  for (const FramebufferKey &key : to_remove) {
+    framebuffers_.remove_contained(key);
+  }
+  return taken;
 }
 
 void VKRenderPassFallback::deinit()

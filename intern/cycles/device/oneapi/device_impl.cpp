@@ -57,11 +57,13 @@ static void queue_error_cb(const char *message, void *user_ptr)
 OneapiDevice::OneapiDevice(const DeviceInfo &info, Stats &stats, Profiler &profiler, bool headless)
     : GPUDevice(info, stats, profiler, headless)
 {
+#  ifndef WITH_CYCLES_ONEAPI_SOFTWARE_TEXTURING
   /* Verify that base class types can be used with specific backend types */
   static_assert(sizeof(texMemObject) ==
                 sizeof(sycl::ext::oneapi::experimental::sampled_image_handle));
   static_assert(sizeof(arrayMemObject) ==
                 sizeof(sycl::ext::oneapi::experimental::image_mem_handle));
+#  endif
 
   need_image_info = false;
   use_hardware_raytracing = info.use_hardware_raytracing;
@@ -369,7 +371,7 @@ bool OneapiDevice::shared_alloc(void *&shared_pointer, const size_t size)
   return shared_pointer != nullptr;
 }
 
-void OneapiDevice::shared_free(void *shared_pointer)
+void OneapiDevice::shared_free(void *shared_pointer, const size_t /*size*/)
 {
   usm_free(device_queue_, shared_pointer);
 }
@@ -694,6 +696,7 @@ void OneapiDevice::global_free(device_memory &mem)
   }
 }
 
+#  ifndef WITH_CYCLES_ONEAPI_SOFTWARE_TEXTURING
 static sycl::ext::oneapi::experimental::image_descriptor image_desc(const device_image &mem)
 {
   /* Image Texture Storage */
@@ -728,11 +731,13 @@ static sycl::ext::oneapi::experimental::image_descriptor image_desc(const device
 
   return param;
 }
+#  endif /* !WITH_CYCLES_ONEAPI_SOFTWARE_TEXTURING */
 
 void OneapiDevice::image_alloc(device_image &mem)
 {
   assert(device_queue_);
 
+#  ifndef WITH_CYCLES_ONEAPI_SOFTWARE_TEXTURING
   size_t size = mem.memory_size();
 
   sycl::addressing_mode address_mode = sycl::addressing_mode::none;
@@ -814,8 +819,7 @@ void OneapiDevice::image_alloc(device_image &mem)
                 << string_human_readable_number(mem.memory_size()) << " bytes. ("
                 << string_human_readable_size(mem.memory_size()) << ")";
 
-      sycl::ext::oneapi::experimental::image_mem_handle memHandle =
-          sycl::ext::oneapi::experimental::alloc_image_mem(desc, *queue);
+      memHandle = sycl::ext::oneapi::experimental::alloc_image_mem(desc, *queue);
       if (!memHandle.raw_handle) {
         set_error("GPU image allocation failed: Raw handle is null");
         return;
@@ -876,22 +880,24 @@ void OneapiDevice::image_alloc(device_image &mem)
       tex_info.data = (uint64_t)mem.device_pointer;
     }
 
-    {
-      /* Update image info. */
-      thread_scoped_lock lock(image_info_mutex);
-      const uint image_info_id = mem.image_info_id;
-      if (image_info_id >= image_info.size()) {
-        /* Geometric growth to amortize reallocation cost. */
-        const size_t new_size = max(size_t(image_info_id) + 128, image_info.size() * 2);
-        image_info.host_only_resize(new_size);
-      }
-      image_info[image_info_id] = tex_info;
-      need_image_info = true;
-    }
+    /* Update image info. */
+    image_info_update(mem.image_info_id, tex_info);
   }
   catch (sycl::exception const &e) {
     set_error("GPU image allocation failed: runtime exception \"" + string(e.what()) + "\"");
   }
+#  else  /* !WITH_CYCLES_ONEAPI_SOFTWARE_TEXTURING */
+  LOG_DEBUG << "Image allocate: " << mem.log_name() << ", "
+            << string_human_readable_number(mem.memory_size()) << " bytes. ("
+            << string_human_readable_size(mem.memory_size()) << ")";
+
+  generic_alloc(mem);
+  generic_copy_to(mem);
+  /* Update image info; device upload happens lazily in load_image_info(). */
+  KernelImageInfo tex_info = mem.info;
+  tex_info.data = (uint64_t)mem.device_pointer;
+  image_info_update(mem.image_info_id, tex_info);
+#  endif /* !WITH_CYCLES_ONEAPI_SOFTWARE_TEXTURING */
 }
 
 void OneapiDevice::image_copy_to(device_image &mem)
@@ -900,6 +906,7 @@ void OneapiDevice::image_copy_to(device_image &mem)
     image_alloc(mem);
   }
   else {
+#  ifndef WITH_CYCLES_ONEAPI_SOFTWARE_TEXTURING
     if (mem.data_height > 0) {
       /* 2D/3D image -- Tile optimized */
       sycl::ext::oneapi::experimental::image_descriptor desc = image_desc(mem);
@@ -914,9 +921,9 @@ void OneapiDevice::image_copy_to(device_image &mem)
             (sycl::ext::oneapi::experimental::image_mem_handle::raw_handle_type)cmem.array};
         queue->ext_oneapi_copy(mem.host_pointer, image_handle, desc);
 
-#  ifdef WITH_CYCLES_DEBUG
+#    ifdef WITH_CYCLES_DEBUG
         queue->wait_and_throw();
-#  endif
+#    endif
       }
       catch (sycl::exception const &e) {
         set_error("oneAPI image copy error: got runtime exception \"" + string(e.what()) + "\"");
@@ -925,12 +932,16 @@ void OneapiDevice::image_copy_to(device_image &mem)
     else {
       generic_copy_to(mem);
     }
+#  else  /* !WITH_CYCLES_ONEAPI_SOFTWARE_TEXTURING */
+    generic_copy_to(mem);
+#  endif /* !WITH_CYCLES_ONEAPI_SOFTWARE_TEXTURING */
   }
 }
 
 void OneapiDevice::image_free(device_image &mem)
 {
   if (mem.device_pointer) {
+#  ifndef WITH_CYCLES_ONEAPI_SOFTWARE_TEXTURING
     thread_scoped_lock lock(device_mem_map_mutex);
     DCHECK(device_mem_map.find(&mem) != device_mem_map.end());
     const Mem &cmem = device_mem_map[&mem];
@@ -967,6 +978,9 @@ void OneapiDevice::image_free(device_image &mem)
       lock.unlock();
       generic_free(mem);
     }
+#  else  /* !WITH_CYCLES_ONEAPI_SOFTWARE_TEXTURING */
+    generic_free(mem);
+#  endif /* !WITH_CYCLES_ONEAPI_SOFTWARE_TEXTURING */
   }
 }
 
@@ -1267,7 +1281,8 @@ void OneapiDevice::set_global_memory(SyclQueue *queue_,
 
 /* This macro will change global ptr of KernelGlobals via name matching. */
 #  define KERNEL_DATA_ARRAY(type, name) \
-    else if (#name == matched_name) { \
+    else if (#name == matched_name) \
+    { \
       globals->__##name = (type *)memory_device_pointer; \
       return; \
     }
@@ -1279,7 +1294,8 @@ void OneapiDevice::set_global_memory(SyclQueue *queue_,
   }
   KERNEL_DATA_ARRAY(KernelData, data)
 #  include "kernel/data_arrays.h"
-  else {
+  else
+  {
     std::cerr << "Can't found global/constant memory with name \"" << matched_name << "\"!"
               << std::endl;
     assert(false);
@@ -1511,7 +1527,18 @@ std::vector<SyclDeviceEntry> available_sycl_devices(
             if (number_of_eus <= 96 && threads_per_eu == 7) {
               filter_out = true;
             }
-            /* if not already filtered out, check driver version. */
+#  ifndef WITH_CYCLES_ONEAPI_SOFTWARE_TEXTURING
+            /* If not already filtered out, check support for bindless images. */
+            if (!filter_out && !device.has(sycl::aspect::ext_oneapi_bindless_images)) {
+              filter_out = true;
+
+              LOG_WARNING << "Device \"" << device.get_info<sycl::info::device::name>()
+                          << "\" does not support bindless images, which Cycles oneAPI"
+                          << " requires. Build Blender with "
+                          << "WITH_CYCLES_ONEAPI_SOFTWARE_TEXTURING to use this device.";
+            }
+#  endif
+            /* If not already filtered out, check driver version. */
             bool check_driver_version = !filter_out;
             /* We don't know how to check driver version strings for non-Intel GPUs. */
             if (check_driver_version &&
@@ -1619,10 +1646,10 @@ void OneapiDevice::architecture_information(const SyclDevice *device,
       reinterpret_cast<const sycl::device *>(device)
           ->get_info<sycl::ext::oneapi::experimental::info::device::architecture>();
 
-#  define FILL_ARCH_INFO(architecture_code, is_arch_optimised) \
+#  define FILL_ARCH_INFO(architecture_code, is_arch_optimized) \
     case sycl::ext::oneapi::experimental::architecture ::architecture_code: \
       name = #architecture_code; \
-      is_optimized = is_arch_optimised; \
+      is_optimized = is_arch_optimized; \
       break;
 
   /* List of architectures that have been optimized by Intel and Blender developers.
@@ -1699,13 +1726,13 @@ char *OneapiDevice::device_capabilities()
                  << device.get_platform().get_info<sycl::info::platform::name>() << "\n";
 
     string arch_name;
-    bool is_optimised_for_arch;
+    bool is_optimized_for_arch;
     architecture_information(
-        reinterpret_cast<const SyclDevice *>(&device), arch_name, is_optimised_for_arch);
+        reinterpret_cast<const SyclDevice *>(&device), arch_name, is_optimized_for_arch);
     capabilities << "\t\tsycl::info::device::architecture\t\t\t";
     capabilities << arch_name << "\n";
     capabilities << "\t\tsycl::info::device::is_cycles_optimized\t\t\t";
-    capabilities << is_optimised_for_arch << "\n";
+    capabilities << is_optimized_for_arch << "\n";
     capabilities << "\t\tsycl::info::device::meets_driver_requirement\t\t\t";
     capabilities << entry.meets_driver_requirement << "\n";
 
@@ -1827,9 +1854,9 @@ void OneapiDevice::iterate_devices(OneAPIDeviceIteratorCallback cb, void *user_p
     std::string id = "ONEAPI_" + platform_name + "_" + name;
 
     string arch_name;
-    bool is_optimised_for_arch;
+    bool is_optimized_for_arch;
     architecture_information(
-        reinterpret_cast<const SyclDevice *>(&device), arch_name, is_optimised_for_arch);
+        reinterpret_cast<const SyclDevice *>(&device), arch_name, is_optimized_for_arch);
 
     if (device.has(sycl::aspect::ext_intel_pci_address)) {
       id.append("_" + device.get_info<sycl::ext::intel::info::device::pci_address>());
@@ -1839,7 +1866,7 @@ void OneapiDevice::iterate_devices(OneAPIDeviceIteratorCallback cb, void *user_p
          num,
          hwrt_support,
          oidn_support,
-         is_optimised_for_arch,
+         is_optimized_for_arch,
          entry.meets_driver_requirement,
          user_ptr);
     num++;

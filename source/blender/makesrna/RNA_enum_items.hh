@@ -54,6 +54,7 @@ DEF_ENUM(rna_enum_strip_modifier_type_items)
 DEF_ENUM(rna_enum_strip_video_modifier_type_items)
 DEF_ENUM(rna_enum_strip_sound_modifier_type_items)
 DEF_ENUM(rna_enum_strip_scale_method_items)
+DEF_ENUM(rna_enum_strip_overlap_mode_items)
 DEF_ENUM(rna_enum_object_shaderfx_type_items)
 
 DEF_ENUM(rna_enum_modifier_triangulate_quad_method_items)
@@ -273,6 +274,9 @@ DEF_ENUM(rna_enum_geometry_nodes_linear_gizmo_draw_style_items)
 DEF_ENUM(rna_enum_asset_import_method_items)
 
 DEF_ENUM(rna_enum_pointcloud_type_items)
+
+DEF_ENUM(rna_enum_project_variable_type_items)
+DEF_ENUM(rna_enum_project_variable_string_subtype_items)
 
 /* Not available to RNA pre-processing (`makesrna`).
  * Defined in editors for example. */

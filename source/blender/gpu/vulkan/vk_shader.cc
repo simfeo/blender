@@ -354,7 +354,7 @@ static std::ostream &print_qualifier(std::ostream &os, const Qualifier &qualifie
 static void print_resource(std::ostream &os,
                            const VKDescriptorSet::Location location,
                            const ShaderCreateInfo::Resource &res,
-                           const ShaderCreateInfo &info)
+                           const ShaderCreateInfo & /*info*/)
 {
   os << "layout(binding = " << uint32_t(location);
   if (res.bind_type == ShaderCreateInfo::Resource::BindType::IMAGE) {
@@ -381,14 +381,13 @@ static void print_resource(std::ostream &os,
       os << res.image.name << ";";
       break;
     case ShaderCreateInfo::Resource::BindType::UNIFORM_BUFFER:
-      os << "uniform _" << res.uniformbuf.name.str_no_array() << " { "
-         << info.buffer_typename(res.uniformbuf.type_name, true) << " " << res.uniformbuf.name
-         << "; };";
+      os << "uniform _" << res.uniformbuf.name.str_no_array() << " { " << res.uniformbuf.type_name
+         << " " << res.uniformbuf.name << "; };";
       break;
     case ShaderCreateInfo::Resource::BindType::STORAGE_BUFFER:
       print_qualifier(os, res.storagebuf.qualifiers);
-      os << "buffer _" << res.storagebuf.name.str_no_array() << " { "
-         << info.buffer_typename(res.storagebuf.type_name) << " " << res.storagebuf.name << "; };";
+      os << "buffer _" << res.storagebuf.name.str_no_array() << " { " << res.storagebuf.type_name
+         << " " << res.storagebuf.name << "; };";
       break;
     case ShaderCreateInfo::Resource::BindType::ACCELERATION_STRUCTURE:
       os << "uniform accelerationStructureEXT " << res.acceleration_structure.name << ";";
@@ -1100,7 +1099,6 @@ std::string VKShader::fragment_interface_declare(const shader::ShaderCreateInfo 
        * collide with other resources. */
       Resource res(info, Resource::BindType::SAMPLER, input.index, nullptr);
       res.sampler.type = input.img_type;
-      res.sampler.sampler = GPUSamplerState::default_sampler();
       res.sampler.name = image_name;
       print_resource(ss, interface, res, info);
 
@@ -1246,6 +1244,9 @@ std::string VKShader::workaround_geometry_shader_source_create(
   const bool do_barycentric_workaround = !extensions.fragment_shader_barycentric &&
                                          flag_is_set(info.builtins_combined(),
                                                      BuiltinBits::BARYCENTRIC_COORD);
+  const bool do_clip_distance_workaround = !extensions.shader_clip_distance &&
+                                           flag_is_set(info.builtins_combined(),
+                                                       BuiltinBits::CLIP_DISTANCES);
 
   shader::ShaderCreateInfo info_modified = info;
   info_modified.geometry_out_interfaces_ = info_modified.vertex_out_interfaces_;
@@ -1262,6 +1263,15 @@ std::string VKShader::workaround_geometry_shader_source_create(
     for (const StageInterfaceInfo::InOut &inout : iface->inouts) {
       location += get_location_count(inout.type);
     }
+  }
+
+  /* Must match the layout of the vertex stage, which emits the emulated clip distances right
+   * after the interfaces. Input and output locations are separate spaces, so the pass through
+   * uses the same location on both sides. */
+  if (do_clip_distance_workaround) {
+    ss << "layout(location=" << location << ") in float vk_ClipDistance_in[][6];\n";
+    ss << "layout(location=" << location << ") out float vk_ClipDistance[6];\n";
+    location += 6;
   }
 
   int location_in = location;
@@ -1304,6 +1314,9 @@ std::string VKShader::workaround_geometry_shader_source_create(
     if (do_barycentric_workaround) {
       ss << "  gpu_BaryCoordNoPersp = gpu_BaryCoord =";
       ss << " vec3(" << int(i == 0) << ", " << int(i == 1) << ", " << int(i == 2) << ");\n";
+    }
+    if (do_clip_distance_workaround) {
+      ss << "  vk_ClipDistance = vk_ClipDistance_in[" << i << "];\n";
     }
     ss << "  gl_Position = gl_in[" << i << "].gl_Position;\n";
     if (do_layer_output) {
@@ -1377,6 +1390,11 @@ bool VKShader::ensure_graphics_pipelines(Span<shader::PipelineState> pipeline_st
     return true;
   }
 
+  /* Viewports and scissors are part of the pipeline and only known when drawing. */
+  if (device.workarounds_get().static_viewport_scissor) {
+    return true;
+  }
+
   for (const shader::PipelineState &pipeline_state : pipeline_states) {
     const VkPrimitiveTopology vk_topology = to_vk_primitive_topology(pipeline_state.primitive_);
 
@@ -1414,6 +1432,8 @@ bool VKShader::ensure_graphics_pipelines(Span<shader::PipelineState> pipeline_st
       graphics_info.fragment_out.color_attachment_formats.append(to_vk_format(color_format));
     }
     graphics_info.fragment_out.state = pipeline_state.state_;
+    graphics_info.shaders.color_attachment_count = uint32_t(
+        graphics_info.fragment_out.color_attachment_formats.size());
 
     bool pipeline_created = false;
     VkPipeline vk_pipeline = device.pipelines.get_or_create_graphics_pipeline(
@@ -1468,6 +1488,10 @@ VkPipeline VKShader::ensure_and_get_graphics_pipeline(
   graphics_info.shaders.vk_topology = vk_topology;
   graphics_info.shaders.state = state_manager.state;
   graphics_info.shaders.viewport_count = framebuffer.viewport_size();
+  if (device.workarounds_get().static_viewport_scissor) {
+    framebuffer.vk_viewports_append(graphics_info.shaders.viewports);
+    framebuffer.vk_render_areas_append(graphics_info.shaders.scissors);
+  }
   graphics_info.shaders.specialization_constants.extend(constants_state.values);
   graphics_info.shaders.has_depth = depth_attachment_format != VK_FORMAT_UNDEFINED;
   graphics_info.shaders.has_stencil = stencil_attachment_format != VK_FORMAT_UNDEFINED;
@@ -1486,10 +1510,16 @@ VkPipeline VKShader::ensure_and_get_graphics_pipeline(
   graphics_info.fragment_out.color_attachment_formats.extend(
       framebuffer.color_attachment_formats_get());
   graphics_info.fragment_out.state = graphics_info.shaders.state;
+  graphics_info.shaders.color_attachment_count = uint32_t(
+      graphics_info.fragment_out.color_attachment_formats.size());
 
+  /* Pipelines with baked in viewports and scissors are unlikely to be reused, don't store them
+   * in the static pipeline cache that is written to disk. */
+  const bool use_static_cache = is_static_shader_ &&
+                                !device.workarounds_get().static_viewport_scissor;
   bool pipeline_created = false;
   VkPipeline vk_pipeline = device.pipelines.get_or_create_graphics_pipeline(
-      graphics_info, is_static_shader_, vk_pipeline_base_, name_get(), pipeline_created);
+      graphics_info, use_static_cache, vk_pipeline_base_, name_get(), pipeline_created);
 
   UNUSED_VARS_NDEBUG(pipeline_created);
 #ifndef NDEBUG

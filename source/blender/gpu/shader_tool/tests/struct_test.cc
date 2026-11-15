@@ -843,6 +843,17 @@ U U_ctor_() {U r;r._pad=0;return r;}
     EXPECT_EQ(output, expect);
     EXPECT_EQ(error, "");
   }
+  {
+    string input = R"(
+enum : int { VALUE = 0 };
+)";
+    string expect = R"(
+static constexpr int VALUE  = 0;
+)";
+    auto [output, _, error] = process_test_string(input, Language::BSL);
+    EXPECT_EQ(output, expect);
+    EXPECT_EQ(error, "");
+  }
 }
 
 TEST(shader_tool, NestedStruct)
@@ -1153,6 +1164,26 @@ void fn() {
     EXPECT_EQ(output, expect);
     EXPECT_EQ(error, "");
   }
+  {
+    string input = R"(
+struct T{int a,b;};
+void fn() {
+  T t10=T{.a=1,.c=1,.b=1};
+}
+)";
+    auto [output, _, error] = process_test_string(input, Language::BSL);
+    EXPECT_EQ(error, "Field designator 'c' does not refer to any field in type 'T'");
+  }
+  {
+    string input = R"(
+struct T{int a,b;};
+void fn() {
+  T t10=T{.b=1,.a=1};
+}
+)";
+    auto [output, _, error] = process_test_string(input, Language::BSL);
+    EXPECT_EQ(error, "Field designator 'a' needs to be specified in declaration order");
+  }
 }
 
 TEST(shader_tool, BitField)
@@ -1241,6 +1272,57 @@ void f(A t)
     string input = R"(struct A { int a : 2, b : 2; };)";
     auto [output, _, error] = process_test_string(input, Language::BSL);
     EXPECT_EQ(error, "Bitfields must have single declarator");
+  }
+  {
+    string input = R"(
+struct A {
+  int a : 2;
+};
+
+void f(A t)
+{
+  t.a += 1;
+  t.a *= 1;
+  t.a /= 1;
+  t.a -= 1;
+  t.a <<= 1;
+  t.a >>= 1;
+}
+)";
+    string expect = R"(
+struct A {
+  int a    ;
+};
+#line 2
+A A_ctor_() {A r;r.a=0;return r;}
+#line 6
+void f(A t)
+{
+  bitfieldInsertAssign(t.a, bitfieldExtract(t.a, 0, 2) + 1, 0, 2) ;
+  bitfieldInsertAssign(t.a, bitfieldExtract(t.a, 0, 2) * 1, 0, 2) ;
+  bitfieldInsertAssign(t.a, bitfieldExtract(t.a, 0, 2) / 1, 0, 2) ;
+  bitfieldInsertAssign(t.a, bitfieldExtract(t.a, 0, 2) - 1, 0, 2) ;
+  bitfieldInsertAssign(t.a, bitfieldExtract(t.a, 0, 2)  <<  1, 0, 2) ;
+  bitfieldInsertAssign(t.a, bitfieldExtract(t.a, 0, 2)  >>  1, 0, 2) ;
+}
+)";
+    auto [output, _, error] = process_test_string(input, Language::BSL);
+    EXPECT_EQ(output, expect);
+    EXPECT_EQ(error, "");
+  }
+  {
+    string input = R"(
+struct A {
+  int a : 2;
+};
+
+void f(A t)
+{
+  t.a++;
+}
+)";
+    auto [output, _, error] = process_test_string(input, Language::BSL);
+    EXPECT_EQ(error, "Increment and decrement operators are not supported on bitfield");
   }
 }
 

@@ -493,7 +493,7 @@ static std::ostream &print_qualifier(std::ostream &os, const Qualifier &qualifie
 
 static void print_resource(std::ostream &os,
                            const ShaderCreateInfo::Resource &res,
-                           const ShaderCreateInfo &info)
+                           const ShaderCreateInfo & /*info*/)
 {
   {
     os << "layout(binding = " << res.slot;
@@ -523,14 +523,13 @@ static void print_resource(std::ostream &os,
       break;
     case ShaderCreateInfo::Resource::BindType::UNIFORM_BUFFER:
       os << "uniform _" << res.uniformbuf.name.str_no_array() << " { ";
-      os << info.buffer_typename(res.uniformbuf.type_name, true) << " " << res.uniformbuf.name
-         << "; };";
+      os << res.uniformbuf.type_name << " " << res.uniformbuf.name << "; };";
       break;
     case ShaderCreateInfo::Resource::BindType::STORAGE_BUFFER:
       print_qualifier(os, res.storagebuf.qualifiers);
       os << "buffer _";
       os << res.storagebuf.name.str_no_array() << " { ";
-      os << info.buffer_typename(res.storagebuf.type_name) << " " << res.storagebuf.name << "; };";
+      os << res.storagebuf.type_name << " " << res.storagebuf.name << "; };";
       break;
     case ShaderCreateInfo::Resource::BindType::ACCELERATION_STRUCTURE:
       BLI_assert_unreachable();
@@ -830,7 +829,6 @@ std::string GLShader::fragment_interface_declare(const ShaderCreateInfo &info) c
        * collide with other resources. */
       Resource res(info, Resource::BindType::SAMPLER, input.index, nullptr);
       res.sampler.type = input.img_type;
-      res.sampler.sampler = GPUSamplerState::default_sampler();
       res.sampler.name = image_name;
       print_resource(ss, res, info);
 
@@ -894,17 +892,6 @@ std::string GLShader::geometry_layout_declare(const ShaderCreateInfo &info) cons
      << ", max_vertices = " << max_verts << ") out;\n";
   ss << "\n";
   return ss.str();
-}
-
-static StageInterfaceInfo *find_interface_by_name(
-    const Span<ShaderCreateInfo::StageInterfaceInfoHandle> ifaces, const StringRefNull &name)
-{
-  for (auto [iface, cond] : ifaces) {
-    if (iface->instance_name == name) {
-      return iface;
-    }
-  }
-  return nullptr;
 }
 
 std::string GLShader::geometry_interface_declare(const ShaderCreateInfo &info) const

@@ -46,6 +46,21 @@ static const EnumPropertyItem popup_draw_direction_items[] = {
      "Draw popup panel to the side of the button"},
     {0, nullptr, 0, nullptr, nullptr},
 };
+
+static const EnumPropertyItem recent_files_filter_items[] = {
+    {int(ui::RecentFilesFilter::All), "ALL", 0, "All", "All recent files"},
+    {int(ui::RecentFilesFilter::Project),
+     "PROJECT",
+     0,
+     "Project",
+     "Recent files in the active project"},
+    {int(ui::RecentFilesFilter::Other),
+     "OTHER",
+     0,
+     "Other",
+     "Recent files not in the active project"},
+    {0, nullptr, 0, nullptr, nullptr},
+};
 }  // namespace blender
 
 enum class TextAlignAnchor : int {
@@ -115,10 +130,11 @@ static void rna_uiItemTextBox(Layout *layout,
                               bContext *C,
                               PointerRNA *ptr,
                               const char *propname,
-                              const int initial_visible_lines,
-                              const char *placeholder,
+                              const char *name,
                               const char *text_ctxt,
-                              bool translate)
+                              bool translate,
+                              const int initial_visible_lines,
+                              const char *placeholder)
 {
   PropertyRNA *prop = RNA_struct_find_property(ptr, propname);
 
@@ -128,20 +144,25 @@ static void rna_uiItemTextBox(Layout *layout,
                      propname);
     return;
   }
+
+  std::optional<StringRefNull> text = rna_translate_ui_text(
+      name, text_ctxt, nullptr, prop, translate);
+
   std::optional<StringRefNull> placeholder_opt = std::nullopt;
   if (placeholder) {
     placeholder_opt = rna_translate_ui_text(placeholder, text_ctxt, nullptr, prop, translate);
   }
-  layout->textbox(C, ptr, propname, placeholder_opt, initial_visible_lines);
+  layout->textbox(C, ptr, propname, text, placeholder_opt, initial_visible_lines);
 }
 
 static void rna_uiItemTextBoxWithState(Layout *layout,
                                        PointerRNA *ptr,
                                        const char *propname,
-                                       PointerRNA *state_ptr,
-                                       const char *placeholder,
+                                       const char *name,
                                        const char *text_ctxt,
-                                       bool translate)
+                                       bool translate,
+                                       PointerRNA *state_ptr,
+                                       const char *placeholder)
 {
   PropertyRNA *prop = RNA_struct_find_property(ptr, propname);
 
@@ -152,13 +173,17 @@ static void rna_uiItemTextBoxWithState(Layout *layout,
     return;
   }
 
+  std::optional<StringRefNull> text = rna_translate_ui_text(
+      name, text_ctxt, nullptr, prop, translate);
+
   std::optional<StringRefNull> placeholder_opt = std::nullopt;
 
   if (placeholder) {
     placeholder_opt = rna_translate_ui_text(placeholder, text_ctxt, nullptr, prop, translate);
   }
 
-  layout->textbox_with_state(ptr, propname, state_ptr->data_as<TextboxState>(), placeholder_opt);
+  layout->textbox_with_state(
+      ptr, propname, state_ptr->data_as<TextboxState>(), text, placeholder_opt);
 }
 
 static void rna_uiItemR(Layout *layout,
@@ -865,6 +890,46 @@ static void rna_uiTemplateSearchPreview(Layout *layout,
       layout, C, ptr, propname, searchptr, searchpropname, newop, unlinkop, rows, cols, text);
 }
 
+static void rna_uiTemplateFilePath(Layout *layout,
+                                   const bContext *C,
+                                   PointerRNA *ptr,
+                                   const char *propname,
+                                   const char *pathselect_op,
+                                   const char *filter_glob,
+                                   const char *text,
+                                   const char *text_ctxt,
+                                   bool translate,
+                                   const char *placeholder,
+                                   const bool split_name)
+{
+  PropertyRNA *prop = RNA_struct_find_property(ptr, propname);
+
+  if (!prop) {
+    RNA_warning_bare("UILayout.template_filepath(): property not found: %s.%s",
+                     RNA_struct_identifier(ptr->type),
+                     propname);
+    return;
+  }
+
+  /* Get translated name (label). */
+  std::optional<StringRefNull> text_final = rna_translate_ui_text(
+      text, text_ctxt, nullptr, prop, translate);
+  std::optional<StringRefNull> placeholder_final = std::nullopt;
+  if (placeholder) {
+    placeholder_final = rna_translate_ui_text(placeholder, text_ctxt, nullptr, prop, translate);
+  }
+
+  template_filepath(layout,
+                    C,
+                    ptr,
+                    propname,
+                    pathselect_op,
+                    filter_glob,
+                    text_final,
+                    placeholder_final,
+                    split_name);
+}
+
 void rna_template_list(Layout *layout,
                        bContext *C,
                        const char *listtype_name,
@@ -1278,6 +1343,14 @@ PointerRNA rna_uiTemplatePopupConfirm(Layout *layout,
   return opptr;
 }
 
+static int rna_uiTemplateRecentFiles(ui::Layout *layout,
+                                     const int rows,
+                                     const int filter,
+                                     const float project_ratio)
+{
+  return ui::template_recent_files(layout, rows, ui::RecentFilesFilter(filter), project_ratio);
+}
+
 }  // namespace blender
 
 #else
@@ -1491,8 +1564,12 @@ void RNA_api_ui_layout(StructRNA *srna)
       "",
       "Identifier of the boolean property that determines whether the panel is open or closed");
   RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
-  parm = RNA_def_pointer(func, "layout_header", "UILayout", "", "Sub-layout to put items in");
-  RNA_def_parameter_flags(parm, PROP_NEVER_NULL, ParameterFlag(0));
+  parm = RNA_def_pointer(
+      func,
+      "layout_header",
+      "UILayout",
+      "",
+      "Sub-layout to put items in. Will be none if the property does not exists.");
   RNA_def_function_output(func, parm);
   parm = RNA_def_pointer(func,
                          "layout_body",
@@ -1610,18 +1687,19 @@ void RNA_api_ui_layout(StructRNA *srna)
                                   "in the current context region.");
   RNA_def_function_flag(func, FUNC_USE_CONTEXT);
   api_ui_item_rna_common(func);
+  api_ui_item_common_text(func);
   parm = RNA_def_int(
       func, "initial_visible_lines", 3, 1, INT_MAX, "Initial Visible Lines", "", 1, INT_MAX);
   parm = RNA_def_string(
       func, "placeholder", nullptr, 0, "", "Hint describing the expected value when empty");
   RNA_def_property_clear_flag(parm, PROP_NEVER_NULL);
-  api_ui_item_common_translation(func);
 
   func = RNA_def_function(srna, "textbox_with_state", "rna_uiItemTextBoxWithState");
   RNA_def_function_ui_description(func,
                                   "Exposes an RNA string property in the layout using a text-box "
                                   "widget with multi-line support");
   api_ui_item_rna_common(func);
+  api_ui_item_common_text(func);
   parm = RNA_def_pointer(func,
                          "textbox_state",
                          "TextboxState",
@@ -1631,7 +1709,6 @@ void RNA_api_ui_layout(StructRNA *srna)
   parm = RNA_def_string(
       func, "placeholder", nullptr, 0, "", "Hint describing the expected value when empty");
   RNA_def_property_clear_flag(parm, PROP_NEVER_NULL);
-  api_ui_item_common_translation(func);
 
   func = RNA_def_function(srna, "prop", "rna_uiItemR");
   RNA_def_function_ui_description(func,
@@ -1786,7 +1863,7 @@ void RNA_api_ui_layout(StructRNA *srna)
                     -FLT_MAX,
                     FLT_MAX,
                     "Search Weight",
-                    "Influences the sorting when using menu-seach",
+                    "Influences the sorting when using menu-search",
                     -FLT_MAX,
                     FLT_MAX);
     }
@@ -2105,6 +2182,44 @@ void RNA_api_ui_layout(StructRNA *srna)
               0,
               INT_MAX);
 
+  func = RNA_def_function(srna, "template_filepath", "rna_uiTemplateFilePath");
+  RNA_def_function_flag(func, FUNC_USE_CONTEXT);
+  RNA_def_function_ui_description(func,
+                                  "Define a file or directory path text widget, with a button to "
+                                  "its right to open a filebrowser. Only for String properties "
+                                  "with a Filepath or Dirpath subtype.");
+  api_ui_item_rna_common(func);
+  prop = RNA_def_string(func,
+                        "open",
+                        nullptr,
+                        0,
+                        "",
+                        "Operator identifier to select a filepath (if unset, the relevant generic "
+                        "path selection operator is used)");
+  RNA_def_property_clear_flag(prop, PROP_NEVER_NULL);
+  prop = RNA_def_string(func,
+                        "filter_glob",
+                        nullptr,
+                        0,
+                        "",
+                        "If set, controls which file extensions are shown in the filebrowser, for "
+                        "Filepath properties only (e.g. '*.glb;*.gltf')");
+  RNA_def_property_clear_flag(prop, PROP_NEVER_NULL);
+  api_ui_item_common_text(func);
+  prop = RNA_def_string(func,
+                        "placeholder",
+                        nullptr,
+                        0,
+                        "",
+                        "Placeholder text to display in the text widget when no path is set");
+  RNA_def_property_clear_flag(prop, PROP_NEVER_NULL);
+  RNA_def_boolean(func,
+                  "split_name",
+                  false,
+                  "",
+                  "Edit the parent directory and the file or directory name in separate text "
+                  "widgets");
+
   func = RNA_def_function(srna, "template_path_builder", "rna_uiTemplatePathBuilder");
   parm = RNA_def_pointer(func, "data", "AnyType", "", "Data from which to take property");
   RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED | PARM_RNAPTR);
@@ -2253,15 +2368,15 @@ void RNA_api_ui_layout(StructRNA *srna)
                 100.0f);
 
   func = RNA_def_function(srna, "template_histogram", "template_histogram");
-  RNA_def_function_ui_description(func, "Item. A histogramm widget to analyze imaga data.");
+  RNA_def_function_ui_description(func, "Item. A histogram widget to analyze image data.");
   api_ui_item_rna_common(func);
 
   func = RNA_def_function(srna, "template_waveform", "template_waveform");
-  RNA_def_function_ui_description(func, "Item. A waveform widget to analyze imaga data.");
+  RNA_def_function_ui_description(func, "Item. A waveform widget to analyze image data.");
   api_ui_item_rna_common(func);
 
   func = RNA_def_function(srna, "template_vectorscope", "template_vectorscope");
-  RNA_def_function_ui_description(func, "Item. A vectorscope widget to analyze imaga data.");
+  RNA_def_function_ui_description(func, "Item. A vectorscope widget to analyze image data.");
   api_ui_item_rna_common(func);
 
   func = RNA_def_function(srna, "template_layers", "template_layers");
@@ -2572,11 +2687,38 @@ void RNA_api_ui_layout(StructRNA *srna)
   RNA_def_function_flag(func, FUNC_USE_CONTEXT);
   api_ui_item_rna_common(func);
 
-  func = RNA_def_function(srna, "template_recent_files", "template_recent_files");
-  RNA_def_function_ui_description(func, "Show list of recently saved .blend files");
+  func = RNA_def_function(srna, "template_recent_files", "rna_uiTemplateRecentFiles");
+  RNA_def_function_ui_description(
+      func, "Show list of recently saved .blend files, with active project files first");
+  RNA_def_int(func, "rows", 6, 1, INT_MAX, "", "Maximum number of items to show", 1, INT_MAX);
+  RNA_def_enum(func,
+               "filter",
+               recent_files_filter_items,
+               int(ui::RecentFilesFilter::All),
+               "",
+               "Files to show, with rows distributed as if showing all files");
+  RNA_def_float_factor(func,
+                       "project_ratio",
+                       0.5f,
+                       0.0f,
+                       1.0f,
+                       "",
+                       "Ratio of rows reserved for project files, relative to other recent files",
+                       0.0f,
+                       1.0f);
+  parm = RNA_def_int(func, "found", 0, 0, INT_MAX, "", "Number of items drawn", 0, INT_MAX);
+  RNA_def_function_return(func, parm);
+
+  func = RNA_def_function(srna, "template_recent_projects", "template_recent_projects");
+  RNA_def_function_ui_description(func, "Show list of recently opened projects");
   RNA_def_int(func, "rows", 6, 1, INT_MAX, "", "Maximum number of items to show", 1, INT_MAX);
   parm = RNA_def_int(func, "found", 0, 0, INT_MAX, "", "Number of items drawn", 0, INT_MAX);
   RNA_def_function_return(func, parm);
+
+  func = RNA_def_function(srna, "template_project_splash", "template_project_splash");
+  RNA_def_function_flag(func, FUNC_USE_CONTEXT);
+  RNA_def_function_ui_description(
+      func, "Show the splash artwork of the active project, with buttons to set and clear it");
 
   func = RNA_def_function(srna, "template_file_select_path", "template_file_select_path");
   RNA_def_function_ui_description(func,
@@ -2610,6 +2752,11 @@ void RNA_api_ui_layout(StructRNA *srna)
 
   func = RNA_def_function(srna, "template_bone_collection_tree", "template_bone_collection_tree");
   RNA_def_function_ui_description(func, "Show bone collections tree");
+  RNA_def_function_flag(func, FUNC_USE_CONTEXT);
+
+  func = RNA_def_function(
+      srna, "template_project_asset_libraries_tree", "template_project_asset_libraries_tree");
+  RNA_def_function_ui_description(func, "Show current project's asset library tree");
   RNA_def_function_flag(func, FUNC_USE_CONTEXT);
 
   func = RNA_def_function(

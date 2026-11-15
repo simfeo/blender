@@ -1232,18 +1232,18 @@ static void wm_draw_window_onscreen(bContext *C, wmWindow *win, int view)
   wm_draw_callbacks(win);
   wmWindowViewport(win);
 
+  /* Always draw, not only when screen tagged. */
+  if (win->runtime->gesture.first_) {
+    wm_gesture_draw(win);
+    wmWindowViewport(win);
+  }
+
   /* Blend in floating regions (menus). */
   for (ARegion &region : screen->regionbase) {
     if (!region.runtime->visible) {
       continue;
     }
     wm_draw_region_blend(&region, 0, true);
-  }
-
-  /* Always draw, not only when screen tagged. */
-  if (win->runtime->gesture.first_) {
-    wm_gesture_draw(win);
-    wmWindowViewport(win);
   }
 
   /* Needs pixel coords in screen. */
@@ -1557,9 +1557,24 @@ bool WM_window_pixels_read_sample_from_offscreen(bContext *C,
   return true;
 }
 
+/**
+ * Return true when the front-buffer can be read reliably.
+ */
+static bool wm_window_pixels_read_use_frontbuffer()
+{
+  if ((WM_capabilities_flag() & WM_CAPABILITY_GPU_FRONT_BUFFER_READ) == 0) {
+    return false;
+  }
+  /* Not part of #WM_capabilities_flag as it depends on the GPU driver, not GHOST. */
+  if (GPU_frontbuffer_read_workaround()) {
+    return false;
+  }
+  return true;
+}
+
 uint8_t *WM_window_pixels_read(bContext *C, wmWindow *win, int r_size[2])
 {
-  if (WM_capabilities_flag() & WM_CAPABILITY_GPU_FRONT_BUFFER_READ) {
+  if (wm_window_pixels_read_use_frontbuffer()) {
     return WM_window_pixels_read_from_frontbuffer(CTX_wm_manager(C), win, r_size);
   }
   return WM_window_pixels_read_from_offscreen(C, win, r_size);
@@ -1567,7 +1582,7 @@ uint8_t *WM_window_pixels_read(bContext *C, wmWindow *win, int r_size[2])
 
 bool WM_window_pixels_read_sample(bContext *C, wmWindow *win, const int pos[2], float r_col[3])
 {
-  if (WM_capabilities_flag() & WM_CAPABILITY_GPU_FRONT_BUFFER_READ) {
+  if (wm_window_pixels_read_use_frontbuffer()) {
     WM_window_pixels_read_sample_from_frontbuffer(CTX_wm_manager(C), win, pos, r_col);
     return true;
   }

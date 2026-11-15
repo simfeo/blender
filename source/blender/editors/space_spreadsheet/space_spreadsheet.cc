@@ -540,6 +540,12 @@ static void spreadsheet_main_region_listener(const wmRegionListenerParams *param
       }
       break;
     }
+    case NC_ID: {
+      if (wmn->action == NA_RENAME) {
+        ED_region_tag_redraw(region);
+      }
+      break;
+    }
     case NC_OBJECT: {
       ED_region_tag_redraw(region);
       break;
@@ -781,6 +787,7 @@ void register_spacetype()
 
   st->spaceid = SPACE_SPREADSHEET;
   STRNCPY_UTF8(st->name, "Spreadsheet");
+  st->struct_size = sizeof(SpaceSpreadsheet);
 
   st->create = spreadsheet_create;
   st->free = spreadsheet_free;

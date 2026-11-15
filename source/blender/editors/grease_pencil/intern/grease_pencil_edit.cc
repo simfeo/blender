@@ -938,8 +938,8 @@ static const EnumPropertyItem prop_cyclical_types[] = {
     {0, nullptr, 0, nullptr, nullptr},
 };
 
-static bke::CurvesGeometry subdivide_last_segement(const bke::CurvesGeometry &curves,
-                                                   const IndexMask &strokes)
+static bke::CurvesGeometry subdivide_last_segment(const bke::CurvesGeometry &curves,
+                                                  const IndexMask &strokes)
 {
   const VArray<bool> cyclic = curves.cyclic();
   const Span<float3> positions = curves.positions();
@@ -1020,7 +1020,7 @@ static wmOperatorStatus grease_pencil_cyclical_set_exec(bContext *C, wmOperator 
       /* Update to properly calculate the lengths. */
       curves.tag_topology_changed();
 
-      curves = subdivide_last_segement(curves, strokes);
+      curves = subdivide_last_segment(curves, strokes);
     }
 
     info.drawing.tag_topology_changed();
@@ -5137,15 +5137,21 @@ static wmOperatorStatus grease_pencil_set_stroke_type_exec(bContext *C, wmOperat
           strokes, memory, [&](const int64_t index) { return fill_ids.span[index] == 0; });
       bke::greasepencil::gather_next_available_fill_ids(
           fill_ids.span.varray(), selected_non_fill_strokes, fill_ids.span);
+      bke::SpanAttributeWriter<float> fill_opacities =
+          attributes.lookup_or_add_for_write_span<float>("fill_opacity", bke::AttrDomain::Curve);
+
+      /* Each non fill selected stroke becomes a new fill. */
+      index_mask::masked_fill(fill_opacities.span, 1.0f, selected_non_fill_strokes);
+      fill_opacities.finish();
     }
 
     hide_stroke.finish();
     fill_ids.finish();
 
     if (type == StrokeType::Stroke) {
-      if (std::all_of(fill_ids.span.begin(), fill_ids.span.end(), [&](const int64_t fill_id) {
-            return fill_id == 0;
-          }))
+      if (std::all_of(fill_ids.span.begin(),
+                      fill_ids.span.end(),
+                      [&](const int64_t fill_id) { return fill_id == 0; }))
       {
         /* Remove #fill_id attribute if there are no fills left. */
         attributes.remove("fill_id");

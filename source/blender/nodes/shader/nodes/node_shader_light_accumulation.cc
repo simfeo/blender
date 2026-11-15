@@ -49,6 +49,12 @@ static int node_shader_gpu_light_accumulation(GPUMaterial *mat,
                                               GPUNodeStack *in,
                                               GPUNodeStack *out)
 {
+  if (!in[0].link) {
+    /* Error: not linked to a light accumulation zone. */
+    BLI_assert_unreachable();
+    return false;
+  }
+
   GPU_material_flag_set(mat, GPU_MATFLAG_LIGHTING);
 
   return GPU_stack_link(
@@ -71,6 +77,7 @@ void register_node_type_sh_light_accumulation()
       "Compositing Pass.\n"
       "The combined result is computed as (Diffuse Light * Diffuse Color) + (Glossy Light * "
       "Glossy Color)";
+  ntype.enum_name_legacy = "LIGHT_ACCUMULATION";
   ntype.nclass = NODE_CLASS_SHADER;
   ntype.declare = file_ns::node_declare;
   ntype.gather_link_search_ops = search_link_ops_for_shader_material_lighting_node;

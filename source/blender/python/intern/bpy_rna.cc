@@ -4802,7 +4802,7 @@ PyDoc_STRVAR(
     "   :param key: String name of the property.\n"
     "   :type key: str\n"
     "   :return: An object used to manage an IDProperty's UI data.\n"
-    "   :rtype: :class:`bpy.types.IDPropertyUIManager`\n");
+    "   :rtype: :class:`idprop.types.IDPropertyUIManager` | None\n");
 static PyObject *pyrna_struct_id_properties_ui(BPy_StructRNA *self, PyObject *args)
 {
   PYRNA_STRUCT_CHECK_OBJ(self);
@@ -4815,7 +4815,7 @@ static PyObject *pyrna_struct_id_properties_ui(BPy_StructRNA *self, PyObject *ar
   const char *key;
   if (!PyArg_ParseTuple(args,
                         "s" /* `key` */
-                        ":ui_data",
+                        ":id_properties_ui",
                         &key))
   {
     return nullptr;
@@ -5758,7 +5758,7 @@ static PyObject *pyrna_struct_pop(BPy_StructRNA *self, PyObject *args)
                         "s" /* `key` */
                         "|" /* Optional arguments. */
                         "O" /* `default` */
-                        ":get",
+                        ":pop",
                         &key,
                         &def))
   {
@@ -5820,7 +5820,10 @@ PyDoc_STRVAR(
     "   (matches Python's dictionary function of the same name).\n"
     "\n"
     "   :param key: The identifier for the collection member.\n"
-    "   :type key: str\n"
+    "\n"
+    "      For ``bpy.data`` collections a ``(name, library)`` tuple can also be used.\n"
+    "      *library* is the library filepath or ``None`` for data in the current file.\n"
+    "   :type key: str | tuple[str, str | None]\n"
     "   :param default: Optional argument for the value to return if\n"
     "      *key* is not found.\n"
     "   :type default: Any\n"
@@ -6351,7 +6354,7 @@ PyDoc_STRVAR(
     "   :type attr: str\n"
     "   :param seq: Writable sequence or buffer receiving flattened values.\n"
     "      For array attributes, the length must be ``len(collection) * array_length``.\n"
-    "   :type seq: MutableSequence[bool | int | float] | buffer\n");
+    "   :type seq: MutableSequence[bool | int | float] | Buffer\n");
 static PyObject *pyrna_prop_collection_foreach_get(BPy_PropertyRNA *self, PyObject *args)
 {
   PYRNA_PROP_CHECK_OBJ(self);
@@ -6373,7 +6376,7 @@ PyDoc_STRVAR(
     "   :type attr: str\n"
     "   :param seq: Sequence or buffer containing flattened values.\n"
     "      For array attributes, the length must be ``len(collection) * array_length``.\n"
-    "   :type seq: Sequence[bool | int | float] | buffer\n");
+    "   :type seq: Sequence[bool | int | float] | Buffer\n");
 static PyObject *pyrna_prop_collection_foreach_set(BPy_PropertyRNA *self, PyObject *args)
 {
   PYRNA_PROP_CHECK_OBJ(self);
@@ -7297,8 +7300,8 @@ static PyObject *pyrna_func_vectorcall(PyObject *callable,
       arg_name = PyUnicode_AsUTF8(key);
       found = false;
 
-      if (arg_name == nullptr)
-      { /* Unlikely the `arg_name` is not a string, but ignore if it is. */
+      /* Unlikely the `arg_name` is not a string, but ignore if it is. */
+      if (arg_name == nullptr) {
         PyErr_Clear();
       }
       else {

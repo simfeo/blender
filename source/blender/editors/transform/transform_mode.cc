@@ -1178,8 +1178,6 @@ static TransModeInfo *mode_info_get(TransInfo *t, const int mode)
         return &TransMode_translate;
       }
       return &TransMode_timetranslate;
-    case TFM_BAKE_TIME:
-      return &TransMode_baketime;
     case TFM_MIRROR:
       return &TransMode_mirror;
     case TFM_BWEIGHT:
@@ -1284,6 +1282,17 @@ bool transform_mode_is_axis_pointing_to_screen(const TransInfo *t, const float3 
   float view_vector[3];
   view_vector_calc(t, t->center_global, view_vector);
   return dot_v3v3(axis, view_vector) > 0.0f;
+}
+
+TransDataContainer *transform_mode_container_first_ok(TransInfo *t)
+{
+  FOREACH_TRANS_DATA_CONTAINER (t, tc) {
+    if (tc->custom.mode.data) {
+      return tc;
+    }
+  }
+  BLI_assert_msg(0, "Should never happen, at least one container must have valid data");
+  return nullptr;
 }
 
 /** \} */

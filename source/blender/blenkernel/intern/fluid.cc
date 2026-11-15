@@ -1526,8 +1526,8 @@ static void emit_from_particles(Object *flow_ob,
                                 Scene *scene,
                                 float dt)
 {
-  if (ffs && ffs->psys && ffs->psys->part &&
-      ELEM(ffs->psys->part->type, PART_EMITTER, PART_FLUID)) /* Is particle system selected. */
+  /* Is particle system selected. */
+  if (ffs && ffs->psys && ffs->psys->part && ELEM(ffs->psys->part->type, PART_EMITTER, PART_FLUID))
   {
     ParticleSimulationData sim;
     ParticleSystem *psys = ffs->psys;
@@ -2329,13 +2329,17 @@ static void adaptive_domain_adjust(
   }
 
   if (res_changed || shift_changed) {
+    int o_res[3];
+    copy_v3_v3_int(o_res, fds->res);
+    /* The new fluid object sizes its guiding grid from the domain resolution. */
+    copy_v3_v3_int(fds->res, res);
+
     BKE_fluid_reallocate_copy_fluid(
-        fds, fds->res, res, fds->res_min, min, fds->res_max, temp_shift, total_shift);
+        fds, o_res, res, fds->res_min, min, fds->res_max, temp_shift, total_shift);
 
     /* set new domain dimensions */
     copy_v3_v3_int(fds->res_min, min);
     copy_v3_v3_int(fds->res_max, max);
-    copy_v3_v3_int(fds->res, res);
     fds->total_cells = total_cells;
 
     /* Redo adapt time step in manta to refresh solver state (ie time variables) */
@@ -3063,7 +3067,8 @@ static void update_effectors_task_cb(void *__restrict userdata,
       if ((data->fuel && std::max(data->density[index], data->fuel[index]) < FLT_EPSILON) ||
           (!data->fuel && data->density && data->density[index] < FLT_EPSILON) ||
           (data->phi_obs_in && data->phi_obs_in[index] < 0.0f) ||
-          data->flags[index] & 2) /* Manta-flow convention: `2 == FlagObstacle`. */
+          /* Manta-flow convention: `2 == FlagObstacle`. */
+          data->flags[index] & 2)
       {
         continue;
       }

@@ -2726,7 +2726,7 @@ static PyObject *bpy_bmedge_calc_tangent(BPy_BMEdge *self, PyObject *args)
 
   if (!PyArg_ParseTuple(args,
                         "O!" /* `loop` */
-                        ":BMEdge.calc_face_tangent",
+                        ":BMEdge.calc_tangent",
                         &BPy_BMLoop_Type,
                         &py_loop))
   {
@@ -5204,6 +5204,7 @@ PyObject *BPyInit_bmesh_types()
   PyModule_AddType(submodule, &BPy_BMLayerItem_Type);
   /* `bmesh_py_types_meshdata.cc` */
   PyModule_AddType(submodule, &BPy_BMLoopUV_Type);
+  PyModule_AddType(submodule, &BPy_BMVertSkin_Type);
   PyModule_AddType(submodule, &BPy_BMDeformVert_Type);
 
   return submodule;

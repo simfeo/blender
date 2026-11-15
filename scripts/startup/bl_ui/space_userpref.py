@@ -11,6 +11,7 @@ from bpy.types import (
 )
 from bpy.app.translations import (
     contexts as i18n_contexts,
+    pgettext_n as n_,
     pgettext_iface as iface_,
     pgettext_rpt as rpt_,
 )
@@ -1049,6 +1050,14 @@ class USERPREF_PT_system_video_sequencer(SystemPanel, CenterAlignMixIn, Panel):
 
         layout.prop(system, "sequencer_proxy_setup")
 
+        layout.separator()
+
+        layout.prop(system, "use_hardware_video_decoding")
+        if prefs.experimental.use_video_decoding_debug and prefs.view.show_developer_ui:
+            row = layout.row()
+            row.active = system.use_hardware_video_decoding
+            row.prop(system, "video_decoding_device")
+
 
 # -----------------------------------------------------------------------------
 # Viewport Panels
@@ -1568,10 +1577,10 @@ class USERPREF_PT_theme_bone_color_sets(ThemePanel, CenterAlignMixIn, Panel):
 
         row.separator()
 
-        normal_col = self.create_column(row, heading="Normal")
-        selected_col = self.create_column(row, heading="Selected")
-        active_col = self.create_column(row, heading="Active")
-        constraints_col = self.create_column(row, heading="Colored Constraints", width=10)
+        normal_col = self.create_column(row, heading=n_("Regular"))
+        selected_col = self.create_column(row, heading=n_("Selected"))
+        active_col = self.create_column(row, heading=n_("Active"))
+        constraints_col = self.create_column(row, heading=n_("Colored Constraints"), width=10)
 
         for i, ui in enumerate(theme.bone_color_sets, 1):
             color_set_col.label(text=iface_("Color Set {:d}").format(i), translate=False)
@@ -2039,6 +2048,9 @@ class USERPREF_PT_saveload_blend(SaveLoadPanel, CenterAlignMixIn, Panel):
         col.prop(paths, "use_relative_paths")
         col.prop(paths, "use_file_compression")
         col.prop(paths, "use_load_ui")
+
+        col = layout.column(heading="Startup")
+        col.prop(prefs, "use_project_remember")
 
         col = layout.column(heading="Text Files")
         col.prop(paths, "use_tabs_as_spaces")
@@ -3147,6 +3159,7 @@ class USERPREF_PT_developer_tools(Panel):
                 ({"property": "use_viewport_debug"}, None),
                 ({"property": "use_eevee_debug"}, None),
                 ({"property": "use_paint_debug"}, None),
+                ({"property": "use_video_decoding_debug"}, None),
                 ({"property": "use_extensions_debug"}, ("/blender/blender/issues/119521", "#119521")),
                 ({"property": "write_legacy_blend_file_format"}, ("/blender/blender/issues/129309", "#129309")),
                 ({"property": "no_data_block_packing"}, ("/blender/blender/issues/132167", "#132167")),
@@ -3194,7 +3207,6 @@ class USERPREF_PT_experimental_new_features(ExperimentalPanel, Panel):
                 ({"property": "use_extended_asset_browser"},
                  ("blender/blender/projects/10", "Pipeline, Assets & IO Project Page")),
                 ({"property": "use_shader_node_previews"}, ("blender/blender/issues/110353", "#110353")),
-                ({"property": "use_collection_importer"}, ("blender/blender/issues/132171", "#132171")),
             ),
         )
 

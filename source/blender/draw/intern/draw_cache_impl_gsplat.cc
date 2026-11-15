@@ -30,9 +30,8 @@
 #include "BLI_array_utils.hh"
 #include "BLI_bounds.hh"
 #include "BLI_color_types.hh"
-#include "BLI_listbase.hh"
+#include "BLI_math_vector.hh"
 #include "BLI_task.hh"
-#include "BLI_utildefines.hh"
 
 #include "DNA_object_types.h"
 #include "DNA_pointcloud_types.h"
@@ -64,7 +63,7 @@ constexpr uint32_t radiance_degs_max = 3;
 constexpr uint32_t radiance_coeffs_max = (radiance_degs_max + 1u) * (radiance_degs_max + 1u);
 
 /* Sane defaults for missing but non-zero attribute data. */
-constexpr float value_scale_default = 1e-3f;
+constexpr float value_scale_default = 1e-2f;
 constexpr float value_opacity_default = 0.5f;
 
 namespace detail {
@@ -114,24 +113,26 @@ BLI_INLINE float3 pack_quaternion_4_to_3(const float4 &q)
  */
 BLI_INLINE uint4 pack_gaussian(const float3 &bounded_mean,
                                const float3 &bounded_log_scale,
+                               bool log_scale_is_zero,
                                const math::Quaternion &rotation,
                                float opacity)
 {
   /* Quantize mean to `pu`: 3x22b. */
-  uint3 pu = static_cast<uint3>(bounded_mean * ((1 << 22) - 1u));
-  /* Quantize scaling to `su`: 3x9b. */
-  uint3 su = static_cast<uint3>(bounded_log_scale * 511.0f);
+  uint3 pu = static_cast<uint3>(math::round(bounded_mean * ((1 << 22) - 1u)));
+  /* Quantize scaling to `su`: 3x9b. Note that 0 is reserved. */
+  uint3 su = log_scale_is_zero ?
+                 uint3(0u) :
+                 (static_cast<uint3>(math::round(bounded_log_scale * 510.0f)) + 1u);
   /* Quantize opacity to `au`, 1x8b. */
-  uint au = static_cast<uint>(clamp(opacity, 0.0f, 1.0f) * 255.0f);
+  uint au = static_cast<uint>(math::round(clamp(opacity, 0.0f, 1.0f) * 255.0f));
   /* Quantize rotation to `ru`: 3x9b.
-   * Note that we shuffle quaternion `wxyz` to `xyzw` for consistency inside draw module shaders.
-   */
+   * Note that we shuffle quaternion `wxyz` to `xyzw` for consistency inside draw shaders. */
   float4 q = math::normalize(float4(rotation.x, rotation.y, rotation.z, rotation.w));
   if (q.w < 0.0f) {
     q = -q;
   }
   float3 vr = math::clamp((pack_quaternion_4_to_3(q) + 1.0f) * 0.5f, 0.0f, 1.0f);
-  uint3 ru = static_cast<uint3>(vr * 511.0f);
+  uint3 ru = static_cast<uint3>(math::round(vr * 511.0f));
 
   /* Now for the fun part: pack quantized data to 4 words. */
   uint4 w;
@@ -176,7 +177,8 @@ BLI_INLINE RadiancePack pack_radiance(const Array<float3, radiance_coeffs_max> &
   RadiancePack pack;
   for (uint32_t i = 0u; i < radiance_coeffs_max; ++i) {
     /* Quantize float3 coefficients to 3x8b. */
-    uchar3 shu = static_cast<uchar3>(math::clamp(radiance_sh[i] * 255.0f, 0.0f, 255.0f));
+    uchar3 shu = static_cast<uchar3>(
+        math::round(math::clamp(radiance_sh[i] * 255.0f, 0.0f, 255.0f)));
     /* Coefficients are stored in packs with a padding byte every 15 bytes.
      * This simplifies unpacking shader-side, until we find more data to pack in. */
     uchar3 *shu_data = reinterpret_cast<uchar3 *>(pack.radiance_sh + (3 * i));
@@ -228,17 +230,29 @@ void GSplatEvalCache::ensure_builtin_buffers(PointCloud &pointcloud)
    * as the scale data comes directly from the fitting process. We strip this function for packing
    * and re-apply it when unpacking shader-side. Note that 0 is a valid input through attributes,
    * but as ln(0) is undefined we instead pack an epsilon. */
+  static constexpr float zero_log_scale = -1e6f;
   Array<float3> scale(exp_scale.size());
   threading::parallel_for(exp_scale.index_range(), 4096, [&](IndexRange range) {
     for (const int i : range) {
-      scale[i] = math::is_any_zero(exp_scale[i]) ? float3(-1e6f) :
+      scale[i] = math::is_any_zero(exp_scale[i]) ? float3(zero_log_scale) :
                                                    math::log(math::abs(exp_scale[i]));
     }
   });
+  /* Determine scale data boundaries; exclude zero scales as their packed epsilon would stretch
+   * quantization to an extreme. */
+  std::optional<Bounds<float3>> splat_scale_bounds_opt;
+  for (const float3 &value : scale) {
+    if (value.x == zero_log_scale) {
+      continue;
+    }
+    splat_scale_bounds_opt = splat_scale_bounds_opt ?
+                                 bounds::merge(*splat_scale_bounds_opt, Bounds<float3>(value)) :
+                                 Bounds<float3>(value);
+  }
 
   /* Obtain data boundaries; we quantize uploaded data such that it lies within [0, 1]. */
   Bounds<float3> splat_mean_bounds = pointcloud.bounds_min_max(false).value_or(Bounds<float3>());
-  Bounds<float3> splat_scale_bounds = bounds::min_max(scale.as_span()).value_or(Bounds<float3>());
+  Bounds<float3> splat_scale_bounds = splat_scale_bounds_opt.value_or(Bounds<float3>());
   auto radiance_rgba_bounds = bounds::min_max(radiance_base).value_or(Bounds<float4>());
   /* Omit opacity, which is packed with Gaussian data and clamped to lie in [0, 1]. */
   Bounds<float3> radiance_base_bounds = Bounds(radiance_rgba_bounds.min.xyz(),
@@ -279,10 +293,12 @@ void GSplatEvalCache::ensure_builtin_buffers(PointCloud &pointcloud)
   MutableSpan shape_span = shape_data_buf->data<uint4>();
   threading::parallel_for(shape_span.index_range(), 4096, [&](IndexRange range) {
     for (const int i : range) {
-      float3 value_mean = splat_mean_range.scale_to_unit(mean[i]);
-      float3 value_scale = splat_scale_range.scale_to_unit(scale[i]);
+      const float3 value_mean = splat_mean_range.scale_to_unit(mean[i]);
+      const float3 value_scale = splat_scale_range.scale_to_unit(scale[i]);
+      const bool log_scale_is_zero = math::is_equal(scale[i], float3(zero_log_scale));
+
       shape_span[i] = detail::pack_gaussian(
-          value_mean, value_scale, quaternion[i], radiance_base[i].w);
+          value_mean, value_scale, log_scale_is_zero, quaternion[i], radiance_base[i].w);
     }
   });
 
@@ -344,7 +360,11 @@ void GSplatEvalCache::ensure_attribute(PointCloud &pointcloud, int attrib_i)
 void GSplatEvalCache::ensure_compute_buffers(PointCloud &pointcloud)
 {
   static const GPUVertFormat ellipse_format = gpu::GenericVertexFormat<uint2>::format();
-  static const GPUVertFormat radiance_format = gpu::GenericVertexFormat<float2>::format();
+  static const GPUVertFormat radiance_format = [&]() {
+    GPUVertFormat format{};
+    GPU_vertformat_attr_add(&format, "radiance_comp_tx", gpu::VertAttrType::SFLOAT_16_16_16_16);
+    return format;
+  }();
   static const GPUUsageType buffer_usage_flag = GPU_USAGE_STATIC | GPU_USAGE_DEVICE_ONLY |
                                                 GPU_USAGE_FLAG_BUFFER_TEXTURE_ONLY;
 
@@ -430,16 +450,16 @@ gpu::VertBuf *GSplatEvalCache::radiance_data_buf_get()
   return radiance_data_buf;
 }
 
-gpu::VertBuf *GSplatEvalCache::ellipses_comp_buf_get()
+gpu::VertBuf **GSplatEvalCache::ellipses_comp_buf_get()
 {
   DRW_vbo_request(nullptr, &ellipses_comp_buf);
-  return ellipses_comp_buf;
+  return &ellipses_comp_buf;
 }
 
-gpu::VertBuf *GSplatEvalCache::radiance_comp_buf_get()
+gpu::VertBuf **GSplatEvalCache::radiance_comp_buf_get()
 {
   DRW_vbo_request(nullptr, &radiance_comp_buf);
-  return radiance_comp_buf;
+  return &radiance_comp_buf;
 }
 
 gpu::UniformBuf *GSplatEvalCache::infos_buf_get()

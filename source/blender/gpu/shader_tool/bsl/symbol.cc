@@ -249,7 +249,10 @@ struct SymbolParser : NodeErrorHandler {
         case ResourceType::FRAG_COORD:
           var->identifier = "gl_FragCoord";
           break;
-        case ResourceType::FRAG_STENCIL_REF:
+        case ResourceType::BARY_COORD:
+          var->identifier = "gpu_BaryCoord";
+          break;
+        case ResourceType::STENCIL_REF:
           var->identifier = "gl_FragStencilRefARB";
           break;
         case ResourceType::POINT_COORD:
@@ -346,6 +349,14 @@ struct SymbolParser : NodeErrorHandler {
                attr.res_type != ResourceType::RESOURCE_TABLE)
       {
         error(arg, Diag::ResourceAttributesOnlyOnEntryPointArgs);
+      }
+
+      if (!is_entry_point && attr.condition.is_valid()) {
+        error(arg, Diag::ConditionAttributeNotOnResource);
+      }
+
+      if (attr.condition.is_valid()) {
+        var->condition = attr.condition;
       }
     }
 
@@ -533,8 +544,12 @@ struct SymbolParser : NodeErrorHandler {
         error(sym->loc.tok, Diag::Redefinition, sym->identifier);
       }
     }
-    /* Set resolved identifier. */
-    sym->identifier = prefix + sym->identifier;
+    /* TODO(fclem): Not enabling this for non-class-enum to stay compatible with the older
+     * compiler. */
+    if (cls.is_enum_class()) {
+      /* Set resolved identifier. */
+      sym->identifier = prefix + sym->identifier;
+    }
   }
 
   SymbolClass *parse_class_decl(SymbolScope &scope,
@@ -562,7 +577,9 @@ struct SymbolParser : NodeErrorHandler {
 
     scope.scopes.emplace(cls->identifier, cls);
 
-    if (cls->is_anonymous && anonymous_scope_prefix(cls).non_anonymous_parent == nullptr) {
+    if (!cls->is_enum && cls->is_anonymous &&
+        anonymous_scope_prefix(cls).non_anonymous_parent == nullptr)
+    {
       error(decl, Diag::AnonymousUnionNotSupportedAtNamespaceScope);
       return table.err_cls;
     }
@@ -598,18 +615,18 @@ struct SymbolParser : NodeErrorHandler {
     }
     else {
       cls->ensure_size_and_align();
-    }
 
-    if (cls->is_anonymous) {
-      /* Instantiate into parent class as member. */
-      SymbolVariable *var = table.var_arena.alloc(
-          &scope, cls, decl.front(), cls->original + ns_sep);
-      if (scope.variable_emplace(cls->original, var)) {
-        error(var->loc.tok, Diag::Redefinition, cls->original);
+      if (cls->is_anonymous) {
+        /* Instantiate into parent class as member. */
+        SymbolVariable *var = table.var_arena.alloc(
+            &scope, cls, decl.front(), cls->original + ns_sep);
+        if (scope.variable_emplace(cls->original, var)) {
+          error(var->loc.tok, Diag::Redefinition, cls->original);
+        }
+
+        var->type = cls;
+        var->set_offset(parent_class.is_union(), offset);
       }
-
-      var->type = cls;
-      var->set_offset(parent_class.is_union(), offset);
     }
     return cls;
   }
@@ -1012,6 +1029,15 @@ struct SymbolParser : NodeErrorHandler {
       error(var, Diag::ResourceOutOfClassDeclaration);
     }
 
+    if (attr.condition.is_valid()) {
+      if (attr.res_type == ResourceType::NONE) {
+        error(var, Diag::ConditionAttributeNotOnResource);
+      }
+      else if (attr.res_type == ResourceType::SHARED) {
+        error(var, Diag::ConditionAttributeUnsupported, to_str(attr.res_type));
+      }
+    }
+
     const bool is_srt_local_ref = type->is_srt() && cls == nullptr;
 
     string anon_prefix;
@@ -1042,6 +1068,19 @@ struct SymbolParser : NodeErrorHandler {
 
       if (is_srt_local_ref && !is_ref) {
         error(decl, Diag::ResourceTableMustBeReference);
+      }
+
+      /* Capacity attribute. */
+      if (attr.capacity.is_valid()) {
+        if (sym->array_dimensions != 1) {
+          error(decl, Diag::CapacityArrayDimensionMismatch);
+        }
+        /* TODO(fclem): Check that this references a single reachable compilation constant. */
+        sym->capacity_value = attr.capacity;
+      }
+
+      if (attr.condition.is_valid()) {
+        sym->condition = attr.condition;
       }
 
       /* Local References. */
@@ -1075,8 +1114,12 @@ struct SymbolParser : NodeErrorHandler {
           {
             error(decl, Diag::BitFieldNotIntegral, sym->type->original);
           }
-          ExpressionResult result =
-              table.expr_type_analysis(scope, bitfield.expr().child_first()).unwrap(this);
+          const Node width = bitfield.expr().child_first();
+          if (!width.is_valid()) {
+            error(decl, Diag::ExprNotIntegralConstant);
+            continue;
+          }
+          ExpressionResult result = table.expr_type_analysis(scope, width).unwrap(this);
           if (!result.is_constexpr()) {
             error(decl, Diag::ExprNotIntegralConstant);
           }
@@ -1127,9 +1170,9 @@ struct SymbolParser : NodeErrorHandler {
         }
 
         if (bitfield_base) {
-          /* Note: we mutate assignments into bitfieldInsert in a second pass. */
-          sym->identifier = bitfield_base->original + ".bitfieldExtract(" +
-                            to_string(sym->bit_offset) + ", " + to_string(sym->bit_length) + ")";
+          /* Alias to the first member of the bitfield, so that it gets the same accessor
+           * decoration below. */
+          sym->identifier = bitfield_base->original;
         }
 
         if (cls->is_anonymous || cls->is_union) {
@@ -1146,6 +1189,12 @@ struct SymbolParser : NodeErrorHandler {
                   (cls->is_anonymous ? "anonymous" : "local"),
                   (cls->is_union ? "union" : "struct"));
           }
+        }
+
+        if (bitfield_base) {
+          /* Note: we mutate assignments into bitfieldInsert in a second pass. */
+          sym->identifier += ".bitfieldExtract(" + to_string(sym->bit_offset) + ", " +
+                             to_string(sym->bit_length) + ")";
         }
       }
 

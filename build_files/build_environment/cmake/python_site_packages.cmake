@@ -37,7 +37,9 @@ ExternalProject_Add(external_python_site_packages
   INSTALL_COMMAND
     ${CMAKE_COMMAND} -E env
       PIP_CONSTRAINT=${PIP_CONSTRAINT_FILE}
+      PIP_BUILD_CONSTRAINT=${PIP_CONSTRAINT_FILE}
       ${PYTHON_CROSSENV_BINARY} -m pip install --no-cache-dir --prefix=${LIBDIR}/python ${SITE_PACKAGES_EXTRA}
+      pip==${PYTHON_PIP_VERSION}
       setuptools==${SETUPTOOLS_VERSION}
       meson-python==${MESON_PYTHON_VERSION}
       packaging==${PACKAGING_VERSION}
@@ -54,7 +56,6 @@ ExternalProject_Add(external_python_site_packages
       meson==${MESON_VERSION}
       attrs==${ATTRS_VERSION}
       cattrs==${CATTRS_VERSION}
-      fastjsonschema==${FASTJSONSCHEMA_VERSION}
       typing-extensions==${TYPING_EXTENSIONS_VERSION}
       tomli-w==${TOMLI_W_VERSION}
       --no-binary :all:

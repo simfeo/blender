@@ -941,7 +941,8 @@ class MarkdownLayouter {
       }
       case MD_SPAN_A: {
         const auto *a_detail = static_cast<const MD_SPAN_A_DETAIL *>(detail);
-        span_stack_.append(LinkSpan{StringRef(a_detail->href.text, a_detail->href.size)});
+        span_stack_.append(LinkSpan{cache_.scope.allocator().copy_string(
+            StringRef(a_detail->href.text, a_detail->href.size))});
         break;
       }
       case MD_SPAN_CODE: {
@@ -1183,7 +1184,7 @@ class MarkdownLayouter {
 
       /* Number of bytes that should be drawn in the current line. */
       int64_t draw_bytes = last_fit_char_i;
-      /* Number of bytes that should be skipped (this skips e.g. white-space at the line end).*/
+      /* Number of bytes that should be skipped (this skips e.g. white-space at the line end). */
       int64_t drop_bytes = last_fit_char_i;
       const bool wrap_to_next_line = last_fit_char_i < text.size();
 

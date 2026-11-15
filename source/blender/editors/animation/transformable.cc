@@ -201,6 +201,25 @@ Rotation Rotation::converted_to_mode(const eRotationModes mode,
   return converted;
 }
 
+void Rotation::mirror()
+{
+  switch (mode) {
+    /* Both Axis-Angle and Quaternion have their x-y-z values on array index 1, 2 and 3. Since we
+     * are mirroring on the y-z plane we need to invert those two axes. */
+    case ROT_MODE_AXISANGLE:
+    case ROT_MODE_QUAT:
+      values[2] *= -1;
+      values[3] *= -1;
+      break;
+
+    default:
+      BLI_assert(mode <= ROT_MODE_ZYX);
+      values[1] *= -1;
+      values[2] *= -1;
+      break;
+  }
+}
+
 Rotation identity_rotation(const eRotationModes mode)
 {
   switch (mode) {
@@ -644,11 +663,12 @@ float4x4 AnimTransformable::world_to_local(const Depsgraph &depsgraph,
       Object *ob_eval = id_cast<Object *>(evaluated_id);
       float4x4 parent_matrix = float4x4::identity();
       if (ob_eval->parent) {
-        parent_matrix = ob_eval->parent->world_to_object();
+        parent_matrix = math::invert(float4x4(ob_eval->parentinv)) *
+                        ob_eval->parent->world_to_object();
       }
 
       float4x4 delta_matrix = BKE_object_delta_matrix_get(*ob_eval);
-      return parent_matrix * math::invert(delta_matrix) * world_matrix;
+      return math::invert(delta_matrix) * parent_matrix * world_matrix;
     }
   }
 

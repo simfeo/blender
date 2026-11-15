@@ -2370,9 +2370,9 @@ static std::unique_ptr<IDProperty, idprop::IDPropertyDeleter> create_socket_meta
       const auto &value = node_interface::get_socket_data_as<bNodeSocketValueMenu>(socket);
       if (value.enum_items) {
         if (create_default_value_properties) {
-          if (std::ranges::any_of(value.enum_items->items, [&](const RuntimeNodeEnumItem &item) {
-                return item.identifier == value.value;
-              }))
+          if (std::ranges::any_of(
+                  value.enum_items->items,
+                  [&](const RuntimeNodeEnumItem &item) { return item.identifier == value.value; }))
           {
             /* Only add the default value property if it's contained in the enum items. */
             IDP_AddToGroup(socket_prop.get(),
@@ -5096,7 +5096,7 @@ void node_free_node(bNodeTree *ntree, bNode &node)
     }
   }
 
-  if (node.typeinfo->freefunc) {
+  if (node.typeinfo && node.typeinfo->freefunc) {
     node.typeinfo->freefunc(&node);
   }
 
@@ -5125,7 +5125,7 @@ void node_free_node(bNodeTree *ntree, bNode &node)
   if (node.runtime->declaration) {
     /* Only free if this declaration is not shared with the node type, which can happen if it does
      * not depend on any context. */
-    if (node.runtime->declaration != node.typeinfo->static_declaration) {
+    if (!node.typeinfo || node.runtime->declaration != node.typeinfo->static_declaration) {
       delete node.runtime->declaration;
     }
   }

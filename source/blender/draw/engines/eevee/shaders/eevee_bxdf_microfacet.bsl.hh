@@ -13,7 +13,6 @@
 #include "gpu_shader_math_vector.bsl.hh"
 #include "gpu_shader_math_vector_safe.bsl.hh"
 #include "gpu_shader_ray.bsl.hh"
-#include "gpu_shader_utildefines.bsl.hh"
 
 /* -------------------------------------------------------------------- */
 /** \name Microfacet GGX distribution
@@ -412,7 +411,7 @@ Ray bxdf_ggx_ray_amend_transmission(ClosureUndetermined cl, float3 V, Ray ray, T
   return ray;
 }
 
-ClosureLight bxdf_ggx_light_reflection([[resource_table]] const UtilityTexture &util_tx,
+ClosureLight bxdf_ggx_light_reflection(const UtilityTexture &util_tx,
                                        ClosureReflection cl,
                                        float3 V)
 {
@@ -426,22 +425,20 @@ ClosureLight bxdf_ggx_light_reflection([[resource_table]] const UtilityTexture &
   return light;
 }
 
-ClosureLight bxdf_ggx_light_transmission([[resource_table]] const UtilityTexture &util_tx,
+ClosureLight bxdf_ggx_light_transmission(const UtilityTexture &util_tx,
                                          ClosureRefraction cl,
                                          float3 V,
                                          Thickness thickness)
 {
   float perceptual_roughness = bxdf_ggx_perceived_roughness_transmission(cl.roughness, cl.ior);
 
-  /* Given non-zero thickness, simulate transmission through a slab/sphere, storing the view
-   * vector as the exitant direction on the first scatter. */
-  float3 V_transmitted = V;
+  /* Given non-zero thickness, simulate transmission through a slab/sphere, and output
+   * an amended view vector as the direction of the first scatter. */
   if (thickness.value() != 0.0f) {
     float3 L = bxdf_ggx_dominant_direction_transmission(cl.N, V, cl.ior, perceptual_roughness);
-    cl.N = -thickness.shape_intersect(cl.N, L).hit_N;
-
-    /* TODO(not_mark): fix #151205 by e.g. amending V to V_transmitted up the call-stack. */
-    V_transmitted = -L;
+    ThicknessIsect isect = thickness.shape_intersect(cl.N, L);
+    cl.N = -isect.hit_N;
+    V = -L;
   }
 
   ClosureLight light;
@@ -449,15 +446,16 @@ ClosureLight bxdf_ggx_light_transmission([[resource_table]] const UtilityTexture
   light.type = LIGHT_TRANSMISSION;
 
   /* Reuse the isotropic LTC LUT by using the refracted exitant view as direction. */
-  float3 R = refract(-V_transmitted, cl.N, (thickness.value() != 0.0f) ? cl.ior : (1.0f / cl.ior));
+  float3 R = refract(-V, cl.N, (thickness.value() != 0.0f) ? cl.ior : (1.0f / cl.ior));
   float cos_theta = dot(light.N, R);
   eevee::LTCData::pack_ltc_lut(light, util_tx, light.N, V, cos_theta, perceptual_roughness);
 
   return light;
 }
 
-ClosureLight bxdf_ggx_light_thin_glass_transmission(
-    [[resource_table]] const UtilityTexture &util_tx, ClosureThinRefraction cl, float3 V)
+ClosureLight bxdf_ggx_light_thin_glass_transmission(const UtilityTexture &util_tx,
+                                                    ClosureThinRefraction cl,
+                                                    float3 V)
 {
   float cos_theta = dot(cl.N, V);
 

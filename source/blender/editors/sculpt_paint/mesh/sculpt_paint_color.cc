@@ -143,6 +143,17 @@ float4 color_vert_get(const OffsetIndices<int> faces,
   return color;
 }
 
+float4 color_corner_get(const GSpan color_attribute, int corner_index)
+{
+  float4 r_color;
+  to_static_color_type(color_attribute.type(), [&](auto dummy) {
+    using T = decltype(dummy);
+    const T *colors_typed = static_cast<const T *>(color_attribute.data());
+    r_color = to_float(colors_typed[corner_index]);
+  });
+  return r_color;
+}
+
 void color_vert_set(const OffsetIndices<int> faces,
                     const Span<int> corner_verts,
                     const GroupedSpan<int> vert_to_face_map,
@@ -573,18 +584,14 @@ void do_paint_brush(const Depsgraph &depsgraph,
     ss.cache->paint_brush.density_seed = BLI_hash_int_01(ss.cache->location_symm[0] * 1000);
   }
 
-  if (stroke_is_first_brush_step_of_symmetry_pass(*ss.cache)) {
-    return;
-  }
-
   float4x4 mat;
 
   /* If the brush is round the tip does not need to be aligned to the surface, so this saves a
    * whole iteration over the affected nodes. */
   if (BKE_brush_has_cube_tip(&brush, PaintMode::Sculpt)) {
-    cube_tip_init(sd, ob, brush, mat.ptr());
+    mat = cube_tip_init(ob, brush);
 
-    if (is_zero_m4(mat.ptr())) {
+    if (math::is_zero(mat)) {
       return;
     }
   }
@@ -934,10 +941,6 @@ void do_blur_brush(const Depsgraph &depsgraph,
 
   if (!ss.cache->paint_brush.density_seed) {
     ss.cache->paint_brush.density_seed = BLI_hash_int_01(ss.cache->location_symm[0] * 1000);
-  }
-
-  if (stroke_is_first_brush_step_of_symmetry_pass(*ss.cache)) {
-    return;
   }
 
   Mesh &mesh = *id_cast<Mesh *>(ob.data);

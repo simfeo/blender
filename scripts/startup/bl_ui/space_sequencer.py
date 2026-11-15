@@ -105,7 +105,11 @@ class SEQUENCER_HT_header(Header):
 
         if sequencer_tool_settings and st.view_type in {'SEQUENCER', 'SEQUENCER_PREVIEW'}:
             row = layout.row(align=True)
-            row.prop(sequencer_tool_settings, "overlap_mode", text="")
+            row.prop(sequencer_tool_settings, "overlap_mode", expand=True, icon_only=True)
+            row.popover(
+                text="",
+                panel="SEQUENCER_PT_edit_mode",
+            )
 
         if tool_settings:
             row = layout.row(align=True)
@@ -446,7 +450,7 @@ class SEQUENCER_MT_view(Menu):
         layout.separator()
 
         if is_preview:
-            layout.prop(st, "show_transform_preview", text="Preview During Transform")
+            layout.prop(st, "show_transform_preview")
         layout.separator()
 
         layout.operator_context = 'INVOKE_REGION_WIN'
@@ -766,8 +770,7 @@ class SEQUENCER_MT_add_clip(Menu):
         layout = self.layout
         layout.operator_context = 'INVOKE_REGION_WIN'
 
-        for clip in bpy.data.movieclips:
-            layout.operator("sequencer.movieclip_strip_add", text=clip.name, translate=False).clip = clip.name
+        layout.operator_enum("sequencer.movieclip_strip_add", "clip")
 
 
 class SEQUENCER_MT_add_mask(Menu):
@@ -777,8 +780,7 @@ class SEQUENCER_MT_add_mask(Menu):
         layout = self.layout
         layout.operator_context = 'INVOKE_REGION_WIN'
 
-        for mask in bpy.data.masks:
-            layout.operator("sequencer.mask_strip_add", text=mask.name, translate=False).mask = mask.name
+        layout.operator_enum("sequencer.mask_strip_add", "mask")
 
 
 class SEQUENCER_MT_add_transitions(Menu):
@@ -879,6 +881,8 @@ class SEQUENCER_MT_strip_transform(Menu):
             col.operator("transform.seq_slide", text="Move").view2d_edge_pan = True
             col.operator("transform.transform", text="Move/Extend from Current Frame").mode = 'TIME_EXTEND'
             col.operator("sequencer.slip", text="Slip Strip Contents")
+            col.operator("sequencer.ripple_trim", text="Ripple Trim Start").side = 'LEFT'
+            col.operator("sequencer.ripple_trim", text="Ripple Trim End").side = 'RIGHT'
 
         # TODO (for preview)
         if has_sequencer:
@@ -1164,9 +1168,11 @@ class SEQUENCER_MT_strip(Menu):
             with operator_context(layout, 'EXEC_REGION_WIN'):
                 props = layout.operator("sequencer.split", text="Split", text_ctxt=i18n_contexts.id_sequence)
                 props.type = 'SOFT'
+                props.only_selected = True
 
-                props = layout.operator("sequencer.split", text="Hold Split", text_ctxt=i18n_contexts.id_sequence)
+                props = layout.operator("sequencer.split", text="Hard Split", text_ctxt=i18n_contexts.id_sequence)
                 props.type = 'HARD'
+                props.only_selected = True
 
             layout.separator()
 
@@ -1348,7 +1354,9 @@ class SEQUENCER_MT_context_menu(Menu):
 
         if has_selection:
             layout.separator()
-            layout.operator("sequencer.split", text="Split", text_ctxt=i18n_contexts.id_sequence).type = 'SOFT'
+            props = layout.operator("sequencer.split", text="Split", text_ctxt=i18n_contexts.id_sequence)
+            props.type = 'SOFT'
+            props.only_selected = True
             layout.operator("sequencer.snap").keep_offset = True
             layout.operator("sequencer.slip", text="Slip Strips").use_cursor_position = False
 
@@ -1487,7 +1495,7 @@ class SEQUENCER_MT_view_pie(Menu):
         pie = layout.menu_pie()
         pie.operator("sequencer.view_all")
         pie.operator("sequencer.view_selected", text="Frame Selected", icon='ZOOM_SELECTED')
-        pie.separator()
+        pie.operator("sequencer.view_frame")
         if context.sequencer_scene.use_preview_range:
             pie.operator("anim.scene_range_frame", text="Frame Preview Range")
         else:
@@ -2017,6 +2025,39 @@ class SEQUENCER_PT_custom_props(SequencerButtonsPanel, PropertyPanel, Panel):
     bl_category = "Strip"
 
 
+class SEQUENCER_PT_edit_mode(Panel):
+    bl_space_type = 'SEQUENCE_EDITOR'
+    bl_region_type = 'HEADER'
+    bl_label = "Edit Mode"
+    bl_ui_units_x = 11
+
+    @classmethod
+    def poll(cls, context):
+        return context.sequencer_scene is not None
+
+    def draw(self, context):
+        layout = self.layout
+        sequencer_tool_settings = context.sequencer_scene.tool_settings.sequencer_tool_settings
+
+        layout.label(text="Ripple")
+
+        col = layout.column(heading="Edit")
+        col.use_property_split = True
+
+        col.prop(sequencer_tool_settings, "ripple_all_channels")
+        col.prop(sequencer_tool_settings, "ripple_markers")
+
+        col = layout.column(heading="Add")
+        col.use_property_split = True
+
+        col.prop(sequencer_tool_settings, "ripple_insert")
+
+        col = layout.column(heading="Remove")
+        col.use_property_split = True
+
+        col.prop(sequencer_tool_settings, "ripple_clear_ranges")
+
+
 class SEQUENCER_PT_snapping(Panel):
     bl_space_type = 'SEQUENCE_EDITOR'
     bl_region_type = 'HEADER'
@@ -2156,6 +2197,7 @@ classes = (
     SEQUENCER_PT_annotation,
     SEQUENCER_PT_annotation_onion,
 
+    SEQUENCER_PT_edit_mode,
     SEQUENCER_PT_snapping,
     SEQUENCER_PT_preview_snapping,
     SEQUENCER_PT_sequencer_snapping,

@@ -635,7 +635,7 @@ void wm_event_do_notifiers(bContext *C)
           wm->file_saved = 1;
           WM_window_title_refresh(wm, &win);
         }
-        else if (note->data == ND_DATACHANGED) {
+        else if (ELEM(note->data, ND_DATACHANGED, ND_PROJECT_CHANGED)) {
           WM_window_title_refresh(wm, &win);
         }
         else if (note->data == ND_UNDO) {
@@ -1139,12 +1139,12 @@ bool WM_operator_poll_or_report_error(bContext *C, wmOperatorType *ot, ReportLis
   }
   bool msg_free = false;
   const char *msg = CTX_wm_operator_poll_msg_get(C, &msg_free);
-  CTX_wm_operator_poll_msg_clear(C);
   BKE_reportf(reports,
               RPT_ERROR,
               RPT_("Invalid context: \"%s\", %s"),
               CTX_RPT_(ot->translation_context, ot->name),
               msg ? RPT_(msg) : RPT_("poll failed"));
+  CTX_wm_operator_poll_msg_clear(C);
   if (msg_free) {
     MEM_delete(msg);
   }
@@ -1315,7 +1315,7 @@ static void wm_operator_finished(bContext *C,
     }
     else if (has_undo_step) {
       /* An undo step was added but the operator wasn't registered (and won't register itself),
-       * therefor a redo panel wouldn't redo this action but the previous registered action,
+       * therefore a redo panel wouldn't redo this action but the previous registered action,
        * causing the "redo" to remove/loose this operator. See: #101743.
        * Register check is needed so nested operator calls don't clear the HUD. See: #103587. */
       if (!(has_register || do_register)) {
@@ -1942,15 +1942,26 @@ static wmOperatorStatus wm_operator_call_internal(bContext *C,
   return wmOperatorStatus(0);
 }
 
+wmOperatorStatus WM_operator_type_call_ptr_with_reports(bContext *C,
+                                                        wmOperatorType *ot,
+                                                        wm::OpCallContext context,
+                                                        PointerRNA *properties,
+                                                        ReportList *reports,
+                                                        const wmEvent *event)
+{
+  BLI_assert(ot == WM_operatortype_find(ot->idname, true));
+  return wm_operator_call_internal(C, ot, properties, reports, context, false, event);
+}
+
 wmOperatorStatus WM_operator_name_call_ptr(bContext *C,
                                            wmOperatorType *ot,
                                            wm::OpCallContext context,
                                            PointerRNA *properties,
                                            const wmEvent *event)
 {
-  BLI_assert(ot == WM_operatortype_find(ot->idname, true));
-  return wm_operator_call_internal(C, ot, properties, nullptr, context, false, event);
+  return WM_operator_type_call_ptr_with_reports(C, ot, context, properties, nullptr, event);
 }
+
 wmOperatorStatus WM_operator_name_call(bContext *C,
                                        const char *opstring,
                                        wm::OpCallContext context,
@@ -1959,7 +1970,7 @@ wmOperatorStatus WM_operator_name_call(bContext *C,
 {
   wmOperatorType *ot = WM_operatortype_find(opstring, false);
   if (ot) {
-    return WM_operator_name_call_ptr(C, ot, context, properties, event);
+    return WM_operator_type_call_ptr_with_reports(C, ot, context, properties, nullptr, event);
   }
 
   return wmOperatorStatus(0);
@@ -1984,7 +1995,7 @@ wmOperatorStatus WM_operator_name_call_with_properties(bContext *C,
   wmOperatorType *ot = WM_operatortype_find(opstring, false);
   PointerRNA props_ptr = RNA_pointer_create_discrete(
       &G_MAIN->wm.first()->id, ot->srna, properties);
-  return WM_operator_name_call_ptr(C, ot, context, &props_ptr, event);
+  return WM_operator_type_call_ptr_with_reports(C, ot, context, &props_ptr, nullptr, event);
 }
 
 void WM_menu_name_call(bContext *C, const char *menu_name, wm::OpCallContext context)
@@ -2882,8 +2893,12 @@ static eHandlerActionFlag wm_handler_fileselect_do(bContext *C,
 
   switch (val) {
     case EVT_FILESELECT_FULL_OPEN: {
+      /* Maximized file browser does not work for file browsing from popups, as switching the
+       * screen closes it. */
+      const int display_type = handler->is_fileselect_keep_popup ? USER_TEMP_SPACE_DISPLAY_WINDOW :
+                                                                   U.filebrowser_display_type;
       ScrArea *area = ED_screen_temp_space_open(
-          C, IFACE_("Blender File View"), SPACE_FILE, U.filebrowser_display_type, true);
+          C, IFACE_("Blender File View"), SPACE_FILE, display_type, true);
       if (!area) {
         BKE_report(&wm->runtime->reports, RPT_ERROR, "Failed to open file browser!");
         return WM_HANDLER_BREAK;
@@ -4401,6 +4416,11 @@ void wm_event_do_handlers(bContext *C)
           /* For regions having custom cursors. */
           wm_paintcursor_test(C, event);
         }
+        else if (ISKEYMODIFIER(event->type)) {
+          /* Paint cursors may change appearance based on modifier keys,
+           * e.g. blade tool in the sequencer. */
+          wm_paintcursor_test(C, event);
+        }
 #ifdef WITH_INPUT_NDOF
         else if (event->type == NDOF_MOTION) {
           win.addmousemove = true;
@@ -4695,6 +4715,8 @@ void WM_event_add_fileselect(bContext *C, wmOperator *op)
   handler->head.type = WM_HANDLER_TYPE_OP;
 
   handler->is_fileselect = true;
+  handler->is_fileselect_keep_popup = ui::popup_region_from_operator(CTX_wm_screen(C),
+                                                                     CTX_wm_region_popup(C));
   handler->op = op;
   handler->context.win = root_win;
   handler->context.area = root_area;

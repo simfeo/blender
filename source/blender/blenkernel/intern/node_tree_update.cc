@@ -408,11 +408,13 @@ struct NodeTreeRelations {
   }
 };
 
+/** What can be reached from a socket, resets at Light Accumulation. */
 enum class ShaderNodeAncestorFlags {
   None = 0u,
   ShaderMaterialOutput = 1u << 0,
-  ShaderToRGB = 1u << 1,
-  LightAccumulation = 1u << 2,
+  /** Any other output node socket (AOV, Volume, Displacement...). */
+  OtherOutput = 1u << 1,
+  ShaderToRGB = 1u << 2,
   LightAccumulationColor = 1u << 3,
 };
 ENUM_OPERATORS(ShaderNodeAncestorFlags);
@@ -1500,112 +1502,135 @@ class NodeTreeMainUpdater {
     }
   }
 
-  void shader_tree_tag_by_ancestor(bNodeTree &ntree)
+  static Array<ShaderNodeAncestorFlags> shader_tree_tag_inputs_by_ancestor(bNodeTree &ntree)
   {
-    for (bNode &node : ntree.nodes) {
-      node.runtime->tmp_flag = 0;
-    }
+    Array<ShaderNodeAncestorFlags> input_ancestors(ntree.all_input_sockets().size(),
+                                                   ShaderNodeAncestorFlags::None);
 
-    bNode *output_node = ntreeShaderOutputNode(&ntree, SHD_OUTPUT_EEVEE);
-    if (!output_node) {
-      return;
-    }
+    for (const bNode *node : ntree.toposort_right_to_left()) {
+      if (ELEM(node->type_legacy,
+               SH_NODE_OUTPUT_MATERIAL,
+               SH_NODE_OUTPUT_WORLD,
+               SH_NODE_OUTPUT_LIGHT,
+               SH_NODE_OUTPUT_AOV))
+      {
+        for (const bNodeSocket *socket : node->input_sockets()) {
+          input_ancestors[socket->index_in_all_inputs()] =
+              (node->type_legacy == SH_NODE_OUTPUT_MATERIAL &&
+               socket->identifier_ustr() == "Surface"_ustr) ?
+                  ShaderNodeAncestorFlags::ShaderMaterialOutput :
+                  ShaderNodeAncestorFlags::OtherOutput;
+        }
+        continue;
+      }
 
-    for (const bNodeSocket *socket :
-         output_node->input_by_identifier("Surface"_ustr)->logically_linked_sockets())
-    {
-      socket->owner_node().runtime->tmp_flag |= short(
-          ShaderNodeAncestorFlags::ShaderMaterialOutput);
-    }
-
-    auto tag_by_ancestor = [](bNode *node, bNode * /*to_node*/, void * /*userdata*/) -> bool {
+      ShaderNodeAncestorFlags node_flags = ShaderNodeAncestorFlags::None;
       for (const bNodeSocket *socket : node->output_sockets()) {
-        for (const bNodeSocket *linked_socket : socket->logically_linked_sockets()) {
-          node->runtime->tmp_flag |= linked_socket->owner_node().runtime->tmp_flag;
-          if (linked_socket->owner_node().type_legacy == SH_NODE_LIGHT_ACCUMULATION &&
-              ELEM(StringRefNull(linked_socket->name), "Diffuse Color", "Glossy Color"))
-          {
-            node->runtime->tmp_flag |= short(ShaderNodeAncestorFlags::LightAccumulationColor);
+        for (const bNodeLink *link : socket->directly_linked_links()) {
+          if (link->is_used()) {
+            node_flags |= input_ancestors[link->tosock->index_in_all_inputs()];
           }
         }
       }
 
       if (node->type_legacy == SH_NODE_SHADERTORGB) {
-        node->runtime->tmp_flag |= short(ShaderNodeAncestorFlags::ShaderToRGB);
+        node_flags |= ShaderNodeAncestorFlags::ShaderToRGB;
       }
       else if (node->type_legacy == SH_NODE_LIGHT_ACCUMULATION) {
-        node->runtime->tmp_flag |= short(ShaderNodeAncestorFlags::LightAccumulation);
+        /* Reset. We only care about what a lighting node reaches before passing through
+         * LightAccumulation. */
+        node_flags = ShaderNodeAncestorFlags::None;
       }
 
-      return true;
-    };
+      for (const bNodeSocket *socket : node->input_sockets()) {
+        ShaderNodeAncestorFlags &socket_flags = input_ancestors[socket->index_in_all_inputs()];
+        socket_flags = node_flags;
+        if (node->type_legacy == SH_NODE_LIGHT_ACCUMULATION && ELEM(socket->identifier_ustr(),
+                                                                    "Diffuse Color"_ustr,
+                                                                    "Glossy Color"_ustr,
+                                                                    "Transmission Color"_ustr))
+        {
+          socket_flags |= ShaderNodeAncestorFlags::LightAccumulationColor;
+        }
+      }
+    }
 
-    bke::node_chain_iterator_backwards(&ntree, output_node, tag_by_ancestor, nullptr, 0);
+    return input_ancestors;
   }
 
-  const char *shader_tree_link_error(bNodeLink &link)
+  static bool is_lighting_node(const bNode &node)
   {
-    bNode &node = *link.fromnode;
-    ShaderNodeAncestorFlags flags = ShaderNodeAncestorFlags(link.fromnode->runtime->tmp_flag);
     switch (node.type_legacy) {
       case SH_NODE_LIGHT_ACCUMULATION:
-        if (bool(flags & ShaderNodeAncestorFlags::ShaderToRGB)) {
-          return TIP_("Shader To RGB can't evaluate Light Accumulation nodes");
-        }
-        break;
-      case SH_NODE_ATTRIBUTE:
-        if (static_cast<NodeShaderAttribute *>(node.storage)->type != SHD_ATTRIBUTE_LIGHT) {
-          break;
-        }
-        ATTR_FALLTHROUGH;
-      case SH_NODE_VECT_TRANSFORM: {
-        NodeShaderVectTransform *nodeprop = static_cast<NodeShaderVectTransform *>(node.storage);
-        if (!ELEM(SHD_VECT_TRANSFORM_SPACE_LIGHT, nodeprop->convert_from, nodeprop->convert_to)) {
-          break;
-        }
-      }
-        ATTR_FALLTHROUGH;
       case SH_NODE_LIGHT_INFO:
       case SH_NODE_LIGHT_EVALUATION:
       case SH_NODE_SHADOW_RAYCAST:
-        if (bool(flags & ShaderNodeAncestorFlags::ShaderMaterialOutput)) {
-          if (!bool(flags & ShaderNodeAncestorFlags::LightAccumulation)) {
-            return TIP_(
-                "Lighting nodes must be connected to the Light sockets of a Light Accumulation "
-                "node before reaching the Material Output");
-          }
-          if (bool(flags & ShaderNodeAncestorFlags::LightAccumulationColor) &&
-              (link.tonode->type_legacy != SH_NODE_LIGHT_ACCUMULATION ||
-               ELEM(StringRefNull(link.tosock->name), "Diffuse Color", "Glossy Color")))
-          {
-            return TIP_(
-                "Lighting nodes can't be connected to the Color sockets of a Light Accumulation "
-                "node");
-          }
-        }
-        break;
+        return true;
+      /* Attribute and Vector Transform nodes are only lighting nodes in light mode. */
+      case SH_NODE_ATTRIBUTE:
+        return static_cast<const NodeShaderAttribute *>(node.storage)->type == SHD_ATTRIBUTE_LIGHT;
+      case SH_NODE_VECT_TRANSFORM: {
+        const NodeShaderVectTransform *nodeprop = static_cast<const NodeShaderVectTransform *>(
+            node.storage);
+        return ELEM(SHD_VECT_TRANSFORM_SPACE_LIGHT, nodeprop->convert_from, nodeprop->convert_to);
+      }
       default:
-        break;
+        return false;
     }
+  }
 
+  static const char *shader_tree_link_error(bNodeLink &link,
+                                            const Span<ShaderNodeAncestorFlags> input_ancestors)
+  {
+    const bNode &from_node = *link.fromnode;
+    if (!is_lighting_node(from_node)) {
+      return nullptr;
+    }
+    const ShaderNodeAncestorFlags to_flags = input_ancestors[link.tosock->index_in_all_inputs()];
+    if (bool(to_flags & ShaderNodeAncestorFlags::ShaderToRGB)) {
+      return TIP_("Shader To RGB can't evaluate Lighting nodes");
+    }
+    if (from_node.type_legacy == SH_NODE_LIGHT_ACCUMULATION) {
+      if (bool(to_flags & ShaderNodeAncestorFlags::OtherOutput)) {
+        return TIP_("Light Accumulation can only be used for the Material Output Surface");
+      }
+    }
+    else {
+      if (bool(to_flags & (ShaderNodeAncestorFlags::ShaderMaterialOutput |
+                           ShaderNodeAncestorFlags::OtherOutput)))
+      {
+        return TIP_(
+            "Lighting nodes must be connected to the Light sockets of a Light Accumulation node "
+            "before reaching an output");
+      }
+      if (bool(to_flags & ShaderNodeAncestorFlags::LightAccumulationColor)) {
+        return TIP_(
+            "Lighting nodes can't be connected to the Color sockets of a Light Accumulation node");
+      }
+    }
     return nullptr;
   }
 
   void update_link_validation(bNodeTree &ntree)
   {
     const bNodeTreeZones *fallback_zones = nullptr;
-    if (ELEM(ntree.type, NTREE_GEOMETRY, NTREE_SHADER) && !ntree.zones() &&
+    if (ELEM(ntree.type, NTREE_GEOMETRY, NTREE_SHADER, NTREE_COMPOSIT) && !ntree.zones() &&
         ntree.runtime->last_valid_zones)
     {
       fallback_zones = ntree.runtime->last_valid_zones.get();
     }
 
+    /* Clear the validity from the previous update first. */
+    for (bNodeLink &link : ntree.links) {
+      link.flag |= NODE_LINK_VALID;
+    }
+
+    Array<ShaderNodeAncestorFlags> shader_input_ancestors;
     if (ntree.type == NTREE_SHADER) {
-      this->shader_tree_tag_by_ancestor(ntree);
+      shader_input_ancestors = shader_tree_tag_inputs_by_ancestor(ntree);
     }
 
     for (bNodeLink &link : ntree.links) {
-      link.flag |= NODE_LINK_VALID;
       if (!link.fromsock->is_available() || !link.tosock->is_available()) {
         link.flag &= ~NODE_LINK_VALID;
         continue;
@@ -1668,7 +1693,7 @@ class NodeTreeMainUpdater {
         continue;
       }
       if (ntree.type == NTREE_SHADER) {
-        if (const char *error = this->shader_tree_link_error(link)) {
+        if (const char *error = shader_tree_link_error(link, shader_input_ancestors)) {
           link.flag &= ~NODE_LINK_VALID;
           ntree.runtime->link_errors.add(NodeLinkKey{link}, NodeLinkError{error});
           continue;
@@ -2366,24 +2391,17 @@ bool operator==(const bNestedNodePath &a, const bNestedNodePath &b)
   return a.node_id == b.node_id && a.id_in_node == b.id_in_node;
 }
 
-/**
- * Protect from recursive calls into the updating function. Some node update functions might
- * trigger this from Python or in other cases.
- *
- * This could be added to #Main, but given that there is generally only one #Main, that's not
- * really worth it now.
- */
-static bool is_updating = false;
-
 void BKE_ntree_update(Main &bmain,
                       const std::optional<Span<bNodeTree *>> modified_trees,
                       const NodeTreeUpdateExtraParams &params)
 {
-  if (is_updating) {
+  /* Protect from recursive calls into the updating function. Some node update functions might
+   * trigger this from Python or in other cases. */
+  if (bmain.is_updating_node_trees) {
     return;
   }
 
-  is_updating = true;
+  bmain.is_updating_node_trees = true;
   bke::NodeTreeMainUpdater updater{&bmain, params};
   if (modified_trees.has_value()) {
     updater.update_rooted(*modified_trees);
@@ -2391,7 +2409,7 @@ void BKE_ntree_update(Main &bmain,
   else {
     updater.update();
   }
-  is_updating = false;
+  bmain.is_updating_node_trees = false;
 }
 
 void BKE_ntree_update_after_single_tree_change(Main &bmain,
@@ -2404,14 +2422,17 @@ void BKE_ntree_update_after_single_tree_change(Main &bmain,
 void BKE_ntree_update_without_main(bNodeTree &tree)
 {
   BLI_assert(tree.id.tag & ID_TAG_NO_MAIN);
-  if (is_updating) {
+
+  /* Protect from recursive calls, see #BKE_ntree_update. */
+  if (tree.runtime->is_updating) {
     return;
   }
-  is_updating = true;
+
+  tree.runtime->is_updating = true;
   NodeTreeUpdateExtraParams params;
   bke::NodeTreeMainUpdater updater{nullptr, params};
   updater.update_rooted({&tree});
-  is_updating = false;
+  tree.runtime->is_updating = false;
 }
 
 }  // namespace blender

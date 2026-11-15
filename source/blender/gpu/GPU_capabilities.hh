@@ -56,13 +56,15 @@ bool GPU_is_safe_texture_size(int width, int height);
 bool GPU_use_subprocess_compilation();
 int GPU_max_parallel_compilations();
 
-bool GPU_stencil_clasify_buffer_workaround();
+bool GPU_stencil_classify_buffer_workaround();
 bool GPU_depth_blitting_workaround();
 /** True once the driver has refused a subdivision evaluation compute pipeline. */
 bool GPU_subdivision_evaluation_broken();
 void GPU_subdivision_evaluation_set_broken();
 bool GPU_use_main_context_workaround();
 bool GPU_use_hq_normals_workaround();
+/** When true, the front-buffer cannot be read from (unsupported configuration). */
+bool GPU_frontbuffer_read_workaround();
 
 bool GPU_geometry_shader_support();
 bool GPU_hdr_support();

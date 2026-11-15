@@ -2521,10 +2521,17 @@ static int uv_select_edgering(Scene *scene, Object *obedit, UvNearestHit *hit, c
       if (l_step && BM_elem_flag_test(l_step->e, BM_ELEM_TAG)) {
         /* Previously this check was not done and this resulted in the final edge in the edge ring
          * cycle to be skipped during selection (caused by old sticky selection behavior). */
-        if (select && uvedit_edge_select_test(scene, bm, l_step, offsets)) {
-          break;
+        bool is_select;
+        if (use_vertex_select && !use_face_select) {
+          /* When selecting vertices in sync-select mode we must read from vertices too
+           * since flushing to edges happens afterwards. */
+          is_select = uvedit_uv_select_test(scene, bm, l_step, offsets) &&
+                      uvedit_uv_select_test(scene, bm, l_step->next, offsets);
         }
-        if (!select && !uvedit_edge_select_test(scene, bm, l_step, offsets)) {
+        else {
+          is_select = uvedit_edge_select_test(scene, bm, l_step, offsets);
+        }
+        if (is_select == select) {
           break;
         }
       }
@@ -4660,7 +4667,9 @@ static void uv_select_flush_from_tag_face(const Scene *scene, Object *obedit, co
         uvedit_loop_edge_select_set(ts, bm, l, select);
 
         if (select) {
-          uvedit_edge_select_shared_vert(scene, bm, l, select, UV_STICKY_LOCATION, offsets);
+          /* Only flush UV vertices. Flushing UV edges would flag the edges of unselected
+           * neighboring faces, making a face enclosed by the selection look fully selected. */
+          uvedit_uv_select_shared_vert(scene, bm, l, select, UV_STICKY_LOCATION, offsets);
         }
         else {
           /* Match selecting logic, except UV's still used by other selected faces must be kept.

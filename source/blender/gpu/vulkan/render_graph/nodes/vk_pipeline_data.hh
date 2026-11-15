@@ -60,7 +60,7 @@ struct VKViewportData {
 
   bool operator==(const VKViewportData &other) const
   {
-    if (viewports.size() != other.viewports.size() && scissors.size() != other.scissors.size()) {
+    if (viewports.size() != other.viewports.size() || scissors.size() != other.scissors.size()) {
       return false;
     }
 
@@ -140,7 +140,7 @@ struct VKIndexBufferBinding {
   bool operator==(const VKIndexBufferBinding &other) const
   {
     return buffer.resource_handle == other.buffer.resource_handle &&
-           index_type == other.index_type;
+           buffer.vk_handle == other.buffer.vk_handle && index_type == other.index_type;
   }
   bool operator!=(const VKIndexBufferBinding &other) const
   {

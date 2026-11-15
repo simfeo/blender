@@ -54,7 +54,7 @@ LANGUAGES = (
     (22, "Bulgarian - Български", "bg_BG"),
     (23, "Greek - Ελληνικά", "el_GR"),
     (24, "Korean - 한국어", "ko_KR"),
-    # 25 is free, used to be "Nepali - नेपाली", ("ne_NP").
+    (25, "Azerbaijani - Azərbaycan dili", "az"),
     # Using the utf8 flipped form of Persian (فارسی).
     (26, "Persian - ﯽﺳﺭﺎﻓ", "fa_IR"),
     (27, "Indonesian - Bahasa indonesia", "id_ID"),
@@ -273,6 +273,10 @@ PYGETTEXT_KEYWORDS = (() +
     tuple(PyGettextKeyword(("{}\\((?:[^\"',]+,)\\s*" + _msg_re + r"\s*(?:\))").format(it),
                            context_override='BLT_I18NCONTEXT_OPERATOR_DEFAULT')
           for it in ("ED_undo_push", "ED_undo_grouped_push")) +
+
+    # File handler labels
+    (PyGettextKeyword(r"STRNCPY_UTF8\(fh->label,\s*" + _msg_re + r"\s*\)",
+                      context_override='BLT_I18NCONTEXT_OPERATOR_DEFAULT'),) +
 
     # bmesh operator errors
     tuple(PyGettextKeyword(("{}\\((?:[^\"',]+,){{3}}\\s*" + _msg_re + r"\s*\)").format(it))

@@ -118,6 +118,27 @@ const EnumPropertyItem rna_enum_strip_scale_method_items[] = {
     {0, nullptr, 0, nullptr, nullptr},
 };
 
+const EnumPropertyItem rna_enum_strip_overlap_mode_items[] = {
+    {SEQ_OVERLAP_RIPPLE,
+     "RIPPLE",
+     ICON_SEQ_OVERLAP_RIPPLE,
+     "Ripple",
+     "Push the strips that are in the way further along the timeline, keeping the spacing "
+     "between them intact"},
+    {SEQ_OVERLAP_OVERWRITE,
+     "OVERWRITE",
+     ICON_SEQ_OVERLAP_OVERWRITE,
+     "Overwrite",
+     "Replace the covered part of the strips that are in the way, trimming or splitting them"},
+    {SEQ_OVERLAP_SHUFFLE,
+     "SHUFFLE",
+     ICON_SEQ_OVERLAP_SHUFFLE,
+     "Shuffle",
+     "Move the transformed strips to the nearest free space, leaving every other strip where "
+     "it is"},
+    {0, nullptr, 0, nullptr, nullptr},
+};
+
 const EnumPropertyItem rna_enum_pitch_mode_items[] = {
     {ePitchMode::PITCH_MODE_SEMITONES,
      "SEMITONES",
@@ -515,18 +536,30 @@ static Strip *strip_by_key_find(Scene *scene, SeqRetimingKey *key)
 {
   Editing *ed = seq::editing_get(scene);
   VectorSet strips = seq::query_all_strips_recursive(&ed->seqbase);
-
   for (Strip *strip : strips) {
-    const int retiming_keys_count = seq::retiming_keys_count(strip);
-    SeqRetimingKey *first = strip->retiming_keys;
-    SeqRetimingKey *last = strip->retiming_keys + retiming_keys_count - 1;
-
-    if (key >= first && key <= last) {
+    if (seq::retiming_keys_get(strip).contains_ptr(key)) {
       return strip;
     }
   }
 
   return nullptr;
+}
+
+static std::optional<std::string> rna_Strip_retiming_key_path(const PointerRNA *ptr)
+{
+  Scene *scene = id_cast<Scene *>(ptr->owner_id);
+  SeqRetimingKey *key = static_cast<SeqRetimingKey *>(ptr->data);
+  const Strip *strip = strip_by_key_find(scene, key);
+
+  if (strip == nullptr) {
+    return "";
+  }
+
+  char name_esc[(sizeof(strip->name) - 2) * 2];
+  BLI_str_escape(name_esc, strip->name + 2, sizeof(name_esc));
+  return fmt::format("sequence_editor.strips_all[\"{}\"].retiming_keys[{}]",
+                     name_esc,
+                     seq::retiming_key_index_get(strip, key));
 }
 
 static void rna_Strip_retiming_key_remove(ID *id, SeqRetimingKey *key)
@@ -554,7 +587,7 @@ static int rna_Strip_retiming_key_frame_get(PointerRNA *ptr)
     return 0;
   }
 
-  return strip->content_start() + key->strip_frame_index;
+  return seq::retiming_key_frame_get(scene, strip, key);
 }
 
 static void rna_Strip_retiming_key_frame_set(PointerRNA *ptr, int value)
@@ -590,9 +623,7 @@ static void do_strip_frame_change_update(Scene *scene, Strip *strip)
 {
   ListBaseT<Strip> *seqbase = seq::get_seqbase_by_strip(scene, strip);
 
-  if (seq::transform_test_overlap(scene, seqbase, strip)) {
-    seq::transform_seqbase_shuffle(seqbase, strip, scene);
-  }
+  seq::transform_shuffle_vertical(seqbase, {strip}, scene);
 
   if (strip->type == STRIP_TYPE_SOUND) {
     DEG_id_tag_update(&scene->id, ID_RECALC_SEQUENCER_STRIPS);
@@ -850,9 +881,7 @@ static void rna_Strip_channel_set(PointerRNA *ptr, int value)
   const int channel_delta = (value >= strip->channel) ? 1 : -1;
   strip->channel_set(value);
 
-  if (seq::transform_test_overlap(scene, seqbase, strip)) {
-    seq::transform_seqbase_shuffle_ex(seqbase, strip, scene, channel_delta);
-  }
+  seq::transform_shuffle_vertical(seqbase, {strip}, scene, channel_delta);
   seq::relations_invalidate_cache(scene, strip);
 }
 
@@ -2169,6 +2198,7 @@ static void rna_def_retiming_key(BlenderRNA *brna)
       "Retiming Key",
       "Key mapped to particular frame that can be moved to change playback speed");
   RNA_def_struct_sdna(srna, "SeqRetimingKey");
+  RNA_def_struct_path_func(srna, "rna_Strip_retiming_key_path");
 
   prop = RNA_def_property(srna, "timeline_frame", PROP_INT, PROP_NONE);
   RNA_def_property_int_funcs(

@@ -178,6 +178,20 @@ struct VKWorkarounds {
    */
   bool compute_pipeline_fallback = false;
 
+  /**
+   * Some Qualcomm drivers keep command-buffer-local state written by `vkCmdSetViewport` across
+   * command buffer resets.
+   *
+   * When set, viewports and scissors are baked into the pipeline as static state and
+   * `vkCmdSetViewport`/`vkCmdSetScissor` are never used.
+   */
+  bool static_viewport_scissor = false;
+
+  /**
+   * Legacy AMD drivers do not perform sRGB conversions when clearing attachments.
+   */
+  bool missing_srgb_clear_conversion = false;
+
   /** Log enabled workarounds. */
   void log() const;
 };

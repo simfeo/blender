@@ -23,6 +23,8 @@
 
 #include "BLO_read_write.hh"
 
+#include "BLT_translation.hh"
+
 #include "DNA_curves_types.h"
 #include "DNA_material_types.h"
 #include "DNA_object_types.h"
@@ -37,6 +39,7 @@
 #include "BKE_curves_utils.hh"
 #include "BKE_customdata.hh"
 #include "BKE_deform.hh"
+#include "BKE_report.hh"
 
 #include "attribute_storage_access.hh"
 
@@ -280,6 +283,46 @@ void CurvesGeometry::fill_curve_types(const IndexMask &selection, const CurveTyp
   index_mask::masked_fill<int8_t>(this->curve_types_for_write(), type, selection);
   this->update_curve_types();
   this->tag_topology_changed();
+}
+
+static bool is_valid_curve_type(const int8_t type)
+{
+  return type >= 0 && type < CURVE_TYPES_NUM;
+}
+
+/** Read-only, to avoid changing the storage or sharing of valid data. */
+static bool curve_types_are_valid(const VArray<int8_t> &types)
+{
+  if (const std::optional<int8_t> single = types.get_if_single()) {
+    return is_valid_curve_type(*single);
+  }
+  const Span<int8_t> types_span = types.get_internal_span();
+  return threading::parallel_reduce(
+      types_span.index_range(),
+      2048,
+      true,
+      [&](const IndexRange curves_range, const bool &init) {
+        if (!init) {
+          return false;
+        }
+        for (const int64_t curve_index : curves_range) {
+          if (!is_valid_curve_type(types_span[curve_index])) {
+            return false;
+          }
+        }
+        return true;
+      },
+      [](const bool &a, const bool &b) { return a && b; });
+}
+
+/** Replace invalid curve types by poly curves. */
+static void sanitize_curve_types(MutableSpan<int8_t> types)
+{
+  for (int8_t &type : types) {
+    if (!is_valid_curve_type(type)) {
+      type = CURVE_TYPE_POLY;
+    }
+  }
 }
 
 std::array<int, CURVE_TYPES_NUM> calculate_type_counts(const VArray<int8_t> &types)
@@ -1628,7 +1671,6 @@ CurvesGeometry curves_copy_curve_selection(const CurvesGeometry &curves,
     copy_curve_selection_custom_knots(curves, curves_to_copy, dst_curves);
   }
 
-  dst_curves.update_curve_types();
   dst_curves.remove_attributes_based_on_types();
 
   return dst_curves;
@@ -1866,29 +1908,14 @@ static GVArray adapt_curve_domain_point_to_curve(const CurvesGeometry &curves,
  * However, doing that makes the implementation simpler, and this can be optimized in the future if
  * only some values are required.
  */
-template<typename T>
-static void adapt_curve_domain_curve_to_point_impl(const CurvesGeometry &curves,
-                                                   const VArray<T> &old_values,
-                                                   MutableSpan<T> r_values)
-{
-  PRF_scope(ProfileCategory::Default);
-  const OffsetIndices points_by_curve = curves.points_by_curve();
-  for (const int i_curve : IndexRange(curves.curves_num())) {
-    r_values.slice(points_by_curve[i_curve]).fill(old_values[i_curve]);
-  }
-}
-
 static GVArray adapt_curve_domain_curve_to_point(const CurvesGeometry &curves,
                                                  const GVArray &varray)
 {
   PRF_scope(ProfileCategory::Default);
-  GVArray new_varray;
-  attribute_math::to_static_type(varray.type(), [&]<typename T>() {
-    Array<T> values(curves.points_num());
-    adapt_curve_domain_curve_to_point_impl<T>(curves, varray.typed<T>(), values);
-    new_varray = VArray<T>::from_container(std::move(values));
-  });
-  return new_varray;
+  GArray<> values(varray.type(), curves.points_num());
+  attribute_math::gather_to_groups(
+      curves.points_by_curve(), curves.curves_range(), GVArraySpan(varray), values);
+  return GVArray::from_garray(std::move(values));
 }
 
 GVArray CurvesGeometry::adapt_domain(const GVArray &varray,
@@ -1965,6 +1992,45 @@ void CurvesGeometry::blend_read(BlendDataReader &reader)
           return this->custom_knots ? implicit_sharing::info_for_mem_free(this->custom_knots) :
                                       nullptr;
         });
+  }
+
+  /* Curve types are used as array indices when counting them below. There is always one value per
+   * curve when writing, so a different size means the file is corrupt. */
+  const VArray<int8_t> types = this->curve_types();
+  if (types.size() != this->curve_num) {
+    BLO_read_data_invalidate(&reader, "Invalid curve types");
+    return;
+  }
+
+  /* Out of range values can be written, since the attribute validator used to allow
+   * #CURVE_TYPES_NUM. Replace them so such files can still be loaded. */
+  bool any_invalid = false;
+  if (!curve_types_are_valid(types)) {
+    any_invalid = true;
+    if (this->curve_num > 0) {
+      sanitize_curve_types(this->curve_types_for_write());
+    }
+    else {
+      this->attribute_storage.wrap().remove(ATTR_CURVE_TYPE);
+    }
+  }
+
+  /* Older files store curve types in legacy custom data, converted during versioning. */
+  if (const void *legacy_types = CustomData_get_layer_named(
+          &this->curve_data_legacy, CD_PROP_INT8, ATTR_CURVE_TYPE))
+  {
+    const Span<int8_t> legacy_span(static_cast<const int8_t *>(legacy_types), this->curve_num);
+    if (!curve_types_are_valid(VArray<int8_t>::from_span(legacy_span))) {
+      any_invalid = true;
+      void *legacy_types_for_write = CustomData_get_layer_named_for_write(
+          &this->curve_data_legacy, CD_PROP_INT8, ATTR_CURVE_TYPE, this->curve_num);
+      sanitize_curve_types({static_cast<int8_t *>(legacy_types_for_write), this->curve_num});
+    }
+  }
+
+  if (any_invalid) {
+    BLO_reportf_wrap(
+        BLO_read_data_reports(&reader), RPT_ERROR, "%s", RPT_("Invalid curve type identifiers"));
   }
 
   /* Recalculate curve type count cache that isn't saved in files. */

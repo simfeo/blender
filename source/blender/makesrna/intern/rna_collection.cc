@@ -461,6 +461,12 @@ static void rna_Collection_sort_index_update(Main *bmain, Scene * /*scene*/, Poi
   }
 }
 
+static PointerRNA rna_CollectionImport_archive_library_get(PointerRNA *ptr)
+{
+  const CollectionImport *data = reinterpret_cast<CollectionImport *>(ptr->data);
+  return RNA_pointer_create_discrete(ptr->owner_id, RNA_Library, data->runtime->archive_library);
+}
+
 static PointerRNA rna_CollectionImport_import_properties_get(PointerRNA *ptr)
 {
   const CollectionImport *data = reinterpret_cast<CollectionImport *>(ptr->data);
@@ -633,6 +639,16 @@ static void rna_CollectionImport_filepath_set(PointerRNA *ptr, const char *value
   else {
     IDP_AssignStringMaxSize(prop, value, value_maxsize);
   }
+}
+static int rna_CollectionImport_filepath_is_editable(const PointerRNA *ptr, const char **r_info)
+{
+  CollectionImport *data = ptr->data_as<CollectionImport>();
+
+  if (data->runtime && data->runtime->archive_library) {
+    *r_info = N_("Path of imported external data cannot be edited");
+    return 0;
+  }
+  return int(PROP_EDITABLE);
 }
 
 static const char *rna_CollectionExport_filepath_value_from_idprop(CollectionExport *data)
@@ -890,6 +906,17 @@ static void rna_def_collection_importer_data(BlenderRNA *brna)
   RNA_def_struct_sdna(srna, "CollectionImport");
   RNA_def_struct_ui_text(srna, "Collection Import Data", "Importer configured for the collection");
 
+  prop = RNA_def_property(srna, "archive_library", PROP_POINTER, PROP_NONE);
+  RNA_def_property_pointer_sdna(prop, nullptr, "runtime->archive_library");
+  RNA_def_property_struct_type(prop, "Library");
+  RNA_def_property_pointer_funcs(
+      prop, "rna_CollectionImport_archive_library_get", nullptr, nullptr, nullptr);
+  RNA_def_property_ui_text(prop,
+                           "Imported Library",
+                           "Archive library owning all imported data from this collection "
+                           "importer (None if no data has been imported yet)");
+  RNA_def_property_clear_flag(prop, PROP_EDITABLE);
+
   prop = RNA_def_property(srna, "is_open", PROP_BOOLEAN, PROP_NONE);
   RNA_def_property_boolean_sdna(prop, nullptr, "flag", IO_HANDLER_PANEL_OPEN);
   RNA_def_property_ui_text(prop, "Is Open", "Whether the panel is expanded or closed");
@@ -913,6 +940,7 @@ static void rna_def_collection_importer_data(BlenderRNA *brna)
   RNA_def_property_string_maxlength(prop, FILE_MAX);
   RNA_def_property_ui_text(prop, "File Path", "The file path used for importing");
   RNA_def_property_flag(prop, PROP_NO_DEG_UPDATE);
+  RNA_def_property_editable_func(prop, "rna_CollectionImport_filepath_is_editable");
   RNA_def_property_update(prop, NC_SPACE | ND_SPACE_PROPERTIES, nullptr);
 }
 

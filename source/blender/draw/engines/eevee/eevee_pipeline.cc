@@ -548,8 +548,9 @@ void ForwardPipeline::transparent_add(const Object *ob,
    * since this function is not called from PipelineModule::material_add. */
   inst_.pipelines.has_raycast |= GPU_material_flag_get(gpumat, GPU_MATFLAG_RAYCAST);
 
-  const bool bind_previous_layer = GPU_material_flag_get(gpumat, GPU_MATFLAG_SHADER_TO_RGBA) &&
-                                   GPU_material_flag_get(gpumat, GPU_MATFLAG_TRANSPARENT);
+  /* Must match the `use_forward_lighting && use_transparency` condition on previous_layer_hiz /
+   * previous_layer_radiance. */
+  const bool bind_previous_layer = GPU_material_flag_get(gpumat, GPU_MATFLAG_TRANSPARENT);
 
   /* Transparent needs to use one sub pass per object to support reordering.
    * NOTE: Pre-pass needs to be created first in order to be sorted first. */
@@ -806,10 +807,15 @@ bool DeferredLayer::do_merge_direct_indirect_eval(const Instance &inst)
   return !inst.raytracing.use_raytracing();
 }
 
+bool DeferredLayer::do_modify_radiance(const Instance &inst)
+{
+  return inst.sampling.use_clamp_direct() || inst.sampling.use_clamp_indirect() ||
+         inst.sampling.use_direct_scale() || inst.sampling.use_indirect_scale();
+}
+
 bool DeferredLayer::do_split_direct_indirect_radiance(const Instance &inst)
 {
-  return do_merge_direct_indirect_eval(inst) &&
-         (inst.sampling.use_clamp_direct() || inst.sampling.use_clamp_indirect());
+  return do_merge_direct_indirect_eval(inst) && do_modify_radiance(inst);
 }
 
 void DeferredLayer::end_sync(bool is_first_pass,
@@ -825,15 +831,11 @@ void DeferredLayer::end_sync(bool is_first_pass,
   const bool has_reflect_closure = (closure_bits_ & (CLOSURE_REFLECTION | CLOSURE_DIFFUSE));
   const bool has_transparent_shader_to_rgba = (closure_bits_ & CLOSURE_TRANSPARENCY) &&
                                               (closure_bits_ & CLOSURE_SHADER_TO_RGBA);
-  const bool use_direct_scale = inst_.sampling.use_direct_scale();
-  const bool use_indirect_scale = inst_.sampling.use_indirect_scale();
   use_raytracing_ = (has_transmit_closure || has_reflect_closure) &&
                     inst_.raytracing.use_raytracing();
-  use_clamp_direct_ = inst_.sampling.use_clamp_direct();
-  use_clamp_indirect_ = inst_.sampling.use_clamp_indirect();
-  /* Is the radiance split for the combined pass. */
-  use_split_radiance_ = use_raytracing_ || use_clamp_direct_ || use_clamp_indirect_ ||
-                        use_indirect_scale || use_direct_scale;
+  /* Is the radiance split for the combined pass. Must match what the light evaluation writes:
+   * either ray-tracing writes the indirect radiance, or the light-probe evaluation does. */
+  use_split_radiance_ = use_raytracing_ || do_split_direct_indirect_radiance(inst_);
 
   /* The first pass will never have any surfaces behind it. Nothing is refracted except the
    * environment. So in this case, disable tracing and fallback to probe. */
@@ -856,7 +858,8 @@ void DeferredLayer::end_sync(bool is_first_pass,
 
     /* Add the stencil classification step at the end of the GBuffer pass. */
     {
-      gpu::Shader *sh = inst_.shaders.static_shader_get(DEFERRED_TILE_CLASSIFY);
+      gpu::Shader *sh = inst_.shaders.static_shader_get(
+          GPU_stencil_export_support() ? DEFERRED_TILE_CLASSIFY : DEFERRED_TILE_CLASSIFY_FALLBACK);
       PassMain::Sub &sub = gbuffer_ps_.sub("StencilClassify");
       sub.subpass_transition(GPU_ATTACHMENT_WRITE, /* Needed for depth test. */
                              {GPU_ATTACHMENT_IGNORE,
@@ -865,7 +868,7 @@ void DeferredLayer::end_sync(bool is_first_pass,
                               GPU_ATTACHMENT_IGNORE,
                               GPU_ATTACHMENT_IGNORE});
       sub.shader_set(sh);
-      if (GPU_stencil_clasify_buffer_workaround()) {
+      if (GPU_stencil_classify_buffer_workaround()) {
         /* Binding any buffer to satisfy the binding. The buffer is not actually used. */
         sub.bind_ssbo("dummy_workaround_buf", &inst_.film.aovs_info);
       }
@@ -994,7 +997,7 @@ void DeferredLayer::end_sync(bool is_first_pass,
                                    (rbuf_data.specular_color_id != -1));
       pass.specialize_constant(sh, "use_split_radiance", use_split_radiance_);
       pass.specialize_constant(
-          sh, "use_radiance_feedback", use_feedback_output_ && use_clamp_direct_);
+          sh, "use_radiance_feedback", use_feedback_output_ && do_modify_radiance(inst_));
       pass.specialize_constant(sh, "render_pass_normal_enabled", rbuf_data.normal_id != -1);
       pass.specialize_constant(sh, "render_pass_position_enabled", rbuf_data.position_id != -1);
       pass.specialize_constant(
@@ -1113,8 +1116,9 @@ gpu::Texture *DeferredLayer::render(View &render_view,
   inst_.gbuffer.bind(gbuffer_fb);
   inst_.manager->submit(gbuffer_ps_, render_view);
 
+  /* Only three layers of closures are ever written,. */
   direct_radiance_txs_.acquire_2d_array(
-      extent, closure_count_, gpu::TextureFormat::DEFERRED_RADIANCE_FORMAT, usage_rw);
+      extent, min_ii(closure_count_, 3), gpu::TextureFormat::DEFERRED_RADIANCE_FORMAT, usage_rw);
   direct_radiance_txs_.ensure_layer_views();
 
   if (use_raytracing_) {
@@ -1136,7 +1140,9 @@ gpu::Texture *DeferredLayer::render(View &render_view,
 
   radiance_feedback_tx_ = rt_buffer.feedback_ensure(!use_feedback_output_, extent);
 
-  if (use_feedback_output_ && use_clamp_direct_) {
+  const bool modify_radiance = do_modify_radiance(inst_);
+
+  if (use_feedback_output_ && modify_radiance) {
     /* We need to do a copy before the combine pass (otherwise we have a dependency issue) to save
      * the emission and the previous layer's radiance. */
     GPU_texture_copy(radiance_feedback_tx_, rb.combined_tx);
@@ -1145,7 +1151,7 @@ gpu::Texture *DeferredLayer::render(View &render_view,
   GPU_framebuffer_bind(combined_fb);
   inst_.manager->submit(combine_ps_, render_view);
 
-  if (use_feedback_output_ && !use_clamp_direct_) {
+  if (use_feedback_output_ && !modify_radiance) {
     /* We skip writing the radiance during the combine pass. Do a simple fast copy. */
     GPU_texture_copy(radiance_feedback_tx_, rb.combined_tx);
   }

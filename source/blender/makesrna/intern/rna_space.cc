@@ -187,7 +187,7 @@ const EnumPropertyItem rna_enum_space_type_items[] = {
     {SPACE_PROJECT,
      "PROJECT",
      ICON_PROJECT,
-     "Project Setup",
+     "Project Settings",
      "Manage the current Blender project"},
     {0, nullptr, 0, nullptr, nullptr},
 };
@@ -743,6 +743,7 @@ static const EnumPropertyItem spreadsheet_table_id_type_items[] = {
 #  include "BKE_paint.hh"
 #  include "BKE_preferences.h"
 #  include "BKE_scene.hh"
+#  include "BKE_scene_context.hh"
 #  include "BKE_screen.hh"
 #  include "BKE_studiolight.h"
 #  include "BKE_workspace.hh"
@@ -2621,8 +2622,8 @@ static void rna_ConsoleLine_body_set(PointerRNA *ptr, const char *value)
   ConsoleLine *ci = static_cast<ConsoleLine *>(ptr->data);
   size_t len = strlen(value);
 
-  if ((len >= size_t(ci->len_alloc)) || (len * 2 < size_t(ci->len_alloc)))
-  { /* allocate a new string */
+  if ((len >= size_t(ci->len_alloc)) ||
+      (len * 2 < size_t(ci->len_alloc))) { /* allocate a new string */
     MEM_delete(ci->line);
     ci->line = MEM_new_array_uninitialized<char>(len + 1, "rna_consoleline");
     ci->len_alloc = int(len + 1);
@@ -2777,8 +2778,7 @@ static void seq_build_proxy(bContext *C, PointerRNA *ptr)
 
 static void rna_SequenceEditor_render_size_update(bContext *C, PointerRNA *ptr)
 {
-  const bool is_sequencer = CTX_wm_space_seq(C) != nullptr;
-  Scene *scene = is_sequencer ? CTX_data_sequencer_scene(C) : CTX_data_scene(C);
+  Scene *scene = bke::scene_or_sequencer_scene_from_context(*C);
   if (scene == nullptr) {
     return;
   }
@@ -4649,6 +4649,13 @@ static void rna_def_space_outliner(BlenderRNA *brna)
   RNA_def_property_boolean_sdna(prop, nullptr, "flag", SO_EXPAND_ON_FOCUS);
   RNA_def_property_ui_text(
       prop, "Expand on Focus", "Uncollapse the active item when scrolling it into view");
+  RNA_def_property_update(prop, NC_SPACE | ND_SPACE_OUTLINER, nullptr);
+
+  prop = RNA_def_property(srna, "show_users_column", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_sdna(prop, nullptr, "flag", SO_USERS_COLUMN);
+  RNA_def_property_ui_text(prop,
+                           "Show Users Column",
+                           "Display a column showing the number of users for each data-block");
   RNA_def_property_update(prop, NC_SPACE | ND_SPACE_OUTLINER, nullptr);
 
   /* Granular restriction column option. */
@@ -7161,11 +7168,12 @@ static void rna_def_space_sequencer(BlenderRNA *brna)
   RNA_def_property_update(prop, NC_SPACE | ND_SPACE_SEQUENCER, nullptr);
 
   prop = RNA_def_property(srna, "show_transform_preview", PROP_BOOLEAN, PROP_NONE);
-  RNA_def_property_boolean_sdna(prop, nullptr, "draw_flag", SEQ_DRAW_TRANSFORM_PREVIEW);
-  RNA_def_property_ui_text(prop,
-                           "Transform Preview",
-                           "Show a preview of the start or end frame of a strip while "
-                           "transforming its respective handle");
+  RNA_def_property_boolean_sdna(prop, nullptr, "draw_flag", SEQ_DRAW_EDIT_POINT_PREVIEW);
+  RNA_def_property_ui_text(
+      prop,
+      "Preview Edit Point",
+      "While editing in the timeline, show the affected frame instead of "
+      "the current frame, such as in the blade tool, or when tweaking handles");
   RNA_def_property_update(prop, NC_SPACE | ND_SPACE_SEQUENCER, nullptr);
 
   /* Gizmo toggles. */

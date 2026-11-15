@@ -58,11 +58,11 @@ enum class ImBufFlags {
   Thumbnail = 1 << 16,
   /**
    * The image contains display window information.
-   * See #ImbBuf.display_size and other members for more information.
+   * See #ImBuf.display_size and other members for more information.
    */
   HasDisplayWindow = 1 << 17,
 
-  /** Perform no color space conversions when reading, leave the image in the file colorspace. */
+  /** Perform no color space conversions when reading, leave the image in the file color-space. */
   NoColorspaceConvert = 1 << 18,
 };
 ENUM_OPERATORS(ImBufFlags);

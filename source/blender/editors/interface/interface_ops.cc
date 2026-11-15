@@ -3303,13 +3303,7 @@ static wmOperatorStatus region_start_filter_exec(bContext *C, wmOperator * /*op*
     region->flag |= RGN_FLAG_SEARCH_FILTER_SHOW;
     region_panels_sort_for_search_filter_visibility_change(C, region);
   }
-  if (region_panels_fits_only_categories(region)) {
-    /* Enlarge region to show content to filter. */
-    const float aspect = BLI_rctf_size_y(&region->v2d.cur) /
-                         (BLI_rcti_size_y(&region->v2d.mask) + 1);
-    const int new_width = region->runtime->type->prefsizex ? region->runtime->type->prefsizex :
-                                                             250;
-    panel_region_width_set(region, aspect, new_width);
+  if (ui::panel_region_visible_width_ensure(region)) {
     WM_event_add_notifier(C, NC_SCREEN | NA_EDITED, nullptr);
   }
   ED_region_activate_rna_prop(C, region, region, "search_filter");
@@ -3343,7 +3337,7 @@ static wmOperatorStatus region_clear_filter_exec(bContext *C, wmOperator * /*op*
   return OPERATOR_FINISHED;
 }
 
-static bool reion_clear_filter_poll(blender::bContext *C)
+static bool region_clear_filter_poll(blender::bContext *C)
 {
   ARegion *region = CTX_wm_region(C);
   return region && BKE_region_panel_categories_search_filter_visible(region);
@@ -3355,7 +3349,7 @@ static void UI_OT_region_clear_filter(wmOperatorType *ot)
   ot->description = "Clear and hide the region search filter";
   ot->idname = "UI_OT_region_clear_filter";
   ot->exec = region_clear_filter_exec;
-  ot->poll = reion_clear_filter_poll;
+  ot->poll = region_clear_filter_poll;
 }
 
 /** \} */

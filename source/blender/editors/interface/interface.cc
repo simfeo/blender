@@ -578,6 +578,14 @@ static void block_bounds_calc_popup(
 {
   const int oldbounds = block->bounds;
 
+  /* Place the default button under the cursor. */
+  if (bounds_calc == BLOCK_BOUNDS_POPUP_MOUSE) {
+    if (const Button *but = block_active_default_button_find(block)) {
+      block->bounds_offset[0] = -(but->rect.xmin + 0.8f * BLI_rctf_size_x(&but->rect));
+      block->bounds_offset[1] = -BLI_rctf_cent_y(&but->rect);
+    }
+  }
+
   /* compute mouse position with user defined offset */
   block_bounds_calc(block);
 
@@ -979,6 +987,7 @@ static void but_update_old_active_from_new(Button *oldbut, Button *but)
   oldbut->icon = but->icon;
   oldbut->iconadd = but->iconadd;
   oldbut->alignnr = but->alignnr;
+  oldbut->custom_data = but->custom_data;
 
   oldbut->text_direction = but->text_direction;
 
@@ -1005,6 +1014,8 @@ static void but_update_old_active_from_new(Button *oldbut, Button *but)
 
   but_extra_icons_update_from_old_but(but, oldbut);
   std::swap(but->extra_op_icons, oldbut->extra_op_icons);
+
+  std::swap(but->icon_overlay_text, oldbut->icon_overlay_text);
 
   if (oldbut->type == ButtonType::SearchMenu) {
     ButtonSearch *search_oldbut = static_cast<ButtonSearch *>(oldbut),
@@ -1049,6 +1060,12 @@ static void but_update_old_active_from_new(Button *oldbut, Button *but)
       ButtonScrollBar *scroll_oldbut = static_cast<ButtonScrollBar *>(oldbut);
       ButtonScrollBar *scroll_but = static_cast<ButtonScrollBar *>(but);
       scroll_oldbut->visual_height = scroll_but->visual_height;
+      break;
+    }
+    case ButtonType::Image: {
+      ButtonImage *image_oldbut = static_cast<ButtonImage *>(oldbut);
+      ButtonImage *image_but = static_cast<ButtonImage *>(but);
+      std::swap(image_oldbut->key, image_but->key);
       break;
     }
     case ButtonType::ViewItem: {
@@ -2139,6 +2156,7 @@ bool button_context_poll_operator(bContext *C, wmOperatorType *ot, const Button 
 
 void block_post_layout_callbacks_exec(const bContext *C, ARegion *region, Block *block)
 {
+  BLI_assert(region);
   BLI_assert(block->active);
   for (const std::function<void(const bContext &C, ui::Block &block)> &callback :
        region->runtime->post_block_layout_fns)
@@ -2265,7 +2283,11 @@ void block_end_ex(const bContext *C,
 
   block->endblock = true;
   if (!postpone_callbacks) {
-    block_post_layout_callbacks_exec(C, region, block);
+    /* Post layout callbacks are stored in region data, skip blocks created without a region (like
+     * the `F3` search menu).  */
+    if (region) {
+      block_post_layout_callbacks_exec(C, region, block);
+    }
   }
   else {
     block->post_block_layout_fns_pending = true;
@@ -2867,7 +2889,7 @@ bool button_supports_cycling(const Button *but)
                ButtonType::ListBox) ||
           (but->type == ButtonType::Menu && button_menu_step_poll(but)) ||
           (but->type == ButtonType::Color &&
-           (static_cast<ButtonColor *>(const_cast<Button *>(but)))->is_pallete_color) ||
+           (static_cast<ButtonColor *>(const_cast<Button *>(but)))->is_palette_color) ||
           (but->menu_step_func != nullptr));
 }
 
@@ -4488,6 +4510,9 @@ static std::unique_ptr<Button> but_new(const ButtonType type)
     case ButtonType::Scroll:
       but = std::make_unique<ButtonScrollBar>();
       break;
+    case ButtonType::Image:
+      but = std::make_unique<ButtonImage>();
+      break;
     case ButtonType::Menu:
       ATTR_FALLTHROUGH;
     case ButtonType::Block:
@@ -5359,9 +5384,12 @@ void autocomplete_update_name(AutoComplete *autocpl, const StringRef name)
 {
   char *truncate = autocpl->truncate;
   const char *startname = autocpl->startname;
+  const int len_max = int(autocpl->maxncpy) - 1;
   int match_index = 0;
-  for (int a = 0; a < std::min<size_t>(name.size(), autocpl->maxncpy) - 1; a++) {
-    if (startname[a] == 0 || startname[a] != name[a]) {
+  for (int a = 0; a < len_max; a++) {
+    /* Past the end of `name`, compare with its null terminator. */
+    const char c = (a < name.size()) ? name[a] : '\0';
+    if (startname[a] == 0 || startname[a] != c) {
       match_index = a;
       break;
     }
@@ -5376,8 +5404,8 @@ void autocomplete_update_name(AutoComplete *autocpl, const StringRef name)
     }
     else {
       /* remove from truncate what is not in bone->name */
-      for (int a = 0; a < std::min<size_t>(name.size(), autocpl->maxncpy) - 1; a++) {
-        if (name[a] == 0) {
+      for (int a = 0; a < len_max; a++) {
+        if (a == name.size()) {
           truncate[a] = 0;
           break;
         }
@@ -5882,12 +5910,6 @@ const char *button_placeholder_get(Button *but)
   }
 
   return placeholder;
-}
-
-void button_clear_selection(Button *but)
-{
-  but->selsta = 0;
-  but->selend = 0;
 }
 
 void button_type_set_menu_from_pulldown(Button *but)

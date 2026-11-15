@@ -29,6 +29,12 @@ class PROJECT_HT_header(Header):
         PROJECT_MT_editor_menus.draw_collapsible(context, layout)
         layout.separator_spacer()
 
+        project = bpy.data.project
+        if project:
+            row = layout.row()
+            row.label(text=project.name, translate=False)
+            row.active = False
+
 
 class PROJECT_MT_editor_menus(Menu):
     bl_idname = "PROJECT_MT_editor_menus"
@@ -63,20 +69,20 @@ class PROJECT_MT_save_load(Menu):
         prefs = context.preferences
 
         layout.prop(prefs, "use_project_auto_save", text="Auto-Save Project")
-        layout.operator("project.save_project", text="Save Project")
+        layout.operator("project.config_save", text="Save Project")
 
 
-class PROJECT_MT_add_variable(Menu):
+class PROJECT_MT_variable_add(Menu):
     bl_label = "Add Variable"
 
     def draw(self, context):
         layout = self.layout
 
-        layout.operator("project.add_variable", text="String", icon='NONE').variable_type = 'STRING'
-        layout.operator("project.add_variable", text="Filepath", icon='NONE').variable_type = 'FILEPATH'
+        layout.operator("project.variable_add", text="String", icon='NONE').variable_type = 'STRING'
+        layout.operator("project.variable_add", text="Filepath", icon='NONE').variable_type = 'FILEPATH'
         layout.separator()
-        layout.operator("project.add_variable", text="Integer", icon='NONE').variable_type = 'INTEGER'
-        layout.operator("project.add_variable", text="Float", icon='NONE').variable_type = 'FLOAT'
+        layout.operator("project.variable_add", text="Integer", icon='NONE').variable_type = 'INTEGER'
+        layout.operator("project.variable_add", text="Float", icon='NONE').variable_type = 'FLOAT'
 
 
 # -------------------------------------------------------------
@@ -102,7 +108,7 @@ class PROJECT_PT_save_project(Panel):
             # It is shown to the left so that it is visible when the sidebar is narrow,
             # and for consistency with unsaved files in the title bar.
             layout.operator(
-                "project.save_project",
+                "project.config_save",
                 text=("* " if bpy.data.project.is_dirty else "") + iface_("Save Project"),
                 icon='FILE_TICK',
                 translate=False,
@@ -164,6 +170,72 @@ class PROJECT_PT_main(Panel, CenterAlignMixIn):
         col.prop(project, "root_path")
 
 
+class PROJECT_PT_splash_screen(Panel, CenterAlignMixIn):
+    bl_label = "Splash Screen"
+    bl_space_type = 'PROJECT'
+    bl_region_type = 'WINDOW'
+    bl_category = MAIN_SECTION_NAME
+    bl_parent_id = "PROJECT_PT_main"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw_centered(self, context, layout):
+        split = layout.split(factor=layout.property_split_factor)
+        row = split.row()
+        row.alignment = 'RIGHT'
+        row.label(text="Artwork")
+        col = split.column()
+        col.template_project_splash()
+
+
+class PROJECT_PT_color_management(Panel, CenterAlignMixIn):
+    bl_label = "Color Management"
+    bl_space_type = 'PROJECT'
+    bl_region_type = 'WINDOW'
+    bl_category = MAIN_SECTION_NAME
+
+    @classmethod
+    def poll(cls, context):
+        return bpy.data.project is not None
+
+    def draw_centered(self, context, layout):
+        project = bpy.data.project
+        colorspace = bpy.data.colorspace
+
+        config_source = colorspace.ocio_config_source
+        overridden = config_source in {'BLENDER_OCIO', 'OCIO'}
+
+        if colorspace.ocio_config_source == 'PROJECT':
+            needs_reload = colorspace.ocio_config_path != project.ocio_config_path
+        else:
+            needs_reload = not overridden and (project.ocio_config_path or colorspace.is_failed_opencolorio_config)
+
+        col = layout.column()
+        col.active = not overridden
+        col.prop(project, "ocio_config")
+        if project.ocio_config == 'PATH':
+            row = col.row()
+            row.alert = colorspace.is_failed_opencolorio_config
+            row.prop(project, "ocio_config_path", text="Path")
+
+        if overridden:
+            row = layout.split(factor=0.4)
+            row.label()
+            row.label(
+                text="Overridden by the {:s} environment variable".format(config_source),
+                icon='STATUS_INFO',
+            )
+
+        if needs_reload:
+            split = layout.split(factor=layout.property_split_factor)
+            split.label()
+            row = split.split()
+            row.label()
+            if not bpy.data.is_dirty:
+                # Skip prompt on unmodified blend file
+                row.operator_context = 'EXEC_DEFAULT'
+            row.operator("wm.revert_mainfile", text="Reload to Apply Changes", icon='FILE_REFRESH')
+
+
 class PROJECT_PT_main_unset(Panel, CenterAlignMixIn):
     bl_label = "No Project"
     bl_space_type = 'PROJECT'
@@ -179,53 +251,24 @@ class PROJECT_PT_main_unset(Panel, CenterAlignMixIn):
         col = layout.column()
         col.separator(factor=2.0)
 
-        if context.blend_data.filepath == "":
-            row = col.row()
-            row.alignment = 'CENTER'
-            row.label(
-                text="No active project.",
-                icon='STATUS_INFO',
-            )
-            col.separator()
+        row = col.row()
+        row.alignment = 'CENTER'
+        row.label(
+            text="No active project.",
+            icon='STATUS_INFO',
+        )
+        col.separator()
 
-            row = col.row()
-            row.label_multiline(
-                text="Save the current file, and make sure to place it in a folder that will be part of the project",
-                alignment='CENTER')
+        row = col.row()
+        row.label_multiline(
+            text="Create a new project, or open an existing project or a file inside of one.",
+            alignment='CENTER')
 
-            row = col.row()
-            row.label_multiline(
-                text="Alternatively, open a file inside of a project directory to see its settings.",
-                alignment='CENTER')
-
-            col.separator()
-            row = col.row()
-            row.alignment = 'CENTER'
-            row.operator("wm.save_as_mainfile", text="Save File...", icon='FILE_TICK')
-            row.operator("project.open_blend_in_project", icon='FILE_FOLDER')
-        else:
-            row = col.row()
-            row.alignment = 'CENTER'
-            row.label(
-                text="No active project.",
-                icon='STATUS_INFO',
-            )
-            col.separator()
-
-            row = col.row()
-            row.label_multiline(
-                text="Set up a new project by choosing any parent directory of the current file.",
-                alignment='CENTER')
-            row = col.row()
-            row.label_multiline(
-                text="Alternatively, open a file inside of a project directory to see its settings.",
-                alignment='CENTER')
-
-            col.separator()
-            row = col.row()
-            row.alignment = 'CENTER'
-            row.operator("project.new_project", text="New Project...", icon='ADD')
-            row.operator("project.open_blend_in_project", icon='FILE_FOLDER')
+        col.separator()
+        row = col.row()
+        row.alignment = 'CENTER'
+        row.operator("project.new", text="New Project...", icon='ADD')
+        row.operator("project.open", icon='FILE_FOLDER')
 
 
 class PROJECT_UL_variables(bpy.types.UIList):
@@ -268,19 +311,20 @@ class PROJECT_PT_variables(Panel):
         )
 
         col = row.column(align=True)
-        col.menu("PROJECT_MT_add_variable", text="", icon='ADD')
-        col.operator("project.remove_variable", text="", icon='REMOVE')
+        col.menu("PROJECT_MT_variable_add", text="", icon='ADD')
+        col.operator("project.variable_remove", text="", icon='REMOVE')
         col.separator()
-        col.operator("project.move_variable", text="", icon='TRIA_UP').direction = 'UP'
-        col.operator("project.move_variable", text="", icon='TRIA_DOWN').direction = 'DOWN'
-
-        col = layout.column()
-        col.use_property_split = True
-        col.alignment = 'LEFT'
-        col.separator(factor=1)
+        col.operator("project.variable_move", text="", icon='TRIA_UP').direction = 'UP'
+        col.operator("project.variable_move", text="", icon='TRIA_DOWN').direction = 'DOWN'
 
         if project.active_variable_index >= 0 and project.active_variable_index < len(project.variables):
             var = project.variables[project.active_variable_index]
+
+            col = layout.column()
+            col.use_property_split = True
+            col.alignment = 'LEFT'
+            col.separator()
+
             col.prop(var, "type")
             if var.type == 'STRING':
                 col.prop(var, "subtype")
@@ -289,19 +333,33 @@ class PROJECT_PT_variables(Panel):
             col.prop(var, "description")
 
 
+class PROJECT_PT_asset_libraries(Panel):
+    bl_label = "Asset Libraries"
+    bl_space_type = 'PROJECT'
+    bl_region_type = 'WINDOW'
+    bl_category = "Asset Libraries"
+    bl_translation_context = i18n_contexts.default
+    bl_context = "assets"
+
+    def draw(self, context):
+        self.layout.template_project_asset_libraries_tree()
 # -------------------------------------------------------------
 # Register
+
 
 classes = (
     PROJECT_HT_header,
     PROJECT_MT_editor_menus,
     PROJECT_MT_view,
     PROJECT_MT_save_load,
-    PROJECT_MT_add_variable,
+    PROJECT_MT_variable_add,
     PROJECT_PT_navigation_bar,
     PROJECT_PT_save_project,
     PROJECT_PT_main_unset,
     PROJECT_PT_main,
+    PROJECT_PT_splash_screen,
+    PROJECT_PT_color_management,
     PROJECT_PT_variables,
     PROJECT_UL_variables,
+    PROJECT_PT_asset_libraries,
 )

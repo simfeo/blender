@@ -65,6 +65,7 @@ set(SRC
   intern/blender_cli_command.cc
   intern/blender_copybuffer.cc
   intern/blender_project.cc
+  intern/blender_project_config.cc
   intern/blender_undo.cc
   intern/blender_user_menu.cc
   intern/blendfile.cc
@@ -266,6 +267,7 @@ set(SRC
   intern/report.cc
   intern/rigidbody.cc
   intern/scene.cc
+  intern/scene_context.cc
   intern/screen.cc
   intern/shader_fx.cc
   intern/shrinkwrap.cc
@@ -510,6 +512,7 @@ set(SRC
   BKE_report.hh
   BKE_rigidbody.h
   BKE_scene.hh
+  BKE_scene_context.hh
   BKE_scene_runtime.hh
   BKE_screen.hh
   BKE_shader_fx.hh
@@ -799,6 +802,7 @@ if(WITH_GTESTS)
     intern/main_test.cc
     intern/nla_test.cc
     intern/node_socket_value_iter_test.cc
+    intern/node_socket_value_test.cc
     intern/path_templates_test.cc
     intern/recents_test.cc
     intern/scene_test.cc

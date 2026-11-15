@@ -29,6 +29,52 @@ static string to_uppercase(string str)
   return str;
 }
 
+static TokenType strip_assignment(TokenType tok)
+{
+  switch (tok) {
+    case AssignAdd:
+      return Plus;
+    case AssignSub:
+      return Minus;
+    case AssignMul:
+      return Multiply;
+    case AssignDiv:
+      return Divide;
+    case AssignLShift:
+      return LShift;
+    case AssignRShift:
+      return RShift;
+    default:
+      return Invalid;
+  }
+}
+
+static const char *to_token_string(TokenType tok)
+{
+  switch (tok) {
+    case Increment:
+      return "+1";
+    case Decrement:
+      return "-1";
+    case Plus:
+      return "+";
+    case Minus:
+      return "-";
+    case Multiply:
+      return "*";
+    case Divide:
+      return "/";
+    case LShift:
+      /* Add spaces to avoid parsing it as template. */
+      return " << ";
+    case RShift:
+      /* Add spaces to avoid parsing it as template. */
+      return " >> ";
+    default:
+      return "";
+  }
+}
+
 struct CodegenContext : NodeErrorHandler {
   SymbolTable &table;
   metadata::Source &metadata;
@@ -39,11 +85,13 @@ struct CodegenContext : NodeErrorHandler {
     SymbolClass *type;
     /* Array dimension of the current temporary. */
     int8_t array_dim = 0;
+    bool is_bitfield = false;
 
     CodegenResult(SymbolVariable *var, const string &trivia)
         : str((var->is_constexpr ? var->value_str() : var->identifier) + trivia),
           type(var->type),
-          array_dim(var->array_dimensions)
+          array_dim(var->array_dimensions),
+          is_bitfield(var->is_bitfield)
     {
     }
 
@@ -52,8 +100,11 @@ struct CodegenContext : NodeErrorHandler {
     {
     }
 
-    CodegenResult(const string &str, SymbolClass *cls, int8_t array_dim = 0)
-        : str(str), type(cls), array_dim(array_dim)
+    CodegenResult(const string &str,
+                  SymbolClass *cls,
+                  int8_t array_dim = 0,
+                  bool is_bitfield = false)
+        : str(str), type(cls), array_dim(array_dim), is_bitfield(is_bitfield)
     {
     }
   };
@@ -141,9 +192,13 @@ struct CodegenContext : NodeErrorHandler {
           CodegenResult rhs = variable(LocalVar(right).identifier(), *left.type);
           if (left.type->is_srt()) {
             /* Remove access to SRT type (makes the resource global). */
-            return {left.str + as_whitespace(t.str_full()) + rhs.str, rhs.type, rhs.array_dim};
+            return {left.str + as_whitespace(t.str_full()) + rhs.str,
+                    rhs.type,
+                    rhs.array_dim,
+                    rhs.is_bitfield};
           }
-          return {left.str + string(t.str_full()) + rhs.str, rhs.type, rhs.array_dim};
+          return {
+              left.str + string(t.str_full()) + rhs.str, rhs.type, rhs.array_dim, rhs.is_bitfield};
         }
         default:
           return {t, ctx.table.err_cls};
@@ -190,19 +245,31 @@ struct CodegenContext : NodeErrorHandler {
     {
       using namespace builtin;
       TokenType op_type = t.front().type();
-      CodegenResult right = expr(p);
+      CodegenResult rhs = expr(p);
 
-      ClassId type = unary_prefix_operator_return_type(op_type, right.type);
-      return {string(t.str_full()) + right.str, ctx.table.to_class(type)};
+      ClassId type = unary_prefix_operator_return_type(op_type, rhs.type);
+
+      if (rhs.is_bitfield) {
+        if (op_type == Increment || op_type == Decrement) {
+          ctx.error(t, Diag::OperatorBitfieldInvalid);
+        }
+      }
+      return {string(t.str_full()) + rhs.str, ctx.table.to_class(type)};
     }
 
-    CodegenResult suffix(CodegenResult left, const ast::Node &t)
+    CodegenResult suffix(CodegenResult lhs, const ast::Node &t)
     {
       using namespace builtin;
       TokenType op_type = t.front().type();
 
-      ClassId type = unary_suffix_operator_return_type(left.type, op_type);
-      return {left.str + string(t.str_full()), ctx.table.to_class(type)};
+      ClassId type = unary_suffix_operator_return_type(lhs.type, op_type);
+
+      if (lhs.is_bitfield) {
+        if (op_type == Increment || op_type == Decrement) {
+          ctx.error(t, Diag::OperatorBitfieldInvalid);
+        }
+      }
+      return {lhs.str + string(t.str_full()), ctx.table.to_class(type)};
     }
 
     CodegenResult comma(CodegenResult lhs, const ast::Node &t, BindingPower p)
@@ -220,6 +287,15 @@ struct CodegenContext : NodeErrorHandler {
       CodegenResult rhs = expr(p);
 
       ClassId type = binary_operator_return_type(lhs.type, op_type, rhs.type);
+
+      if (lhs.is_bitfield) {
+        if (TokenType sub_op = strip_assignment(op_type); sub_op != TokenType::Invalid) {
+          /* Bitfield need to be manually read and write. */
+          return {lhs.str + "=" + lhs.str + to_token_string(sub_op) + trivia(t) + rhs.str,
+                  ctx.table.to_class(type)};
+        }
+      }
+
 #if 0 /* Future operator overloading */
       if (true) {
         const string op_name = ctx.table.binary_type_to_id.find(op_type)->second;
@@ -310,6 +386,10 @@ struct CodegenContext : NodeErrorHandler {
         return {var, whitespace};
       }
 
+      if (var->condition.is_valid()) {
+        ctx.check_condition(id, var->condition);
+      }
+
       if (var->type->is_srt()) {
         bool followed_by_dot = id.back().next() == '.';
         bool followed_by_member_call = id.parent().next().next() == NodeType::FuncCall;
@@ -345,9 +425,9 @@ struct CodegenContext : NodeErrorHandler {
       SymbolFunction *sym = ctx.id_func_resolved_lookup(
           id, call.parameters(), symbol_scope, scope, loc);
 
-      if (sym->is_error) {
+      if (sym == nullptr || sym->is_error) {
         ctx.error(call, Diag::UnknownFunction, string(id.str()));
-        return {"", sym->return_type};
+        return {"", ctx.table.err_cls};
       }
 
       if (sym->is_inline) {
@@ -1066,13 +1146,23 @@ struct CodegenContext : NodeErrorHandler {
 
   void enum_decl(ClassDecl decl, SymbolScope &scope)
   {
-    SymbolScope &body_scope = *scope.scopes[string(decl.identifier().str())];
-    SymbolClass *enum_cls = body_scope.as_class();
+    /* Default to parent scope for anonymous enums. */
+    SymbolScope *body_scope = &scope;
+    const IdQualified id = decl.identifier();
+    if (id.is_valid()) {
+      auto it = scope.scopes.find(string(id.str()));
+      if (it == scope.scopes.end()) {
+        error(decl, Diag::CompilerErrorChildScopeNotFound);
+        return;
+      }
+      body_scope = it->second;
+    }
+    SymbolClass *enum_cls = id.is_valid() ? body_scope->as_class() : nullptr;
     LocalScope body = decl.body();
 
     IdQualified type = decl.parent_class();
 
-    if (enum_cls) {
+    if (enum_cls && id.is_valid()) {
       /* TODO(fclem): Remove. Compatibility with previous BSL version. */
       builder.ss << "\n#define " << enum_cls->identifier << " " << type.str() << "\n";
     }
@@ -1088,7 +1178,7 @@ struct CodegenContext : NodeErrorHandler {
       builder.ss << string(
           max(int64_t(1), int64_t(val.front().char_number()) - int64_t(type_str.size())), ' ');
 
-      SymbolVariable *var = id_var_decl_resolved(val.identifier(), body_scope);
+      SymbolVariable *var = id_var_decl_resolved(val.identifier(), *body_scope);
       builder << " = " + var->value_str();
       builder << string(";");
     }
@@ -1133,6 +1223,7 @@ struct CodegenContext : NodeErrorHandler {
 
     if (cls.is_srt()) {
       generate_srt_placeholder_macros(cls);
+      lint_compilation_constant_redefinition(cls);
     }
 
     /* Emit static variables. */
@@ -1242,6 +1333,40 @@ struct CodegenContext : NodeErrorHandler {
     if (cls.is_srt()) {
       parse_class_metadata(cls, body);
     }
+  }
+
+  void lint_compilation_constant_redefinition(SymbolClass &cls)
+  {
+    vector<const SymbolVariable *> compilation_constants;
+    /* Avoid infinite loops or redundant visit. */
+    vector<const SymbolClass *> visited_srt;
+
+    auto check_class = [&](auto &self, SymbolClass *cls) {
+      if (std::ranges::find(visited_srt, cls) != visited_srt.end()) {
+        return;
+      }
+      visited_srt.emplace_back(cls);
+
+      for (const auto &[k, v] : cls->variables) {
+        const SymbolVariable &member = *v.second;
+        if (member.is_compilation_const) {
+          /* Check for duplicate O(N^2). */
+          for (const SymbolVariable *other : compilation_constants) {
+            if (other->original == member.original) {
+              NOTE(other->loc.tok, Diag::CompilationConstantPreviousDecl, "");
+              error(member.loc.tok, Diag::CompilationConstantRedefinition, member.original);
+            }
+          }
+          compilation_constants.emplace_back(&member);
+        }
+        if (member.type->srt_type == ResourceTableType::RESOURCE_TABLE) {
+          /* Recurse. */
+          self(self, member.type);
+        }
+      }
+    };
+
+    check_class(check_class, &cls);
   }
 
   void generate_srt_placeholder_macros(SymbolClass &cls)
@@ -1359,8 +1484,10 @@ struct CodegenContext : NodeErrorHandler {
                 int dim = 0;
                 Subscript sub = d.array().sub();
                 while (sub.is_valid()) {
+                  string len = var->capacity_value.is_valid() ?
+                                   "SRT_CONSTANT_" + string(var->capacity_value.str()) :
+                                   string(sub.expr().str());
                   string var = get_temp_name(dim++);
-                  string len = string(sub.expr().str());
                   members += "for(int " + var + " =0;" + var + " < " + len + ";++" + var + ") {";
                   close += "}";
                   access += "[" + var + "]";
@@ -1593,6 +1720,13 @@ struct CodegenContext : NodeErrorHandler {
         break;
       }
     }
+    /* Make functions writing to fragment outputs limited to the fragment shader. */
+    for (int i = 0; i < fn->arg_types.size(); ++i) {
+      if (fn->arg_types[i]->srt_type == ResourceTableType::FRAGMENT_OUT && !fn->arg_const[i]) {
+        str += " && defined(GPU_FRAGMENT_SHADER)";
+        break;
+      }
+    }
 
     if (fn->is_entry_point()) {
       str += " && defined(ENTRY_POINT_" + fn->identifier + ")";
@@ -1637,7 +1771,7 @@ struct CodegenContext : NodeErrorHandler {
 
     if (inst_fn->fn_type == SymbolFunction::MEMBER && decl.is_template()) {
       if (SymbolClass *cls = inst_fn->parent_class(); cls) {
-        /* Leave a breadcrum for a mutation pass which will move the following forward declaration
+        /* Leave a breadcrumb for a mutation pass which will move the following forward declaration
          * all the way up at the class declaration. This is needed to allow other member functions
          * to call the templated function. */
         builder.ss << "#pragma member_forward_decl " << inst_fn->parent_class()->identifier
@@ -1836,9 +1970,18 @@ struct CodegenContext : NodeErrorHandler {
         case ResourceType::BASE_INSTANCE:
         case ResourceType::NUM_WORK_GROUP:
         case ResourceType::INSTANCE_INDEX:
-        case ResourceType::FRAG_STENCIL_REF:
-          create_info_decl += "BUILTINS(BuiltinBits::" + to_str(attr.res_type) + ")\n";
+        case ResourceType::STENCIL_REF: {
+          string res_condition_lambda = parse_condition_as_lambda(fn, arg.attributes());
+          create_info_decl += ".builtins(BuiltinBits::" + to_str(attr.res_type) +
+                              res_condition_lambda + ")\n";
           break;
+        }
+        case ResourceType::BARY_COORD: {
+          string res_condition_lambda = parse_condition_as_lambda(fn, arg.attributes());
+          create_info_decl += ".builtins(BuiltinBits::BARYCENTRIC_COORD" + res_condition_lambda +
+                              ")\n";
+          break;
+        }
         case ResourceType::FRAG_DEPTH:
           for (Attr attr : arg.attributes().children_of_type<Attr>()) {
             string_view id = attr.identifier().str();
@@ -1850,7 +1993,7 @@ struct CodegenContext : NodeErrorHandler {
           }
           break;
         case ResourceType::RESOURCE_TABLE: {
-          string res_condition_lambda = parse_condition(arg.attributes());
+          string res_condition_lambda = parse_condition_as_lambda(fn, arg.attributes());
           if (res_condition_lambda.empty()) {
             create_info_decl += "ADDITIONAL_INFO(" + resolved_type + ")\n";
           }
@@ -1864,7 +2007,14 @@ struct CodegenContext : NodeErrorHandler {
         case ResourceType::OUT:
         case ResourceType::IN:
           if (var->type->srt_type == ResourceTableType::VERTEX_OUT) {
-            create_info_decl += "VERTEX_OUT(" + resolved_type + "_t)\n";
+            string res_condition_lambda = parse_condition_as_lambda(fn, arg.attributes());
+            if (res_condition_lambda.empty()) {
+              create_info_decl += ".vertex_out(" + resolved_type + "_t)\n";
+            }
+            else {
+              create_info_decl += ".vertex_out(" + resolved_type + "_t" + res_condition_lambda +
+                                  ")\n";
+            }
           }
           else {
             create_info_decl += "ADDITIONAL_INFO(" + resolved_type + ")\n";
@@ -1888,6 +2038,7 @@ struct CodegenContext : NodeErrorHandler {
         case ResourceType::FRAG_OUT:
         case ResourceType::CLIP_CONTROL:
         case ResourceType::CONDITION:
+        case ResourceType::CAPACITY:
         case ResourceType::FREQUENCY:
         case ResourceType::DUAL_SOURCE_INDEX:
         case ResourceType::RASTER_ORDER_GROUP:
@@ -1903,28 +2054,6 @@ struct CodegenContext : NodeErrorHandler {
     create_info_decl = "GPU_SHADER_CREATE_INFO(" + fn.identifier + "_infos_)\n" +
                        create_info_decl + "GPU_SHADER_CREATE_END()\n";
     metadata.create_infos_declarations.emplace_back(create_info_decl);
-  }
-
-  string parse_condition(AttrList attributes)
-  {
-    string cond;
-    for (Attr attr : attributes.children_of_type<Attr>()) {
-      if (attr.identifier().str() == "condition") {
-        if (!cond.empty()) {
-          error(attr.identifier(), Diag::MultipleConditionAttributes);
-          break;
-        }
-        for (LocalVar var : attributes.descendants_of_type<LocalVar>()) {
-          string id = string(var.identifier().str());
-          cond += "int " + id + " = ShaderCreateInfo::find_constant(constants, \"" + id + "\"); ";
-        }
-        cond += "return " + string(attr.parameters().str()) + ";";
-      }
-    }
-    if (!cond.empty()) {
-      cond = ", [](blender::Span<CompilationConstant> constants) { " + cond + "}";
-    }
-    return cond;
   }
 
   void func_arg_list(FuncArgList list,
@@ -2120,6 +2249,178 @@ struct CodegenContext : NodeErrorHandler {
     }
   }
 
+  struct StaticConditionStack {
+   public:
+    struct SubCondition {
+      ast::Node front, back;
+
+      string_view str()
+      {
+        return front.p->substr(front.front(), back.back());
+      }
+    };
+
+   private:
+    vector<ast::Expr> pos_conditions;
+    vector<ast::Expr> neg_conditions;
+
+   public:
+    void push_positive_condition(ast::Condition cond)
+    {
+      /* Note: Assumes If statements have only one LocalStmt. */
+      pos_conditions.emplace_back(cond.child_first().child_first());
+    }
+    void pop_positive_condition()
+    {
+      pos_conditions.pop_back();
+    }
+
+    void push_negative_condition(ast::Condition cond)
+    {
+      /* Note: Assumes If statements have only one LocalStmt. */
+      neg_conditions.emplace_back(cond.child_first().child_first());
+    }
+    void pop_negative_condition()
+    {
+      neg_conditions.pop_back();
+    }
+
+    /* Checks if all conditions inside `expr` are already checked inside the active static
+     * conditions in the stack. */
+    vector<SubCondition> check_condition(ast::Expr expr)
+    {
+      /* Note that an exact implementation would require a SAT Solver since this is a NP-complete
+       * problem (see https://en.wikipedia.org/wiki/Boolean_satisfiability_problem)
+       *
+       * Since most of the conditions are simple we consider a series of non-nested expression
+       * ANDed together and check for matching token strings for each sub expression.
+       * This is enough for detecting 99% of the logic issues. */
+
+      /* Split the expression to check into subexpressions to test individually. */
+      vector<SubCondition> expr_split = split_expr(expr, LogicalAnd);
+
+      for (ast::Expr cond : pos_conditions) {
+        remove_included_expr(expr_split, split_expr(cond, LogicalAnd), false);
+      }
+      for (ast::Expr cond : neg_conditions) {
+        /* Because of DeMorgan's law: `!(A || B) <=> !A && !B`
+         * Split the condition on LogicalOr and negate each expression.  */
+        remove_included_expr(expr_split, split_expr(cond, LogicalOr), true);
+      }
+
+      return expr_split;
+    }
+
+   private:
+    vector<SubCondition> split_expr(ast::Expr &expr_split, const TokenType split_token)
+    {
+      vector<SubCondition> split;
+
+      ast::Node front = expr_split.child_first();
+      ast::Node back = front;
+
+      while (back.next().is_valid()) {
+        back = back.next();
+        if (back.front() == split_token) {
+          split.emplace_back(front, back.prev());
+          /* Advance past the operator. */
+          front = back.next();
+          back = front;
+        }
+      }
+      if (front.is_valid()) {
+        split.emplace_back(front, back);
+      }
+      return split;
+    }
+
+    void remove_included_expr(vector<SubCondition> &expr_split,
+                              const vector<SubCondition> &cond_split,
+                              bool negative_cond)
+    {
+      std::erase_if(expr_split, [&](const SubCondition &expr) {
+        return std::ranges::any_of(cond_split, [&](const SubCondition &cond) {
+          return check_expression_inclusion(expr, cond, negative_cond);
+        });
+      });
+    }
+
+    /* Check if `expr` is logically included inside `cond`.
+     *
+     * If `negative_cond` is true, checks if `expr` is starting with a negation and compare the
+     * rest of expression. This have the same effect as negating the condition.
+     *
+     * NOTE: This function doesn't aim to be a full inclusion check (NP-complete problem), but it
+     * should be at least conservative.  */
+    bool check_expression_inclusion(SubCondition expr, SubCondition cond, bool negative_cond)
+    {
+      /* Check if both expressions are equivalent. */
+      ast::Node node_expr = expr.front;
+      ast::Node node_cond = cond.front;
+      if (negative_cond) {
+        if (node_expr.front() == '!' && node_expr.front().str().length() == 1) {
+          node_expr = node_expr.next();
+        }
+        else {
+          return false;
+        }
+      }
+      bool match = true;
+      while (match) {
+        switch (node_expr.type()) {
+          case NodeType::LocalVar:
+            /* Go to the last token of an accessor and check the last token. */
+            /* Don't do that for node_expr since it is not supposed to contain member access. */
+            while (node_cond.next().front() == '.') {
+              node_cond = node_cond.next().next();
+            }
+            if (node_cond.type() != NodeType::LocalVar) {
+              /* Invalid condition expression. */
+              match = false;
+              break;
+            }
+            [[fallthrough]];
+          case NodeType::Op:
+          case NodeType::NumConst:
+            /* Textual comparison. */
+            match &= node_expr.str() == node_cond.str();
+            break;
+          default:
+            // error(node_expr, Diag::InvalidOp);
+            match = false;
+            break;
+        }
+
+        bool end_of_cond = node_cond.front() == cond.back.front();
+        bool end_of_expr = node_expr.front() == expr.back.front();
+
+        if (end_of_cond || end_of_expr) {
+          /* Only valid match if both are terminated. */
+          match &= end_of_cond && end_of_expr;
+          break;
+        }
+
+        node_expr = node_expr.next();
+        node_cond = node_cond.next();
+
+        match = (node_expr.type() == node_cond.type());
+      }
+      return match;
+    }
+  } static_condition_stack;
+
+  void check_condition(ast::IdQualified id, ast::Expr expr)
+  {
+    /* Split the expression to check into subexpressions to test individually. */
+    vector<StaticConditionStack::SubCondition> expr_split = static_condition_stack.check_condition(
+        expr);
+
+    if (!expr_split.empty()) {
+      NOTE(expr, Diag::ConditionAttributeDeclaredHere, "");
+      error(id, Diag::ConditionAttributeNotChecked, id.str());
+    }
+  }
+
   void static_if_statement(Node decl,
                            SymbolScope &parent_scope,
                            int &local_scope_id,
@@ -2148,6 +2449,8 @@ struct CodegenContext : NodeErrorHandler {
                               parent_scope, stmt.expr().child_first(), unused_count, true)
                           .unwrap(this);
       builder.ss << (first ? "#if " : "#elif ") + cond_str + "\n";
+
+      static_condition_stack.push_positive_condition(cond);
     }
     else {
       builder.ss << "#else\n";
@@ -2161,6 +2464,12 @@ struct CodegenContext : NodeErrorHandler {
     jump_to(body.front());
 
     local_scope(body, *scope);
+
+    if (cond.is_valid()) {
+      /* Convert the active condition into an inactive one (negated). */
+      static_condition_stack.pop_positive_condition();
+      static_condition_stack.push_negative_condition(cond);
+    }
 
     /* Process preprocessor directive that can be added between if statements. */
     Node node = body.next();
@@ -2179,6 +2488,11 @@ struct CodegenContext : NodeErrorHandler {
       /* Pretty align. */
       builder.ss << string(decl.front().char_number(), ' ') + "#endif\n";
       jump_to(next.front());
+    }
+
+    if (cond.is_valid()) {
+      /* Remove the negated condition. */
+      static_condition_stack.pop_negative_condition();
     }
   }
 
@@ -2282,7 +2596,7 @@ struct CodegenContext : NodeErrorHandler {
     id_type_resolved(type.identifier(), scope);
   }
 
-  void array_decl(ArrayDecl array, Declarator decl, SymbolScope &scope)
+  void array_decl(SymbolVariable &var, ArrayDecl array, Declarator decl, SymbolScope &scope)
   {
     if (!array.is_valid()) {
       return;
@@ -2302,6 +2616,17 @@ struct CodegenContext : NodeErrorHandler {
         if (size == 0) {
           error(decl, Diag::ArraySizeMustBeGreaterThanZero);
         }
+        if (var.capacity_value.is_valid()) {
+          error(decl, Diag::CapacityArrayImplicitSize);
+        }
+        return;
+      }
+      if (var.capacity_value.is_valid()) {
+        builder << builder.curr;
+        builder << "SRT_CONSTANT_" + string(var.capacity_value.str());
+        /* Replace the whole expression. */
+        builder.curr = array.sub().back();
+        builder << array.sub().back();
         return;
       }
     }
@@ -2334,15 +2659,17 @@ struct CodegenContext : NodeErrorHandler {
     SymbolVariable *var = scope.lookup_variable(table, decl.identifier());
 
     if (var->is_bitfield && var->bit_offset != 0) {
-      if (decl.prev().type() != NodeType::Declarator || decl.next().type() != NodeType::Declarator)
-      {
-        /* Omitting a declarator in a declarator sequence will create invalid codegen. */
-        error(decl, Diag::BitFieldNotSingleDeclarator);
-      }
+      /* Single declarators are skipped by #var_decl. Reaching this point means the declarator is
+       * part of a sequence, where omitting it would create invalid codegen. */
+      error(decl, Diag::BitFieldNotSingleDeclarator);
     }
 
     const bool par = match_if('(');
-    if (var->type->is_srt()) {
+
+    /* Lookup the type from the declaration as var might be ERROR_SYMBOL for forward declared
+     * functions (because of name mismatch). */
+    SymbolClass *type = scope.lookup_class(table, decl.type().identifier()).unwrap(this);
+    if (type->is_srt()) {
       /* WORKAROUND: Do not pass SRT by reference because it causes issue on metal when the caller
        * is just calling the constructor in place. */
       skip_if('&');
@@ -2363,7 +2690,7 @@ struct CodegenContext : NodeErrorHandler {
       match_if(')');
     }
 
-    array_decl(array, decl, scope);
+    array_decl(*var, array, decl, scope);
 
     skip_node(decl.bitfield());
 
@@ -2485,13 +2812,16 @@ struct CodegenContext : NodeErrorHandler {
         if (designated.is_valid() && var->identifier == designated.identifier().str()) {
           AssignStmt stmt = designated.assign();
           content += init_expression_or_initializer_list(stmt.child_first(), scope, var->type).str;
-          content += opt_str(designated.back().next(), Comma);
+          string_view comma = opt_str(designated.back().next(), Comma);
+          content += comma.empty() ? "," : comma;
           designated = designated.next();
         }
         else {
           content += default_value(*var->type) + ",";
         }
       }
+
+      content = content.substr(0, content.rfind(","));
 
       if (designated.is_valid()) {
         if (auto *var = cls->lookup_variable(string(designated.identifier().str()));
@@ -2673,7 +3003,7 @@ struct CodegenContext : NodeErrorHandler {
           srt.emplace_back(parse_resource(decl.attributes(), type_name, var_name, d.array(), cls));
           break;
         case ResourceTableType::VERTEX_IN:
-          vertex_in.emplace_back(parse_vertex_input(decl.attributes(), type_name, var_name));
+          vertex_in.emplace_back(parse_vertex_input(decl.attributes(), type_name, var_name, cls));
           break;
         case ResourceTableType::VERTEX_OUT:
           vertex_out.emplace_back(parse_vertex_output(decl.attributes(), type_name, var_name));
@@ -2713,7 +3043,8 @@ struct CodegenContext : NodeErrorHandler {
 
   metadata::ParsedVertInput parse_vertex_input(AttrList attributes,
                                                const string &type,
-                                               const string &name)
+                                               const string &name,
+                                               const SymbolClass &cls)
   {
     auto attr = resource_type_from_attributes(attributes).unwrap(this);
     return {
@@ -2721,7 +3052,7 @@ struct CodegenContext : NodeErrorHandler {
         .var_type = type,
         .var_name = name,
         .slot = string(attr.param1.str()),
-        .res_condition = attr.parse_condition(),
+        .res_condition = parse_condition(cls, attr.condition),
     };
   }
 
@@ -2840,7 +3171,7 @@ struct CodegenContext : NodeErrorHandler {
                 .var_name = name,
                 .var_array = array_size_to_string(array, cls),
                 .res_type = string(attr.attr.identifier().str()),
-                .res_condition = attr.parse_condition()};
+                .res_condition = parse_condition(cls, attr.condition)};
       case ResourceType::SPECIALIZATION_CONST:
         return {.line = 0,
                 .var_type = type,
@@ -2848,7 +3179,16 @@ struct CodegenContext : NodeErrorHandler {
                 .var_array = array_size_to_string(array, cls),
                 .res_type = string(attr.attr.identifier().str()),
                 .res_value = string(attr.param1.str()),
-                .res_condition = attr.parse_condition()};
+                .res_condition = parse_condition(cls, attr.condition)};
+      case ResourceType::ACCELERATION_STRUCTURE:
+        return {.line = 0,
+                .var_type = type,
+                .var_name = name,
+                .var_array = array_size_to_string(array, cls),
+                .res_type = string(attr.attr.identifier().str()),
+                .res_slot = string(attr.param1.str()),
+                .res_condition = parse_condition(cls, attr.condition),
+                .res_frequency = parse_frequency(attr.frequency)};
       case ResourceType::SAMPLER:
         return {.line = 0,
                 .var_type = type,
@@ -2856,7 +3196,7 @@ struct CodegenContext : NodeErrorHandler {
                 .var_array = array_size_to_string(array, cls),
                 .res_type = string(attr.attr.identifier().str()),
                 .res_slot = string(attr.param1.str()),
-                .res_condition = attr.parse_condition(),
+                .res_condition = parse_condition(cls, attr.condition),
                 .res_frequency = parse_frequency(attr.frequency)};
       case ResourceType::UNIFORM_BUF:
         return {.line = 0,
@@ -2865,7 +3205,7 @@ struct CodegenContext : NodeErrorHandler {
                 .var_array = array_size_to_string(array, cls),
                 .res_type = string(attr.attr.identifier().str()),
                 .res_slot = string(attr.param1.str()),
-                .res_condition = attr.parse_condition(),
+                .res_condition = parse_condition(cls, attr.condition),
                 .res_frequency = parse_frequency(attr.frequency)};
       case ResourceType::STORAGE_BUF:
         return {.line = 0,
@@ -2875,7 +3215,7 @@ struct CodegenContext : NodeErrorHandler {
                 .res_type = string(attr.attr.identifier().str()),
                 .res_slot = string(attr.param1.str()),
                 .res_qualifier = string(attr.param2.str()),
-                .res_condition = attr.parse_condition(),
+                .res_condition = parse_condition(cls, attr.condition),
                 .res_frequency = parse_frequency(attr.frequency)};
       case ResourceType::IMAGE:
         return {.line = 0,
@@ -2886,7 +3226,7 @@ struct CodegenContext : NodeErrorHandler {
                 .res_slot = string(attr.param1.str()),
                 .res_qualifier = string(attr.param2.str()),
                 .res_format = parse_image_format(cls, attr.param3),
-                .res_condition = attr.parse_condition(),
+                .res_condition = parse_condition(cls, attr.condition),
                 .res_frequency = parse_frequency(attr.frequency)};
         break;
       default:
@@ -2894,6 +3234,46 @@ struct CodegenContext : NodeErrorHandler {
         break;
     }
     return {};
+  }
+
+  string parse_condition(const SymbolScope &scope, ast::Expr condition) const
+  {
+    if (!condition.is_valid()) {
+      return "";
+    }
+    string str;
+    for (LocalVar node : condition.children_of_type<LocalVar>()) {
+      if (SymbolVariable *var = scope.lookup_variable(table, node.identifier());
+          !var->is_error && var->is_constexpr)
+      {
+        str += "int " + string(node.str()) + " = " + var->value_str() + "; ";
+      }
+      else {
+        /* TODO(fclem): Check constant validity. */
+        str += "int " + string(node.str()) + " = ";
+        str += "ShaderCreateInfo::find_constant(constants, \"" + string(node.str()) + "\"); ";
+      }
+    }
+    str += "return " + string(condition.str()) + ";";
+    return str;
+  }
+
+  string parse_condition_as_lambda(const SymbolScope &scope, AttrList attributes)
+  {
+    string cond;
+    for (Attr attr : attributes.children_of_type<Attr>()) {
+      if (attr.identifier().str() == "condition") {
+        if (!cond.empty()) {
+          error(attr.identifier(), Diag::ConditionAttributeMultiple);
+          break;
+        }
+        cond = parse_condition(scope, attr.parameters().splat_1().arg1);
+      }
+    }
+    if (!cond.empty()) {
+      cond = ", [](blender::Span<CompilationConstant> constants) { " + cond + "}";
+    }
+    return cond;
   }
 
   /** \} */

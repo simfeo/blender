@@ -1422,6 +1422,7 @@ enum NodeGeometryMergeLayersMode {
 enum NodeGeometryGreasePencilStrokeType : int8_t {
   GEO_NODE_GREASE_PENCIL_STROKE = 0,
   GEO_NODE_GREASE_PENCIL_FILL = 1,
+  GEO_NODE_GREASE_PENCIL_BOTH = 2,
 };
 
 struct bNodeStack {
@@ -2496,7 +2497,7 @@ struct NodeDefocus {
 
   char bktype = 0;
   DNA_DEPRECATED char gamco = 0;
-  char no_zbuf = 0;
+  char no_zbuf = 1;
   char _pad0 = {};
   float fstop = 0;
   float maxblur = 0;
@@ -3090,7 +3091,7 @@ struct NodeInputIntVector {
 struct NodeInputColor {
   DNA_DEFINE_CXX_METHODS(NodeInputColor)
 
-  float color[4] = {};
+  float color[4] = {0.5f, 0.5f, 0.5f, 1.0f};
 };
 
 struct NodeInputString {

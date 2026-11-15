@@ -300,11 +300,16 @@ static wmOperatorStatus object_hide_view_clear_exec(bContext *C, wmOperator *op)
   const Main *bmain = CTX_data_main(C);
   Scene *scene = CTX_data_scene(C);
   ViewLayer *view_layer = CTX_data_view_layer(C);
+  const View3D *v3d = CTX_wm_view3d(C);
   const bool select = RNA_boolean_get(op->ptr, "select");
   bool changed = false;
 
   BKE_view_layer_synced_ensure(*bmain, scene, view_layer);
   for (Base &base : *BKE_view_layer_object_bases_get(view_layer)) {
+    if (v3d && v3d->localvd && (base.local_view_bits & v3d->local_view_uid) == 0) {
+      continue;
+    }
+
     if (base.flag & BASE_HIDDEN) {
       base.flag &= ~BASE_HIDDEN;
       changed = true;
@@ -2372,7 +2377,10 @@ static wmOperatorStatus move_to_collection_invoke(bContext *C,
   return move_to_collection_exec(C, op);
 }
 
-static void move_to_collection_menu_draw(Menu *menu, Collection *collection, int icon)
+static void move_to_collection_menu_draw(Menu *menu,
+                                         Collection *collection,
+                                         int icon,
+                                         const bool is_scene_collection = false)
 {
   ui::Layout &layout = *menu->layout;
   bool is_move = ELEM(StringRefNull(menu->type->idname),
@@ -2383,23 +2391,26 @@ static void move_to_collection_menu_draw(Menu *menu, Collection *collection, int
 
   layout.operator_context_set(wm::OpCallContext::InvokeDefault);
 
+  if (!is_scene_collection) {
+    PointerRNA op_ptr = layout.op(
+        ot, is_move ? IFACE_("Move Inside") : IFACE_("Link Inside"), ICON_NONE);
+    RNA_int_set(&op_ptr, "collection_uid", collection->id.session_uid);
+    layout.separator();
+  }
+
   PointerRNA op_ptr = layout.op(
       ot, CTX_IFACE_(BLT_I18NCONTEXT_OPERATOR_DEFAULT, "New Collection"), ICON_ADD);
   RNA_int_set(&op_ptr, "collection_uid", collection->id.session_uid);
   RNA_boolean_set(&op_ptr, "is_new", true);
-  layout.separator();
 
-  op_ptr = layout.op(ot, BKE_collection_ui_name_get(collection), icon);
-  RNA_int_set(&op_ptr, "collection_uid", collection->id.session_uid);
+  if (is_scene_collection) {
+    layout.separator();
+    op_ptr = layout.op(ot, BKE_collection_ui_name_get(collection), icon);
+    RNA_int_set(&op_ptr, "collection_uid", collection->id.session_uid);
+  }
 
   for (CollectionChild &child : collection->children) {
     collection = child.collection;
-    if (collection->children.is_empty()) {
-      op_ptr = layout.op(
-          ot, BKE_collection_ui_name_get(collection), ui::icon_color_from_collection(collection));
-      RNA_int_set(&op_ptr, "collection_uid", collection->id.session_uid);
-      continue;
-    }
     const PointerRNA ptr = RNA_id_pointer_create(&collection->id);
     layout.context_ptr_set("collection", &ptr);
     layout.menu(is_move ? "OBJECT_MT_move_to_collection_recursive" :
@@ -2432,7 +2443,7 @@ static void move_to_collection_menu_draw(const bContext *C, Menu *menu)
     RNA_string_set(&op_ptr, "menu_idname", menu->type->idname);
     layout.separator();
   }
-  move_to_collection_menu_draw(menu, scene->master_collection, ICON_SCENE_DATA);
+  move_to_collection_menu_draw(menu, scene->master_collection, ICON_SCENE_DATA, true);
 }
 
 void move_to_collection_menu_register()

@@ -684,7 +684,7 @@ static bool uvedit_uv_islands_arrange(const Scene *scene,
                      }
                      const float area_a = (a.bounds.size()[0] * a.bounds.size()[1]);
                      const float area_b = (b.bounds.size()[0] * b.bounds.size()[1]);
-                     return (order == UVAlignIslandOrder::LargeToSmall) ? (area_a >= area_b) :
+                     return (order == UVAlignIslandOrder::LargeToSmall) ? (area_a > area_b) :
                                                                           (area_a < area_b);
                    });
 
@@ -2223,7 +2223,10 @@ static bool uv_mesh_hide_no_sync(const Scene *scene, Object *ob, BMEditMesh *em,
 
   if (changed) {
     BM_select_history_validate(bm);
+  }
 
+  /* The UV selection may change without changing the mesh selection, tag for either. */
+  if (changed || changed_uv) {
     DEG_id_tag_update(ob->data, ID_RECALC_SELECT);
     WM_main_add_notifier(NC_GEOM | ND_SELECT, ob->data);
   }
@@ -2977,6 +2980,7 @@ void ED_operatormacros_uvedit()
                                     "Rip Move UVs",
                                     "Unstitch UVs and move the result",
                                     OPTYPE_UNDO | OPTYPE_REGISTER);
+  ot->cursor_pending = WM_CURSOR_CROSS;
   WM_operatortype_macro_define(ot, "UV_OT_rip");
   otmacro = WM_operatortype_macro_define(ot, "TRANSFORM_OT_translate");
   RNA_boolean_set(otmacro->ptr, "use_proportional_edit", false);

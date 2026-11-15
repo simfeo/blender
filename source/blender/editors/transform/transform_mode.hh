@@ -115,13 +115,17 @@ void transform_mode_default_modal_orientation_set(TransInfo *t, int type);
 void transform_mode_rotation_axis_get(const TransInfo *t, float3 &r_axis);
 bool transform_mode_is_axis_pointing_to_screen(const TransInfo *t, const float3 &axis);
 
+/**
+ * Get the first valid TransDataContainer *.
+ *
+ * Note we cannot trust TRANS_DATA_CONTAINER_FIRST_OK because of multi-object that
+ * may leave items with invalid custom data in the transform data container.
+ */
+TransDataContainer *transform_mode_container_first_ok(TransInfo *t);
+
 /* `transform_mode_align.cc` */
 
 extern TransModeInfo TransMode_align;
-
-/* `transform_mode_baketime.cc` */
-
-extern TransModeInfo TransMode_baketime;
 
 /* `transform_mode_bbone_resize.cc` */
 
@@ -157,6 +161,7 @@ extern TransModeInfo TransMode_rotatenormal;
 
 extern TransModeInfo TransMode_seqslide;
 bool transform_mode_edge_seq_slide_use_restore_handle_selection(const TransInfo *t);
+wmOperator *transform_mode_edge_seq_slide_operator_get(const TransInfo *t);
 
 /* `transform_mode_edge_slide.cc` */
 

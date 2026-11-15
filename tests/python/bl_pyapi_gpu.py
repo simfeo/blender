@@ -39,6 +39,14 @@ class TestGpuFrameBuffer(unittest.TestCase):
 
 
 class TestGpuStorageBuf(unittest.TestCase):
+    def setUp(self):
+        gpu.init()
+
+        # Metal requires a GPU context with a render boundary in order to perform synchronization
+        # inside ssbo.read(). Since we can't guarantee that here we bypass the test.
+        if gpu.platform.backend_type_get() == "METAL":
+            self.skipTest("SSBO read requires a render boundary on Metal")
+
     def test_create_update_read(self):
         import struct
 
@@ -56,13 +64,31 @@ class TestGpuStorageBuf(unittest.TestCase):
         ssbo.clear_to_zero()
         self.assertEqual(struct.unpack("4f", bytes(ssbo.read())), (0.0, 0.0, 0.0, 0.0))
 
+    def test_padding(self):
+        import struct
+
+        gpu.init()
+
+        # Padded to the size of a `vec4`.
+        ssbo = gpu.types.GPUStorageBuf(struct.pack("3f", 1.0, 2.0, 3.0))
+        self.assertEqual(struct.unpack("4f", bytes(ssbo.read())), (1.0, 2.0, 3.0, 0.0))
+
+        ssbo.update(struct.pack("4f", 7.0, 8.0, 9.0, 10.0))
+        self.assertEqual(struct.unpack("4f", bytes(ssbo.read())), (7.0, 8.0, 9.0, 10.0))
+        ssbo.update(struct.pack("2f", 4.0, 5.0))
+        self.assertEqual(struct.unpack("4f", bytes(ssbo.read())), (4.0, 5.0, 0.0, 0.0))
+
+        with self.assertRaises(ValueError):
+            ssbo.update(struct.pack("5f", 1.0, 2.0, 3.0, 4.0, 5.0))
+
     def test_compute_shader_binding(self):
         import struct
 
         gpu.init()
 
         info = gpu.types.GPUShaderCreateInfo()
-        info.storage_buf(0, {"READ", "WRITE"}, "float", "data[]")
+        # Default qualifiers allow both reading and writing.
+        info.storage_buf(0, "float", "data[]")
         info.local_group_size(4)
         info.compute_source(
             """
@@ -102,7 +128,7 @@ class TestGpuStorageBuf(unittest.TestCase):
 
         info = gpu.types.GPUShaderCreateInfo()
         info.typedef_source("struct Item { vec4 pos; float weight; };")
-        info.storage_buf(0, {"READ", "WRITE"}, "Item", "items[]")
+        info.storage_buf(0, "Item", "items[]", qualifiers={"READ", "WRITE"})
         info.local_group_size(len(items))
         info.compute_source(
             """
