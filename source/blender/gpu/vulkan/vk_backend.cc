@@ -158,10 +158,15 @@ static Vector<StringRefNull> missing_capabilities_get(VkPhysicalDevice vk_physic
 {
   Vector<StringRefNull> missing_capabilities;
   /* Check device features. */
-  VkPhysicalDeviceVulkan12Features features_12 = {
-      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+  /* The per-extension structs rather than VkPhysicalDeviceVulkan12Features, which is invalid on
+   * a Vulkan 1.1 device. */
+  VkPhysicalDeviceBufferDeviceAddressFeatures features_buffer_device_address = {
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES};
+  VkPhysicalDeviceTimelineSemaphoreFeatures features_timeline_semaphore = {
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES,
+      &features_buffer_device_address};
   VkPhysicalDeviceFeatures2 features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-                                        &features_12};
+                                        &features_timeline_semaphore};
 
   vkGetPhysicalDeviceFeatures2(vk_physical_device, &features);
 
@@ -198,10 +203,10 @@ static Vector<StringRefNull> missing_capabilities_get(VkPhysicalDevice vk_physic
   if (features.features.drawIndirectFirstInstance == VK_FALSE) {
     missing_capabilities.append("draw indirect first instance");
   }
-  if (features_12.timelineSemaphore == VK_FALSE) {
+  if (features_timeline_semaphore.timelineSemaphore == VK_FALSE) {
     missing_capabilities.append("timeline semaphores");
   }
-  if (features_12.bufferDeviceAddress == VK_FALSE) {
+  if (features_buffer_device_address.bufferDeviceAddress == VK_FALSE) {
     missing_capabilities.append("buffer device address");
   }
 

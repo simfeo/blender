@@ -233,8 +233,15 @@ class GHOST_DeviceVK {
   };
   VkPhysicalDeviceFeatures2 features = {};
   VkPhysicalDeviceVulkan11Features features_11 = {};
+  /* Valid on a 1.1 device, unlike the promoted copies in VkPhysicalDeviceVulkan12Features. */
+  VkPhysicalDeviceTimelineSemaphoreFeatures features_timeline_semaphore = {
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
+  VkPhysicalDeviceBufferDeviceAddressFeatures features_buffer_device_address = {
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES};
+  VkPhysicalDeviceSeparateDepthStencilLayoutsFeatures features_separate_depth_stencil_layouts = {
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SEPARATE_DEPTH_STENCIL_LAYOUTS_FEATURES};
+  /* Only queried on a 1.2 or 1.3 device respectively: asking on an older one is invalid. */
   VkPhysicalDeviceVulkan12Features features_12 = {};
-  /* Only queried on a 1.3 device: asking for it on an older one is invalid. */
   VkPhysicalDeviceVulkan13Features features_13 = {};
   VkPhysicalDeviceRobustness2FeaturesEXT features_robustness2 = {
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT};
@@ -259,12 +266,18 @@ class GHOST_DeviceVK {
 
     features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     features_11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
-    features_12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     features.pNext = &features_11;
-    features_11.pNext = &features_12;
-    features_12.pNext = &features_robustness2;
+    features_11.pNext = &features_timeline_semaphore;
+    features_timeline_semaphore.pNext = &features_buffer_device_address;
+    features_buffer_device_address.pNext = &features_separate_depth_stencil_layouts;
+    features_separate_depth_stencil_layouts.pNext = &features_robustness2;
     features_robustness2.pNext = &features_acceleration_structure;
 
+    if (properties.properties.apiVersion >= VK_API_VERSION_1_2) {
+      features_12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+      features_12.pNext = features_11.pNext;
+      features_11.pNext = &features_12;
+    }
     /* Dynamic rendering is core from 1.3 on, and a driver that has it in core stops
      * advertising the extension. Without this the feature is invisible on exactly
      * the devices that support it best. */
@@ -713,26 +726,49 @@ struct GHOST_InstanceVK {
 
     std::vector<void *> feature_struct_ptr;
 
-    /* Enable optional vulkan 12 features when supported on physical device. */
-    VkPhysicalDeviceVulkan12Features vulkan_12_features = {};
-    vulkan_12_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
-    vulkan_12_features.shaderOutputLayer = device.features_12.shaderOutputLayer;
-    vulkan_12_features.shaderOutputViewportIndex = device.features_12.shaderOutputViewportIndex;
-    vulkan_12_features.bufferDeviceAddress = device.features_12.bufferDeviceAddress;
-    vulkan_12_features.timelineSemaphore = VK_TRUE;
-    /* Depth-only and stencil-only image layouts are invalid without this, and the backend
-     * uses them whenever it is enabled. */
-    vulkan_12_features.separateDepthStencilLayouts =
-        device.features_12.separateDepthStencilLayouts;
-    feature_struct_ptr.push_back(&vulkan_12_features);
-
-    /* Enable separate depth stencil layouts. */
+    /* Features promoted to Vulkan 1.2. VkPhysicalDeviceVulkan12Features is invalid on a 1.1
+     * device, and on a 1.2 device it must not be combined with the per-extension structs it
+     * absorbed, so exactly one of the two forms is chained. Depth-only and stencil-only image
+     * layouts are invalid without separateDepthStencilLayouts, and the backend uses them
+     * whenever the feature is enabled, so it is only requested where supported. */
+    const bool is_vulkan_12 = device.properties.properties.apiVersion >= VK_API_VERSION_1_2;
+    VkPhysicalDeviceVulkan12Features vulkan_12_features = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    VkPhysicalDeviceTimelineSemaphoreFeatures timeline_semaphore_features = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
+    VkPhysicalDeviceBufferDeviceAddressFeatures buffer_device_address_features = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES};
     VkPhysicalDeviceSeparateDepthStencilLayoutsFeatures separate_depth_stencil_layouts_features =
-        {};
-    separate_depth_stencil_layouts_features.sType =
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SEPARATE_DEPTH_STENCIL_LAYOUTS_FEATURES;
-    separate_depth_stencil_layouts_features.separateDepthStencilLayouts = VK_TRUE;
-    feature_struct_ptr.push_back(&separate_depth_stencil_layouts_features);
+        {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SEPARATE_DEPTH_STENCIL_LAYOUTS_FEATURES};
+    if (is_vulkan_12) {
+      vulkan_12_features.shaderOutputLayer = device.features_12.shaderOutputLayer;
+      vulkan_12_features.shaderOutputViewportIndex = device.features_12.shaderOutputViewportIndex;
+      vulkan_12_features.bufferDeviceAddress = device.features_12.bufferDeviceAddress;
+      vulkan_12_features.timelineSemaphore = VK_TRUE;
+      vulkan_12_features.separateDepthStencilLayouts =
+          device.features_12.separateDepthStencilLayouts;
+      /* Required whenever VK_EXT_descriptor_indexing is enabled alongside this struct. */
+      vulkan_12_features.descriptorIndexing =
+          device.extensions.is_enabled(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME) &&
+          device.features_12.descriptorIndexing;
+      feature_struct_ptr.push_back(&vulkan_12_features);
+    }
+    else {
+      if (device.extensions.is_enabled(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME)) {
+        timeline_semaphore_features.timelineSemaphore = VK_TRUE;
+        feature_struct_ptr.push_back(&timeline_semaphore_features);
+      }
+      if (device.extensions.is_enabled(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME)) {
+        buffer_device_address_features.bufferDeviceAddress =
+            device.features_buffer_device_address.bufferDeviceAddress;
+        feature_struct_ptr.push_back(&buffer_device_address_features);
+      }
+      if (device.extensions.is_enabled(VK_KHR_SEPARATE_DEPTH_STENCIL_LAYOUTS_EXTENSION_NAME)) {
+        separate_depth_stencil_layouts_features.separateDepthStencilLayouts =
+            device.features_separate_depth_stencil_layouts.separateDepthStencilLayouts;
+        feature_struct_ptr.push_back(&separate_depth_stencil_layouts_features);
+      }
+    }
 
     /* Enable provoking vertex if available. */
     VkPhysicalDeviceProvokingVertexFeaturesEXT provoking_vertex_features = {};
