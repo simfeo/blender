@@ -44,8 +44,12 @@
 [[maybe_unused]] static constexpr int SPHERE_PROBE_MIPMAP_LEVELS = 5;
 [[maybe_unused]] static constexpr int SPHERE_PROBE_SH_GROUP_SIZE = 256;
 [[maybe_unused]] static constexpr int SPHERE_PROBE_SH_SAMPLES_PER_GROUP = 64;
-/* Must be power of two for correct partitioning. */
-[[maybe_unused]] static constexpr int SPHERE_PROBE_ATLAS_MAX_SUBDIV = 12;
+/* Must be power of two for correct partitioning.
+ * DOWNSTREAM (Android): reduced from 12. 4096px costs 170MB per atlas and a preview render
+ * allocates two, which sends a 4GB device into the low memory killer during an EEVEE render.
+ * 1024px costs reflection probe resolution. Shaders share this header, so it cannot be made
+ * conditional on the platform. */
+[[maybe_unused]] static constexpr int SPHERE_PROBE_ATLAS_MAX_SUBDIV = 10;
 [[maybe_unused]] static constexpr int SPHERE_PROBE_ATLAS_RES = (1
                                                                 << SPHERE_PROBE_ATLAS_MAX_SUBDIV);
 /* Maximum number of thread-groups dispatched for remapping a probe to octahedral mapping. */
