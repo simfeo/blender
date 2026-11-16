@@ -597,6 +597,11 @@ enum eUserpref_TempSpaceDisplayType : char {
 #  define USER_BORDER_WIDTH_DEFAULT 4
 #  define USER_PRESSURE_THRESHOLD_MAX_DEFAULT USER_PRESSURE_THRESHOLD_MAX_ANDROID
 #  define USER_PRESSURE_SOFTNESS_DEFAULT 0.0f
+/* A 4GB device is killed by the low memory killer long before a desktop would swap: cap
+ * GPU texture size, and keep sculpt and edit mode undo, which copies whole meshes, bounded. */
+#  define USER_GL_RES_LIMIT_DEFAULT 1024
+#  define USER_UNDO_STEPS_DEFAULT 16
+#  define USER_UNDO_MEMORY_DEFAULT 512
 #else
 #  define USER_RENDER_DISPLAY_DEFAULT USER_RENDER_DISPLAY_WINDOW
 #  define USER_TEMP_SPACE_DISPLAY_DEFAULT USER_TEMP_SPACE_DISPLAY_WINDOW
@@ -604,6 +609,9 @@ enum eUserpref_TempSpaceDisplayType : char {
 #  define USER_BORDER_WIDTH_DEFAULT 2
 #  define USER_PRESSURE_THRESHOLD_MAX_DEFAULT 1.0f
 #  define USER_PRESSURE_SOFTNESS_DEFAULT 0.0f
+#  define USER_GL_RES_LIMIT_DEFAULT 0
+#  define USER_UNDO_STEPS_DEFAULT 32
+#  define USER_UNDO_MEMORY_DEFAULT 0
 #endif
 
 enum eUserpref_EmulateMMBMod : char {
@@ -1201,8 +1209,8 @@ struct UserDef {
 
   char _pad14[1] = {};
 
-  short undosteps = 32;
-  int undomemory = 0;
+  short undosteps = USER_UNDO_STEPS_DEFAULT;
+  int undomemory = USER_UNDO_MEMORY_DEFAULT;
   DNA_DEPRECATED float gpu_viewport_quality = 0;
   short gp_manhattandist = 1, gp_euclideandist = 2, gp_eraser = 25;
   eGP_UserdefSettings gp_settings = {};
@@ -1237,7 +1245,7 @@ struct UserDef {
   short recent_files = 200;
   /** Milliseconds to spend spinning the view. */
   short smooth_viewtx = 200;
-  short glreslimit = 1024;
+  short glreslimit = USER_GL_RES_LIMIT_DEFAULT;
   eColorPicker_Types color_picker_type = USER_CP_CIRCLE_HSV;
   /** Curve smoothing type for newly added F-Curves. */
   eFCurve_Smoothing auto_smoothing_new = FCURVE_SMOOTH_CONT_ACCEL;
