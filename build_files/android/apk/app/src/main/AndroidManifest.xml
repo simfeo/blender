@@ -15,6 +15,12 @@
     <!-- Blender reads and writes .blend files and their assets by path, so it needs
          access to shared storage rather than the scoped, app-private sandbox. -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <!-- A render can outlast the screen timeout. The service below keeps the process in the
+         foreground until it finishes, so Android does not suspend or reclaim it and the screen
+         stays on. dataSync is the closest declared type for a long local job; Android 14
+         requires the type to be declared together with its permission. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
         android:label="Blender"
@@ -40,6 +46,7 @@
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|density|navigation|uiMode"
             android:exported="true">
             <meta-data android:name="android.app.lib_name" android:value="blender" />
+
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -87,5 +94,17 @@
                     android:mimeType="*/*" android:pathPrefix="/external_primary/downloads" />
             </intent-filter>
         </activity>
+
+        <!-- Started and stopped around a render by BlenderActivity.setBusy(). Keeps the process
+             in the foreground, and the screen on, for as long as the render runs. -->
+        <!-- The render blocks the main thread; a foreground service in the same process cannot
+             reach onStartCommand/startForeground within Android's 5 second deadline and the
+             system kills the app with ForegroundServiceDidNotStartInTimeException. Running the
+             service in its own process lets its main thread call startForeground immediately. -->
+        <service
+            android:name="org.blender.blender.BlenderRenderService"
+            android:exported="false"
+            android:process=":render"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>

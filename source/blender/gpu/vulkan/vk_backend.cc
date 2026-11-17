@@ -23,6 +23,11 @@
 #  include <unistd.h>
 #endif
 
+#ifdef __ANDROID__
+/* `debug.blender.*` properties. Not part of the Adreno tools build above, which is optional. */
+#  include <sys/system_properties.h>
+#endif
+
 #include "BLI_path_utils.hh"
 #include "BLI_string.hh"
 #include "BLI_threads.hh"
@@ -682,6 +687,26 @@ void VKBackend::detect_workarounds(VKDevice &device)
   extensions.dynamic_rendering =
       device.supports_extension(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME) ||
       device.physical_device_properties_get().apiVersion >= VK_API_VERSION_1_3;
+#ifdef __ANDROID__
+  /* A device can only be tested on the path it takes, and the render-pass fallback exists for the
+   * devices that cannot take the other one. Forcing the flag off here, before anything reads it,
+   * makes every consumer -- command buffers, pipeline builds, pipeline libraries, local read --
+   * agree on the fallback. Forcing it later, per command buffer, leaves the pipelines built for
+   * dynamic rendering and used with a classic render pass.
+   *
+   *   adb shell setprop debug.blender.renderpass 1   emulate a Vulkan 1.1 device
+   *   adb shell setprop debug.blender.renderpass 0   keep dynamic rendering
+   *
+   * Unset follows the driver. The device feature stays enabled, it is just not used. */
+  {
+    char value[PROP_VALUE_MAX] = {};
+    if (__system_property_get("debug.blender.renderpass", value) > 0 && value[0] != '\0') {
+      /* The property names the path to take, not the feature to keep: 1 asks for the render pass
+       * fallback, which means dynamic rendering must be turned off. */
+      extensions.dynamic_rendering = atoi(value) == 0;
+    }
+  }
+#endif
   /* The feature has to be enabled on the device, which being core in Vulkan 1.2 or having the
    * extension present does not imply. Read back what was actually enabled. */
   extensions.separate_depth_stencil_layouts =

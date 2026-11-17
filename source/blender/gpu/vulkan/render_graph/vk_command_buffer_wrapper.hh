@@ -172,6 +172,18 @@ class VKCommandBufferWrapper : public VKCommandBufferInterface {
  private:
   VkCommandBuffer vk_command_buffer_ = VK_NULL_HANDLE;
   const VolkDeviceTable *functions = nullptr;
+  /**
+   * Cleared when a pipeline that failed to create is bound, so draws and dispatches are skipped
+   * until a valid one is bound again.
+   *
+   * `vkCmdBindPipeline` with VK_NULL_HANDLE is invalid usage, and Adreno does not merely reject
+   * it: it dereferences the handle and takes the process down (seen with
+   * `gpu_shader_2D_widget_shadow` on the Android 16 Adreno driver, where the compiler reports
+   * "Failed to link shaders" and pipeline creation returns a null handle). Losing one draw is a
+   * broken effect; losing the process is a crash on startup. Defaults to true so a command
+   * buffer that never binds behaves exactly as before.
+   */
+  bool pipeline_valid_ = true;
 
  public:
   VKCommandBufferWrapper(VkCommandBuffer vk_command_buffer,

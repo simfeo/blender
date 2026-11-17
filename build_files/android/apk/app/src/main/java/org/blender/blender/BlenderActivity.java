@@ -27,6 +27,7 @@ import android.text.InputType;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
@@ -73,9 +74,11 @@ public class BlenderActivity extends NativeActivity {
 
   @Override
   protected void onCreate(Bundle state) {
-    /* Runtime files must exist before native Blender init reads them. */
-    extractRuntimeIfNeeded();
-    setUpPythonInterpreter();
+    /* The runtime (Python, scripts, datafiles) is over a hundred megabytes to unpack on first
+     * launch. Doing it on this thread blocked the UI long enough for the system to raise its "not
+     * responding" dialog, so it runs on a background thread and the native side waits for the
+     * ready marker before it reads any of it. This is the UI thread; the wait happens there. */
+    prepareRuntimeAsync();
     /* Before super.onCreate: that is what starts the native activity, and the
      * log is opened as the first thing it does. */
     chooseLogPath();
@@ -147,6 +150,49 @@ public class BlenderActivity extends NativeActivity {
       return text;
     }
     return Character.toUpperCase(text.charAt(0)) + text.substring(1);
+  }
+
+  /**
+   * Keep the screen on and stay in the foreground while a long task (a render) runs.
+   *
+   * Android suspends or reclaims a process once the screen turns off, which killed renders
+   * that took longer than the screen timeout. Called from GHOST on the render thread, so it
+   * hops to the UI thread, where window flags and services belong.
+   */
+  public void setBusy(final boolean busy) {
+    runOnUiThread(() -> {
+      if (busy) {
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        try {
+          startForegroundService(new Intent(this, BlenderRenderService.class));
+        }
+        catch (Exception ex) {
+          /* Android 12+ refuses a foreground service started from the background. The screen
+           * flag above still applies; only the foreground protection is lost. */
+          Log.w(TAG, "foreground service refused", ex);
+        }
+      }
+      else {
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        stopService(new Intent(this, BlenderRenderService.class));
+      }
+    });
+  }
+
+  /**
+   * Character a key press would type, or 0 for keys that type nothing.
+   *
+   * Called from GHOST for every key event: the NDK exposes no equivalent of
+   * KeyEvent.getUnicodeChar(), so without this a hardware keyboard can drive
+   * shortcuts but cannot put text into a text field. Resolving it here keeps
+   * whatever layout the device is set to (AZERTY, QWERTZ, Dvorak) instead of
+   * hard-coding a US table in C.
+   */
+  public static int unicodeChar(int keyCode, int metaState) {
+    int value = new KeyEvent(KeyEvent.ACTION_DOWN, keyCode).getUnicodeChar(metaState);
+    /* A negative result carries a COMBINING_ACCENT flag rather than a character;
+     * dead keys are left to the IME path. */
+    return value < 0 ? 0 : value;
   }
 
   /* Unset Build fields read "unknown", which would be printed. */
@@ -612,6 +658,56 @@ public class BlenderActivity extends NativeActivity {
     catch (Exception ex) {
       throw new RuntimeException("Failed to extract Blender runtime", ex);
     }
+  }
+
+  /* Written last, by the preparation thread. Native polls for this file before it starts Blender;
+   * publishing the path as an environment variable keeps the version directory out of C++. */
+  private static final String READY_MARKER = ".native-ready";
+
+  /**
+   * Unpack the payload and set up Python off the UI thread.
+   *
+   * The marker is what the native side polls: it is written even when preparation failed, so a
+   * broken extraction shows up as Python reporting missing files rather than as a silent hang on
+   * the splash screen.
+   */
+  private void prepareRuntimeAsync() {
+    final File ready = new File(getFilesDir(), "blender/" + VERSION + "/" + READY_MARKER);
+    /* Published before super.onCreate, which is what starts the native thread. Without it the
+     * native side starts immediately, as it did before this change. */
+    try {
+      Os.setenv("BLENDER_ANDROID_READY_FILE", ready.getAbsolutePath(), true);
+    }
+    catch (Exception ex) {
+      Log.w(TAG, "could not publish the ready marker path", ex);
+    }
+
+    /* Drop any marker left by the previous install before native starts, or it reads a runtime
+     * that extractRuntimeIfNeeded() is about to delete and unpack. Deleting here, on the UI
+     * thread before super.onCreate(), is what orders the two. */
+    if (!ready.delete() && ready.exists()) {
+      Log.w(TAG, "could not remove the stale ready marker");
+    }
+
+    Thread thread = new Thread(() -> {
+      try {
+        extractRuntimeIfNeeded();
+        setUpPythonInterpreter();
+      }
+      catch (Throwable ex) {
+        Log.e(TAG, "runtime preparation failed", ex);
+      }
+      finally {
+        try {
+          writeText(ready, "ready");
+        }
+        catch (Throwable ex) {
+          Log.e(TAG, "could not write " + READY_MARKER, ex);
+        }
+      }
+    }, "blender-runtime");
+    thread.setDaemon(true);
+    thread.start();
   }
 
   /* Called from native (popupOnScreenKeyboard). */

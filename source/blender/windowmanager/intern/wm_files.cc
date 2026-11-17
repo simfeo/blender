@@ -2348,6 +2348,16 @@ bool WM_autosave_write(wmWindowManager *wm, Main *bmain, ReportList *reports)
   return success;
 }
 
+bool WM_autosave_write_background(bContext *C)
+{
+  wmWindowManager *wm = CTX_wm_manager(C);
+  Main *bmain = CTX_data_main(C);
+  if (wm == nullptr || bmain == nullptr) {
+    return false;
+  }
+  return WM_autosave_write(wm, bmain, &wm->runtime->reports);
+}
+
 static void wm_autosave_timer_begin_ex(wmWindowManager *wm, double timestep)
 {
   wm_autosave_timer_end(wm);

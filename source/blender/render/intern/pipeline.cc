@@ -2009,6 +2009,27 @@ static void render_pipeline_free(Render *re)
   RE_display_free(re);
 }
 
+#ifdef __ANDROID__
+extern "C" void GHOST_android_set_busy(bool busy);
+
+namespace {
+/* A render can outlast the screen timeout, and Android suspends or reclaims a process once the
+ * screen goes off. Ask the platform to keep the screen on and the process in the foreground for
+ * as long as a render runs. Nesting is counted on the platform side: an animation render holds
+ * one for the whole loop and one per frame from RE_RenderFrame. */
+struct AndroidRenderBusy {
+  AndroidRenderBusy()
+  {
+    GHOST_android_set_busy(true);
+  }
+  ~AndroidRenderBusy()
+  {
+    GHOST_android_set_busy(false);
+  }
+};
+}  // namespace
+#endif
+
 void RE_RenderFrame(Render *re,
                     Main *bmain,
                     Scene *scene,
@@ -2025,6 +2046,9 @@ void RE_RenderFrame(Render *re,
   /* Ugly global still...
    * is to prevent preview events and signal subdivision-surface etc to make full resolution. */
   G.is_rendering = true;
+#ifdef __ANDROID__
+  AndroidRenderBusy android_busy;
+#endif
 
   scene->r.cfra = frame;
   scene->r.subframe = subframe;
@@ -2437,6 +2461,9 @@ void RE_RenderAnim(Render *re,
    * copying (e.g. alter the output path). */
   render_callback_exec_id(re, re->main, &scene->id, BKE_CB_EVT_RENDER_INIT);
 
+#ifdef __ANDROID__
+  AndroidRenderBusy android_busy;
+#endif
   RenderData rd = dna::shallow_copy(scene->r);
   const int cfra_old = rd.cfra;
   const float subframe_old = rd.subframe;

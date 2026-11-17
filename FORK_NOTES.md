@@ -1,0 +1,216 @@
+# Fork notes — Blender for Android
+
+This repository is a fork of [simfeo/blender](https://github.com/simfeo/blender), which ports
+Blender 5.3 to Android (arm64, Vulkan, NativeActivity). It keeps that port's history and adds the
+changes below.
+
+## Tested hardware
+
+**One device: Samsung Galaxy Tab S9+** (SM-X810 / SM-X816B), Snapdragon 8 Gen 2, Adreno 740,
+Vulkan 1.3, 12 GB, S Pen, DeX.
+
+| Path | Status |
+| --- | --- |
+| Adreno 740, Vulkan 1.3, dynamic rendering | **tested** |
+| Vulkan 1.1 / render-pass fallback | **not tested on real 1.1 hardware** (exercised only through the switch below) |
+| Mali GPUs | **not tested** |
+| Low-memory devices (<6 GiB) | **not tested** |
+| Vulkan 1.1 devices with 16 KB page size | **not tested** |
+
+Claims about the other devices in [build_files/android/README.md](build_files/android/README.md)
+come from the original port's author and have not been reproduced with the changes here.
+
+## Changes
+
+### 1. Text input from a hardware keyboard
+
+A docked keyboard could drive shortcuts but could not type a single character into a text field.
+
+- `intern/ghost/intern/GHOST_SystemAndroid.cc`
+  - `handleKeyEvent` now fills `GHOST_EventKey::utf8_buf`, which is the only thing Blender's text
+    fields insert from (`interface_handlers.cc`). The character is resolved by the platform
+    (`KeyEvent.getUnicodeChar`) so the device's keyboard layout applies; the NDK has no
+    equivalent API and a table in C would hard-code a US layout.
+  - `convertAndroidKey` gained F1–F12, punctuation (`[ ] \ ; ' , . / - = ` `), the numpad,
+    Home/End/PageUp/PageDown, Insert, PrintScreen and the menu key. Keys not in the table are
+    still ignored, so nothing new can fire a shortcut by accident.
+  - ASCII is not emitted as text while Ctrl or Alt is held: those are command chords in a text
+    field, and emitting the letter as well would type `c` on every copy. Non-ASCII is still
+    emitted, because AltGr characters arrive as Ctrl+Alt on several layouts.
+- `build_files/android/apk/app/src/main/java/org/blender/blender/BlenderActivity.java`
+  - New `unicodeChar(int keyCode, int metaState)` static, called by the native side.
+
+Verification on device: focus any text field (rename an object with F2, the operator search with
+F3, a console line), type ASCII and layout-specific characters, then check `Ctrl+Z`/`Ctrl+C`
+still undo and copy rather than typing letters.
+
+### 2. `debug.blender.renderpass` — force the Vulkan render-pass fallback
+
+Devices with `VK_KHR_dynamic_rendering` and devices without it run different code through the
+render graph, and a single tablet can only exercise one of them. This property makes the other
+path reachable:
+
+```bash
+adb shell setprop debug.blender.renderpass 1   # emulate a Vulkan 1.1 device (render pass fallback)
+adb shell setprop debug.blender.renderpass 0   # force dynamic rendering
+adb shell setprop debug.blender.renderpass ""  # follow the driver (default)
+```
+
+- `source/blender/gpu/vulkan/vk_backend.cc` — the flag is forced where extensions are detected,
+  before anything reads it, so command buffers, pipeline builds, pipeline libraries and local
+  read all agree on the fallback. Forcing it later, per command buffer, would leave pipelines
+  built for dynamic rendering and used with a classic render pass.
+
+Verification on device:
+
+```bash
+adb shell setprop debug.blender.log 1
+adb shell setprop debug.blender.renderpass 1
+# relaunch, then:
+adb logcat -s blender-rpfb   # render pass / framebuffer cache lines appear when the fallback runs
+```
+
+The device still enables the Vulkan 1.3 feature; it is simply not used while the switch is on.
+
+### 3. The session survives being backgrounded
+
+Android can reclaim a backgrounded app at any moment: no dialog, no exit handler. On a tablet that
+is the normal way a session ended — switch to another app, come back, the work is gone.
+
+- `intern/ghost/intern/GHOST_AndroidMain.cc` — `APP_CMD_PAUSE` writes the auto-save through a new
+  `WM_autosave_write_background()` and stops driving Blender; the frame loop blocks on the event
+  queue behind a destroyed surface instead of spinning. Rate limited to once per 10 s, because
+  switching between two apps fires PAUSE/RESUME repeatedly.
+- `APP_CMD_LOW_MEMORY` releases the render-result and compositor GPU caches (the parts that can be
+  rebuilt) rather than waiting to be killed.
+- `source/blender/windowmanager/{WM_api.hh,intern/wm_files.cc}` — the auto-save entry point.
+
+Recovery works the way Blender's own does: the next start offers to restore the auto-save.
+
+### 4. Long renders keep the screen on and the process in the foreground
+
+A render can outlast the screen timeout, and once the screen goes off Android is free to suspend
+or reclaim the process, which killed long renders with nothing in the log.
+
+- `source/blender/render/intern/pipeline.cc` — `RE_RenderFrame` and `RE_RenderAnim` are bracketed
+  by an RAII guard that calls `GHOST_android_set_busy()`. An animation render nests (loop plus
+  each frame), so the platform counts depth and only crosses the boundary once.
+- `intern/ghost/intern/GHOST_SystemAndroid.cc` — the busy counter and the JNI call.
+- `BlenderActivity.setBusy()` — sets `FLAG_KEEP_SCREEN_ON` and runs `BlenderRenderService`, a
+  foreground service with a notification, for the duration.
+
+The screen flag is the part that matters; the service is what stops the process being reclaimed
+when the user walks away. `dataSync` is the closest declared foreground type for a long local job
+and needs `FOREGROUND_SERVICE_DATA_SYNC` on Android 14, both declared in the manifest.
+
+### 5. First launch no longer raises the "not responding" dialog
+
+The runtime payload (Python, scripts, datafiles) is over a hundred megabytes to unpack, and it was
+unpacked in `onCreate`, on the UI thread — on the one launch every new user sees.
+
+- `BlenderActivity.prepareRuntimeAsync()` unpacks on a background thread and publishes the path of
+  a ready marker (`BLENDER_ANDROID_READY_FILE`) before `super.onCreate()` starts native.
+- `GHOST_AndroidMain.cc` waits for that marker before it starts Blender. This is not the UI thread,
+  so waiting is free; without the variable it starts at once, as before.
+- The marker is written even when preparation failed, so a broken extraction becomes Python
+  reporting missing files instead of a splash screen that never ends.
+
+## Device test log (Galaxy Tab S9+)
+
+Device: SM-X810, Android 16 (API 36), Snapdragon 8 Gen 2, Adreno 740, driver build
+`3df4c357f0` dated 2026-01-27, 12 GB, page size 4 KB. APK: `lite`, debug-signed.
+
+### A driver bug that stops every build, including the original port's
+
+`gpu_shader_2D_widget_shadow` fails on this driver:
+
+```
+AdrenoVK-0: Failed to link shaders.
+blender: gpu.vulkan | ERROR Failed to compile graphics pipeline
+         `gpu_shader_2D_widget_shadow`: VK_ERROR_UNKNOWN
+fatal signal 11 in qglinternal::vkCmdBindPipeline
+```
+
+It is not specific to this fork. The same crash happens with the original port's `full` and `lite`
+APKs from `android-alpha-4`, and with Wanderson Magalhaes' stable `v5.3.0` APK. All three die on
+the first frame that draws a popup shadow. The guard in `vk_command_buffer_wrapper.cc` is what
+lets this fork run past it; the shadow effect is the only thing lost.
+
+### Results with this fork's build
+
+| Test | Result |
+| --- | --- |
+| Cold start, first launch after install | No "not responding" dialog; runtime ready in < 1 s, UI up in ~4 s |
+| Touch | Works: taps, viewport selection, menus |
+| Text input from a keyboard | Works: typed `cube` into the topbar search field; Blender's on-screen keyboard appears for text fields |
+| Background | `PAUSE` writes the auto-save (`Auto-save written before backgrounding`), loop stops, resume keeps the session |
+| Render | EEVEE 64 samples in 3.0-5.5 s; `BlenderRenderService` starts and stops around every render |
+| `debug.blender.renderpass 1` | Works: `[ ] dynamic rendering` and `blender-rpfb` cache lines, i.e. the Vulkan 1.1 path on a 1.3 device |
+| UI language | Follows the device locale (Chinese UI on a Chinese tablet) |
+
+### Not tested here
+
+Physical keyboard hardware and non-US layouts, S Pen pressure and tilt, DeX and external
+displays, renders long enough to hit the screen timeout, the full feature set (Cycles, USD,
+ffmpeg), and the Turnip flavour.
+
+## Verification status
+
+Built as a release APK and run on the same Galaxy Tab S9+ (SM-X810, Android 16, Adreno 740,
+driver 0676.77.1, 12 GB, 4 KB pages). Current results:
+
+- **Functional suite:** 55 bpy checks, 54 PASS / 1 SKIP / 0 FAIL. The skip is `bpy.ops.ed.undo`,
+  which needs an interactive UI context; undo/redo is covered manually.
+- **42-minute industrial-workflow soak:** 2510 cycles, 278 EEVEE/Cycles renders, 139 save/export
+  operations, 0 errors, 0 crashes/ANRs. Keyboard, mouse, stylus and touchpad events were injected
+  over ADB every minute; the UI was screenshotted every five minutes.
+- **UI/lifecycle:** cold start, F3 search, F2 rename via the soft keyboard, File menu, Preferences,
+  file browser, opening a `.blend`, screen off/on, DPI change, 20 background cycles and reboot
+  persistence pass.
+- **Startup crash:** the public v5.3.0 APK (and the original port's APKs) SIGSEGV in
+  `vkCmdBindPipeline` on this device. The pipeline guard and the rewritten widget-shadow shader
+  make this fork start and draw the shadow.
+- **Render crash:** the original service-in-process design raised
+  `ForegroundServiceDidNotStartInTimeException` on the first EEVEE render. Moving
+  `BlenderRenderService` to `:render` fixes it; EEVEE, Cycles CPU and animation renders pass.
+
+Not tested: physical Bluetooth/USB keyboards, S Pen pressure/tilt, DeX and external displays,
+Mali/Xclipse GPUs, 16 KB-page devices, low-memory (<6 GiB) devices, audio output, and the Turnip
+flavour. The shadow-shader rewrite is point-for-point equivalent to the old table, but still needs
+a cross-GPU visual pass.
+
+## Not done yet
+
+The full gap list and the on-device test plan live in the tracking document outside this
+repository (`blender-android-roadmap.md`). Next items, in rough order:
+
+1. Foreground-service cleanup: pass `FOREGROUND_SERVICE_TYPE_DATA_SYNC` to `startForeground`,
+   reuse the service instead of starting/stopping it on every render, add progress/cancel.
+2. Tablet UX: auto-hide/resize around the IME, pinch-to-zoom, haptic feedback for long-press
+   right click, configurable gesture thresholds and palm rejection.
+3. Diagnostics: rotate startup logs, gate `debug.blender.testargs` out of release builds, add
+   thermal/battery/FPS fields and a crash handler/safe mode.
+4. Memory/performance: reduce the 1.39–1.65 GB PSS baseline and the ~2.7 MiB/min soak slope; idle
+   GPU cache trimming, cache limits, faster first-launch payload extraction.
+5. Packaging/platform: targetSdk 35/36, 16 KB zip/ELF verification, AAB/Asset Delivery or split
+   APKs, stable release signing, CI and a small device matrix.
+6. Extension installation: the extension framework spawns `cli/blender_ext.py` through
+   `subprocess`, which does not work on Android, so extensions can only be bundled at packaging
+   time.
+7. SAF (Storage Access Framework) so `MANAGE_EXTERNAL_STORAGE` is not required.
+8. Splitting the interface into two regions on one window, which is the only way a single native
+   window can show a reference image beside the model.
+9. The first-launch screen shows the splash only. A determinate progress indicator needs a launch
+   activity in front of `NativeActivity`.
+
+## Build notes for this fork
+
+Unchanged from [build_files/android/BUILDING.md](build_files/android/BUILDING.md), with two
+practical notes from building it on macOS:
+
+- The SDK ships NDK r30 as `ndk;30.0.14904198`, while `build_files/android/env.sh` looks for a
+  directory named `30.0.14904198-beta1`. Either symlink it or export
+  `ANDROID_NDK_VERSION=30.0.14904198` before building.
+- `platforms;android-35` may be installed under an unexpected directory name by the Homebrew
+  command line tools; `sdkmanager` then reports it as "inconsistent location". Move it to
+  `$ANDROID_HOME/platforms/android-35` and `sdkmanager "platforms;android-35"` sees it again.
