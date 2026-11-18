@@ -65,6 +65,9 @@ class GHOST_SystemSDL : public GHOST_System {
 
   Uint32 vulkan_surface_recreation_event_ = 0;
 #endif
+#ifdef __ANDROID__
+  static bool SDLCALL backgroundEventWatch(void *userdata, SDL_Event *event);
+#endif
 
   GHOST_TSuccess init() override;
 

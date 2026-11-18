@@ -23,6 +23,9 @@
     <!-- Network permission, used for both user online access and Tracy remote profiling. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Lets the Blender file browser open and save .blend files anywhere in shared storage. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+
     <application android:label="@string/app_name"
                  android:icon="@mipmap/ic_launcher"
                  android:roundIcon="@mipmap/ic_launcher_round"
@@ -56,6 +59,19 @@
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <data android:scheme="content" android:mimeType="application/octet-stream"/>
+            </intent-filter>
+            <!-- Match by extension for file managers that report an unknown MIME type for .blend files.
+                 pathPattern only matches dots from a fixed depth, hence the repeated patterns. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:scheme="content"/>
+                <data android:scheme="file"/>
+                <data android:host="*"/>
+                <data android:mimeType="*/*"/>
+                <data android:pathPattern=".*\\.blend"/>
+                <data android:pathPattern=".*\\..*\\.blend"/>
+                <data android:pathPattern=".*\\..*\\..*\\.blend"/>
             </intent-filter>
         </activity>
     </application>

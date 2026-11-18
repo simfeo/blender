@@ -32,6 +32,8 @@ struct Main;
  * call to avoid leaking memory when trying to exit from within operators.
  */
 void wm_exit_schedule_delayed(const bContext *C);
+/** Write #BLENDER_QUIT_FILE, used by "Recover Last Session". */
+void wm_quit_file_write(bContext *C);
 
 /**
  * Context is allowed to be NULL, do not free wm itself `lib_id.cc`.

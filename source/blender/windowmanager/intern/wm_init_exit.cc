@@ -550,6 +550,23 @@ void wm_exit_schedule_delayed(const bContext *C)
 
 void UV_clipboard_free();
 
+void wm_quit_file_write(bContext *C)
+{
+  Main *bmain = CTX_data_main(C);
+  char filepath[FILE_MAX];
+  const int fileflags = G.fileflags | G_FILE_COMPRESS | G_FILE_RECOVER_WRITE;
+
+  BLI_path_join(filepath, sizeof(filepath), BKE_tempdir_base(), BLENDER_QUIT_FILE);
+
+  ED_editors_flush_edits(bmain);
+  ED_image_internal_autosave_flush(bmain);
+
+  BlendFileWriteParams blend_file_write_params{};
+  if (BLO_write_file(bmain, filepath, fileflags, &blend_file_write_params, nullptr)) {
+    CLOG_INFO_NOCHECK(&LOG_BLEND, "Saved session recovery to \"%s\"", filepath);
+  }
+}
+
 void WM_exit_ex(bContext *C, const bool do_python_exit, const bool do_user_exit_actions)
 {
   wmWindowManager *wm = C ? CTX_wm_manager(C) : nullptr;
@@ -572,20 +589,7 @@ void WM_exit_ex(bContext *C, const bool do_python_exit, const bool do_user_exit_
     if (do_user_exit_actions) {
       wm_exit_project_data_store(CTX_data_main(C));
 
-      /* Save quit.blend. */
-      Main *bmain = CTX_data_main(C);
-      char filepath[FILE_MAX];
-      const int fileflags = G.fileflags | G_FILE_COMPRESS | G_FILE_RECOVER_WRITE;
-
-      BLI_path_join(filepath, sizeof(filepath), BKE_tempdir_base(), BLENDER_QUIT_FILE);
-
-      ED_editors_flush_edits(bmain);
-      ED_image_internal_autosave_flush(bmain);
-
-      BlendFileWriteParams blend_file_write_params{};
-      if (BLO_write_file(bmain, filepath, fileflags, &blend_file_write_params, nullptr)) {
-        CLOG_INFO_NOCHECK(&LOG_BLEND, "Saved session recovery to \"%s\"", filepath);
-      }
+      wm_quit_file_write(C);
     }
 
     WM_jobs_kill_all(wm);

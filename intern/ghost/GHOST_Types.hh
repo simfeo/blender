@@ -387,6 +387,11 @@ enum GHOST_TEventType {
 
   GHOST_kEventOpenMainFile, /* Needed for Cocoa to open double-clicked .blend file at startup. */
   GHOST_kEventNativeResolutionChange, /* Needed for Cocoa when window moves to other display. */
+  /**
+   * Dispatched synchronously before a mobile OS backgrounds the app, after which the process
+   * may be killed without warning. Used to save session recovery data.
+   */
+  GHOST_kEventApplicationWillEnterBackground,
 
   GHOST_kEventImeCompositionStart,
   GHOST_kEventImeComposition,

@@ -24,6 +24,8 @@
 #include "GHOST_EventButton.hh"
 #include "GHOST_EventCursor.hh"
 #include "GHOST_EventKey.hh"
+#include "GHOST_EventManager.hh"
+#include "GHOST_EventString.hh"
 #include "GHOST_EventWheel.hh"
 
 GHOST_SystemSDL::GHOST_SystemSDL() : GHOST_System()
@@ -47,6 +49,11 @@ GHOST_SystemSDL::GHOST_SystemSDL() : GHOST_System()
     throw std::runtime_error(SDL_GetError());
   }
 #endif
+#ifdef __ANDROID__
+  if (!SDL_AddEventWatch(backgroundEventWatch, this)) {
+    throw std::runtime_error(SDL_GetError());
+  }
+#endif
 
   SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
   SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
@@ -60,6 +67,9 @@ GHOST_SystemSDL::~GHOST_SystemSDL()
 #ifdef WITH_VULKAN_BACKEND
   SDL_RemoveEventWatch(vulkanLifecycleEventWatch, this);
 #endif
+#ifdef __ANDROID__
+  SDL_RemoveEventWatch(backgroundEventWatch, this);
+#endif
   SDL_Quit();
 }
 
@@ -71,6 +81,23 @@ bool SDLCALL GHOST_SystemSDL::vulkanLifecycleEventWatch(void *userdata, SDL_Even
     SDL_Event recreate_surface_event = {};
     recreate_surface_event.type = system->vulkan_surface_recreation_event_;
     SDL_PushEvent(&recreate_surface_event);
+  }
+  return true;
+}
+#endif
+
+#ifdef __ANDROID__
+bool SDLCALL GHOST_SystemSDL::backgroundEventWatch(void *userdata, SDL_Event *event)
+{
+  /* SDL sends this from its event pump on the main thread, then blocks until the app resumes,
+   * so a queued event would only be seen after resuming, if the process survives at all.
+   * Dispatch it right away instead. */
+  if (event->type == SDL_EVENT_WILL_ENTER_BACKGROUND && SDL_IsMainThread()) {
+    GHOST_SystemSDL *system = static_cast<GHOST_SystemSDL *>(userdata);
+    const GHOST_Event background_event(system->getMilliSeconds(),
+                                       GHOST_kEventApplicationWillEnterBackground,
+                                       system->window_manager_->getActiveWindow());
+    system->getEventManager()->dispatchEvent(&background_event);
   }
   return true;
 }
@@ -671,6 +698,21 @@ void GHOST_SystemSDL::processEvent(SDL_Event *sdl_event)
       break;
     }
 
+#ifdef __ANDROID__
+    /* Sent by BlenderActivity when a .blend is opened from another app while Blender runs. */
+    case SDL_EVENT_DROP_FILE: {
+      const SDL_DropEvent &sdl_sub_evt = sdl_event->drop;
+      GHOST_IWindow *window = window_manager_->getActiveWindow();
+      if (window && sdl_sub_evt.data && sdl_sub_evt.data[0] != '\0') {
+        g_event = std::make_unique<GHOST_EventString>(SDL_NS_TO_MS(sdl_sub_evt.timestamp),
+                                                      GHOST_kEventOpenMainFile,
+                                                      window,
+                                                      strdup(sdl_sub_evt.data));
+      }
+      break;
+    }
+#endif
+
     case SDL_EVENT_MOUSE_MOTION: {
       const SDL_MouseMotionEvent &sdl_sub_evt = sdl_event->motion;
       if (sdl_sub_evt.which == SDL_PEN_MOUSEID) {
@@ -1044,3 +1086,12 @@ uint64_t GHOST_SystemSDL::getMilliSeconds() const
 {
   return SDL_GetTicks();
 }
+
+#ifdef __ANDROID__
+/* Declared by the window manager, which cannot include GHOST's private headers: Python's
+ * `webbrowser` finds no browser on Android, so `WM_OT_platform_url_open` comes here. */
+extern "C" bool GHOST_android_open_url(const char *url)
+{
+  return SDL_OpenURL(url);
+}
+#endif

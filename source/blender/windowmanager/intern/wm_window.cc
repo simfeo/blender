@@ -1831,6 +1831,14 @@ static bool ghost_event_proc(const GHOST_IEvent *ghost_event, GHOST_TUserDataPtr
     return true;
   }
 
+  if (type == GHOST_kEventApplicationWillEnterBackground) {
+    /* The OS may now kill the process without notice; keep "Recover Last Session" usable. */
+    if (wm->init_flag & WM_INIT_FLAG_WINDOW) {
+      wm_quit_file_write(C);
+    }
+    return true;
+  }
+
   GHOST_TEventDataPtr data = ghost_event->getData();
   const uint64_t event_time_ms = ghost_event->getTime();
 

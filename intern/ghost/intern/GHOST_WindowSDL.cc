@@ -16,6 +16,7 @@
 #endif
 
 #include <cassert>
+#include <cstdlib>
 
 GHOST_WindowSDL::GHOST_WindowSDL(GHOST_SystemSDL *system,
                                  const char *title,
@@ -690,7 +691,14 @@ GHOST_TSuccess GHOST_WindowSDL::setWindowCursorVisibility(bool visible)
 uint16_t GHOST_WindowSDL::getDPIHint()
 {
 #ifdef __ANDROID__
-  return 240;
+  /* BlenderActivity may shrink the surface buffers; fewer pixels for the same screen means a
+   * proportionally lower density, else the UI would be drawn at twice its physical size. */
+  static const int divisor = []() {
+    const char *value = getenv("BLENDER_ANDROID_RENDER_DIVISOR");
+    const int v = value ? atoi(value) : 1;
+    return (v >= 1 && v <= 4) ? v : 1;
+  }();
+  return uint16_t(240 / divisor);
 #endif
 
   SDL_DisplayID display_id = SDL_GetDisplayForWindow(sdl_win_);

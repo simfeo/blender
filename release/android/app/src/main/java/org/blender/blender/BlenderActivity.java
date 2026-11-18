@@ -1,9 +1,15 @@
 package org.blender.blender;
 
+import android.app.ActivityManager;
+import android.content.Context;
 import android.content.res.AssetManager;
 import android.content.Intent;
+import android.database.Cursor;
 import android.net.Uri;
+import android.provider.DocumentsContract;
 import android.os.Bundle;
+import android.os.Environment;
+import android.provider.Settings;
 import android.system.Os;
 import android.util.Log;
 import android.view.View;
@@ -20,6 +26,7 @@ import java.util.Collections;
 import java.util.List;
 
 import org.libsdl.app.SDLActivity;
+import org.libsdl.app.SDLSurface;
 
 /**
  * Main Blender Activity, extending SDLActivity.
@@ -60,27 +67,130 @@ public class BlenderActivity extends SDLActivity {
             Collections.addAll(arguments, extraArguments.trim().split("\\s+"));
         }
 
-        /* Support opening a .blend file from an Android file browser, copying the file from the opening itent (if any)
-           to app-private storage to access the file via a normal path, and add the resulting path to the argument list.*/
-        try {
-            /* TODO: Handle file intents received while Blender is already running. */
-            String blendFile = copyBlendFileFromIntent(intent);
-            if (blendFile != null) {
-                arguments.add(blendFile);
-            }
-        }
-        catch (IOException e) {
-            Log.e(LOG_TAG, "Failed to copy blend file from Android file browser", e);
+        if (startupBlendFile != null) {
+            arguments.add(startupBlendFile);
         }
         return arguments.toArray(new String[0]);
     }
 
-    private String copyBlendFileFromIntent(Intent intent) throws IOException {
-        Uri uri = Intent.ACTION_VIEW.equals(intent.getAction()) ? intent.getData() : null;
+    /* Resolved in onCreate(), before SDLActivity would forward the intent's raw URI path as a drop event. */
+    private String startupBlendFile = null;
+
+    /* Map an incoming .blend to a path Blender can open: the original file when it is reachable in shared
+     * storage (so saving and relative paths work), otherwise a private copy. */
+    private String blendFileFromIntent(Intent intent) {
+        Uri uri = (intent != null && Intent.ACTION_VIEW.equals(intent.getAction())) ? intent.getData() : null;
         if (uri == null) {
             return null;
         }
+        String path = sharedStoragePathFromUri(uri);
+        if (path != null) {
+            Log.i(LOG_TAG, "Opening incoming .blend file in place: " + path);
+            return path;
+        }
+        try {
+            return copyBlendFileFromUri(uri);
+        }
+        catch (IOException e) {
+            Log.e(LOG_TAG, "Failed to copy blend file from Android file browser", e);
+            return null;
+        }
+    }
 
+    private String sharedStoragePathFromUri(Uri uri) {
+        if (!Environment.isExternalStorageManager()) {
+            return null;
+        }
+        if ("file".equals(uri.getScheme())) {
+            return readableFile(uri.getPath());
+        }
+        if (!"content".equals(uri.getScheme())) {
+            return null;
+        }
+
+        /* Most file managers and MediaStore still expose the legacy `_data` column. */
+        try (Cursor cursor = getContentResolver().query(uri, new String[] {"_data"}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst() && !cursor.isNull(0)) {
+                String path = readableFile(cursor.getString(0));
+                if (path != null) {
+                    return path;
+                }
+            }
+        }
+        catch (Exception e) {
+            /* Providers without `_data` throw here, fall through to the heuristics below. */
+        }
+
+        File root = Environment.getExternalStorageDirectory();
+        if (DocumentsContract.isDocumentUri(this, uri)
+            && "com.android.externalstorage.documents".equals(uri.getAuthority()))
+        {
+            String[] parts = DocumentsContract.getDocumentId(uri).split(":", 2);
+            if (parts.length == 2 && "primary".equalsIgnoreCase(parts[0])) {
+                return readableFile(new File(root, parts[1]).getPath());
+            }
+        }
+
+        /* FileProvider URIs (e.g. Samsung My Files) embed the storage-relative path after a provider
+         * specific prefix: try each suffix of the URI path against the shared storage root. */
+        String uriPath = uri.getPath();
+        if (uriPath != null) {
+            for (int i = uriPath.indexOf('/'); i >= 0; i = uriPath.indexOf('/', i + 1)) {
+                String path = readableFile(new File(root, uriPath.substring(i + 1)).getPath());
+                if (path != null) {
+                    return path;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static String readableFile(String path) {
+        if (path == null) {
+            return null;
+        }
+        File file = new File(path);
+        return (file.isFile() && file.canRead()) ? file.getAbsolutePath() : null;
+    }
+
+    private int renderScaleDivisor = 1;
+
+    /* Devices under 6GB cannot hold full-resolution targets next to the rest of the system.
+     * Override with `adb shell setprop debug.blender.renderdiv N` (1..4). */
+    private int computeRenderScaleDivisor() {
+        try {
+            String value = (String) Class.forName("android.os.SystemProperties")
+                .getMethod("get", String.class).invoke(null, "debug.blender.renderdiv");
+            if (value != null && !value.isEmpty()) {
+                int v = Integer.parseInt(value.trim());
+                if (v >= 1 && v <= 4) {
+                    return v;
+                }
+            }
+        }
+        catch (Exception e) {
+            /* No override available, use the memory based default. */
+        }
+        ActivityManager.MemoryInfo info = new ActivityManager.MemoryInfo();
+        ((ActivityManager) getSystemService(ACTIVITY_SERVICE)).getMemoryInfo(info);
+        return info.totalMem < 6L * 1024 * 1024 * 1024 ? 2 : 1;
+    }
+
+    @Override
+    protected SDLSurface createSDLSurface(Context context) {
+        return new BlenderSurface(context, renderScaleDivisor);
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        String blendFile = blendFileFromIntent(intent);
+        if (blendFile != null) {
+            SDLActivity.onNativeDropFile(blendFile);
+        }
+    }
+
+    private String copyBlendFileFromUri(Uri uri) throws IOException {
         File incomingDir = new File(getCacheDir(), "incoming");
         deleteRecursive(incomingDir);
         Files.createDirectories(incomingDir.toPath());
@@ -207,10 +317,36 @@ public class BlenderActivity extends SDLActivity {
             homeDir.mkdir();
             Os.setenv("HOME", homeDir.getAbsolutePath(), true);
             Os.setenv("TMPDIR", getCacheDir().getAbsolutePath(), true);
+
+            /* GHOST scales its DPI hint by this so the UI keeps its physical size. */
+            renderScaleDivisor = computeRenderScaleDivisor();
+            Os.setenv("BLENDER_ANDROID_RENDER_DIVISOR", Integer.toString(renderScaleDivisor), true);
+            Log.i(LOG_TAG, "Render scale divisor: " + renderScaleDivisor);
         } catch (Exception e) {
             throw new RuntimeException("Failed to extract Blender runtime files", e);
         }
 
+        /* SDLActivity.onCreate() forwards any intent data path as a drop event, which for content URIs
+         * is not a file path. The file is opened through the arguments instead. */
+        startupBlendFile = blendFileFromIntent(getIntent());
+        if (getIntent() != null && getIntent().getData() != null) {
+            setIntent(new Intent(getIntent()).setData(null));
+        }
+
         super.onCreate(savedInstanceState);
+        requestAllFilesAccessIfNeeded();
+    }
+
+    private void requestAllFilesAccessIfNeeded() {
+        if (Environment.isExternalStorageManager()) {
+            return;
+        }
+        try {
+            startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                                     Uri.parse("package:" + getPackageName())));
+        }
+        catch (Exception e) {
+            Log.w(LOG_TAG, "Failed to open the all-files access settings", e);
+        }
     }
 }
