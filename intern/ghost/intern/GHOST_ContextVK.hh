@@ -171,24 +171,6 @@ class GHOST_ContextVK : public GHOST_Context {
    */
   GHOST_TSuccess initializeDrawingContext() override;
 
-#ifdef __ANDROID__
-  /**
-   * Rebuild the Vulkan surface (and swapchain) for a new ANativeWindow.
-   *
-   * Android destroys and recreates the window's native surface on events like
-   * doze/wake or rotation; the old swapchain then references a dead surface and
-   * presents nothing. Pass the new window (or nullptr on teardown) to recreate.
-   */
-  GHOST_TSuccess setAndroidNativeWindow(ANativeWindow *native_window);
-
- private:
-  /** Applied at the swap boundary (render thread) when the window was replaced. */
-  void applyAndroidSurfaceChange();
-  bool android_surface_dirty_ = false;
-
- public:
-#endif
-
   /**
    * Removes references to native handles from this context and then returns
    * \return GHOST_kSuccess if it is OK for the parent to release the handles and

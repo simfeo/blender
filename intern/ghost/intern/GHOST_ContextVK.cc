@@ -1099,13 +1099,6 @@ GHOST_TSuccess GHOST_ContextVK::swapBufferAcquire()
   GHOST_DeviceVK &device_vk = vulkan_instance->device.value();
   VkDevice vk_device = device_vk.vk_device;
 
-#ifdef __ANDROID__
-  /* Apply a pending native-window swap here, at the synchronized swap boundary. */
-  if (android_surface_dirty_) {
-    applyAndroidSurfaceChange();
-  }
-#endif
-
   /* This method is called after all the draw calls in the application, and it signals that
    * we are ready to both (1) submit commands for those draw calls to the device and
    * (2) begin building the next frame. It is assumed as an invariant that the submission fence
@@ -2280,81 +2273,6 @@ GHOST_TSuccess GHOST_ContextVK::initializeDrawingContext()
   active_context_ = this;
   return GHOST_kSuccess;
 }
-
-#ifdef __ANDROID__
-GHOST_TSuccess GHOST_ContextVK::setAndroidNativeWindow(ANativeWindow *native_window)
-{
-  /* Only record the change here; the actual surface/swapchain teardown must run
-   * on the render thread at the swap boundary (applyAndroidSurfaceChange), where
-   * the backend's submission thread is synchronized. Doing it here races the
-   * submission thread and corrupts the heap (double free). */
-  __android_log_print(ANDROID_LOG_INFO,
-                      "blender-surface",
-                      "setAndroidNativeWindow old=%p new=%p",
-                      (void *)native_window_,
-                      (void *)native_window);
-  native_window_ = native_window;
-  android_surface_dirty_ = true;
-  return GHOST_kSuccess;
-}
-
-void GHOST_ContextVK::applyAndroidSurfaceChange()
-{
-  __android_log_print(ANDROID_LOG_INFO,
-                      "blender-surface",
-                      "applyAndroidSurfaceChange window=%p surface=%p swapchain=%p",
-                      (void *)native_window_,
-                      (void *)surface_,
-                      (void *)swapchain_);
-  android_surface_dirty_ = false;
-  if (!vulkan_instance.has_value() || !vulkan_instance->device.has_value()) {
-    return;
-  }
-  GHOST_InstanceVK &instance_vk = vulkan_instance.value();
-  GHOST_DeviceVK &device_vk = instance_vk.device.value();
-  device_vk.wait_idle();
-
-  /* Retire the swapchain bound to the old surface. This must complete before the
-   * surface is destroyed (a surface may not be destroyed while a swapchain still
-   * references it). Unlike destroySwapchain() we keep frame_data_ intact, since
-   * recreateSwapchain() relies on it being non-empty. */
-  if (swapchain_ != VK_NULL_HANDLE) {
-    this->destroySwapchainPresentFences(swapchain_);
-    device_vk.functions.vkDestroySwapchainKHR(device_vk.vk_device, swapchain_, nullptr);
-    swapchain_ = VK_NULL_HANDLE;
-  }
-  for (GHOST_SwapchainImage &swapchain_image : swapchain_images_) {
-    swapchain_image.destroy(device_vk.vk_device, device_vk.functions);
-  }
-  swapchain_images_.clear();
-  image_count_ = 0;
-
-  if (surface_ != VK_NULL_HANDLE) {
-    volk::vkDestroySurfaceKHR(instance_vk.vk_instance, surface_, nullptr);
-    surface_ = VK_NULL_HANDLE;
-  }
-
-  /* Window torn down (backgrounded): leave the surface null; the swapchain is
-   * rebuilt when a new window arrives. */
-  if (native_window_ == nullptr) {
-    return;
-  }
-
-  VkAndroidSurfaceCreateInfoKHR info = {};
-  info.sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR;
-  info.window = native_window_;
-  if (volk::vkCreateAndroidSurfaceKHR(instance_vk.vk_instance, &info, nullptr, &surface_) !=
-      VK_SUCCESS)
-  {
-    surface_ = VK_NULL_HANDLE;
-    return;
-  }
-
-  /* Force swapBufferAcquire to rebuild the swapchain for the new surface. */
-  render_extent_ = {0, 0};
-  render_extent_min_ = {0, 0};
-}
-#endif
 
 GHOST_TSuccess GHOST_ContextVK::releaseNativeHandles()
 {

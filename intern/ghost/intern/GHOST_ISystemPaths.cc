@@ -16,8 +16,6 @@
 #  include "GHOST_SystemPathsWin32.hh"
 #elif defined(__APPLE__)
 #  include "GHOST_SystemPathsCocoa.hh"
-#elif defined(__ANDROID__)
-#  include "GHOST_SystemPathsAndroid.hh"
 #else
 #  include "GHOST_SystemPathsUnix.hh"
 #endif
@@ -32,8 +30,6 @@ GHOST_TSuccess GHOST_ISystemPaths::create()
     system_paths_ = new GHOST_SystemPathsWin32();
 #elif defined(__APPLE__)
     system_paths_ = new GHOST_SystemPathsCocoa();
-#elif defined(__ANDROID__)
-    system_paths_ = new GHOST_SystemPathsAndroid();
 #else
     system_paths_ = new GHOST_SystemPathsUnix();
 #endif
