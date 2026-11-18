@@ -25,6 +25,20 @@ else()
 
     if(NOT LIBDIR_LEN EQUAL 0)
       set(LIBDIR ${LIBDIR_ANDROID})
+      # Dependencies added in 5.3 that the Android libraries do not ship yet. Precompiled
+      # libraries make them required, so turn the features off until the libraries appear.
+      foreach(_lib_option jolt:WITH_JOLT opentimelineio:WITH_OPENTIMELINEIO ktx:WITH_KTX)
+        string(REPLACE ":" ";" _lib_option "${_lib_option}")
+        list(GET _lib_option 0 _lib)
+        list(GET _lib_option 1 _option)
+        if(${_option} AND NOT EXISTS ${LIBDIR}/${_lib})
+          message(STATUS "${LIBDIR}/${_lib} not found, disabling ${_option}")
+          set(${_option} OFF CACHE BOOL "" FORCE)
+        endif()
+      endforeach()
+      unset(_lib_option)
+      unset(_lib)
+      unset(_option)
     else()
       message(STATUS
         "Library directory \"${LIBDIR_ANDROID}\" is empty or does not exist."
