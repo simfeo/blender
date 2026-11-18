@@ -725,6 +725,21 @@ void blo_do_versions_503(FileData * /*fd*/, Library * /*lib*/, Main *bmain)
     }
   }
 
+  /* From the official android branch, where it took subversion 24 before 5.3.0 gave that number
+   * to the outliner change above. Kept on the same condition so it reaches the same files. */
+  if (!MAIN_VERSION_FILE_ATLEAST(bmain, 503, 24)) {
+    /* Align every existing topbar header region to the bottom to allow for safe area padding. */
+    for (wmWindowManager &wm : bmain->wm) {
+      for (wmWindow &win : wm.windows) {
+        for (ScrArea &area : win.global_areas.areabase) {
+          if (area.spacetype == SPACE_TOPBAR) {
+            BKE_area_find_region_type(&area, RGN_TYPE_HEADER)->alignment = RGN_ALIGN_BOTTOM;
+          }
+        }
+      }
+    }
+  }
+
   /**
    * Always bump subversion in BKE_blender_version.h when adding versioning
    * code here, and wrap it inside a MAIN_VERSION_FILE_ATLEAST check.

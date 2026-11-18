@@ -1637,9 +1637,7 @@ endif()
 # - WIN32
 # - APPLE
 
-if(ANDROID)
-  include(build_files/cmake/platform/platform_android.cmake)
-elseif(UNIX AND NOT APPLE)
+if((UNIX AND NOT APPLE) OR ANDROID)
   include(build_files/cmake/platform/platform_unix.cmake)
 elseif(WIN32)
   include(build_files/cmake/platform/platform_win32.cmake)
@@ -2541,13 +2539,16 @@ if(CMAKE_CROSSCOMPILING)
   if("${CMAKE_HOST_SYSTEM_NAME}" STREQUAL "Darwin")
     set(HOST_LIBDIR ${CMAKE_SOURCE_DIR}/lib/macos_arm64)
   elseif("${CMAKE_HOST_SYSTEM_NAME}" STREQUAL "Linux")
-    # The host processor, not the target: when cross compiling to Android
-    # CMAKE_SYSTEM_PROCESSOR is aarch64, which sent an x86_64 host looking for
-    # its tools in lib/linux_arm64 and left PYTHON_EXECUTABLE empty.
     if(${CMAKE_HOST_SYSTEM_PROCESSOR} STREQUAL "aarch64")
       set(HOST_LIBDIR ${CMAKE_SOURCE_DIR}/lib/linux_arm64)
     elseif(${CMAKE_HOST_SYSTEM_PROCESSOR} STREQUAL "x86_64")
       set(HOST_LIBDIR ${CMAKE_SOURCE_DIR}/lib/linux_x64)
+    endif()
+  elseif("${CMAKE_HOST_SYSTEM_NAME}" STREQUAL "Windows")
+    if(${CMAKE_HOST_SYSTEM_PROCESSOR} STREQUAL "ARM64")
+      set(HOST_LIBDIR ${CMAKE_SOURCE_DIR}/lib/windows_arm64)
+    else()
+      set(HOST_LIBDIR ${CMAKE_SOURCE_DIR}/lib/windows_x64)
     endif()
   else()
     message(FATAL_ERROR "Unsupported cross-compilation host.")
@@ -2558,24 +2559,36 @@ if(CMAKE_CROSSCOMPILING)
   # in host_tools.cmake or fetched from ${HOST_LIBDIR}) ran during compilation to use
   # the host platform's own libraries. Glob all available libraries in this case as we
   # cannot rely on the target specific libraries from PLATFORM_BUNDLED_LIBRARY_DIRS.
-  file(GLOB _host_library_dirs "${HOST_LIBDIR}/*/lib")
-  list(JOIN _host_library_dirs ":" _host_library_paths)
-
-  if("${CMAKE_HOST_SYSTEM_NAME}" STREQUAL "Darwin")
-    set(PLATFORM_ENV_BUILD
-      "DYLD_LIBRARY_PATH=\"${_host_library_paths}:$$DYLD_LIBRARY_PATH\""
-    )
+  if("${CMAKE_HOST_SYSTEM_NAME}" STREQUAL "Windows")
+    # Semicolons are escaped as CMake would otherwise read the path list as a list.
+    file(GLOB _host_library_dirs "${HOST_LIBDIR}/*/bin")
+    list(JOIN _host_library_dirs "\;" _host_library_paths)
+    string(REPLACE ";" "\\;" _host_env_path "$ENV{PATH}")
+    set(PLATFORM_ENV_BUILD "PATH=${_host_library_paths}\;${_host_env_path}")
+    unset(_host_env_path)
   else()
-    set(PLATFORM_ENV_BUILD
-      "LD_LIBRARY_PATH=\"${_host_library_paths}:$$LD_LIBRARY_PATH\""
-    )
+    file(GLOB _host_library_dirs "${HOST_LIBDIR}/*/lib")
+    list(JOIN _host_library_dirs ":" _host_library_paths)
+    if("${CMAKE_HOST_SYSTEM_NAME}" STREQUAL "Darwin")
+      set(PLATFORM_ENV_BUILD
+        "DYLD_LIBRARY_PATH=\"${_host_library_paths}:$$DYLD_LIBRARY_PATH\""
+      )
+    else()
+      set(PLATFORM_ENV_BUILD
+        "LD_LIBRARY_PATH=\"${_host_library_paths}:$$LD_LIBRARY_PATH\""
+      )
+    endif()
   endif()
 
   unset(_host_library_dirs)
   unset(_host_library_paths)
 
   # Override the Python executable for cross-compilation, fetching it from the host pre-compiled library directory.
-  file(GLOB PYTHON_EXECUTABLE "${HOST_LIBDIR}/python/bin/python3.[0-9]*")
+  if("${CMAKE_HOST_SYSTEM_NAME}" STREQUAL "Windows")
+    file(GLOB PYTHON_EXECUTABLE "${HOST_LIBDIR}/python/*/bin/python.exe")
+  else()
+    file(GLOB PYTHON_EXECUTABLE "${HOST_LIBDIR}/python/bin/python3.*")
+  endif()
 endif()
 
 
@@ -2616,6 +2629,14 @@ add_subdirectory(tests)
 
 if(WITH_BLENDER)
   add_subdirectory(source/creator)
+endif()
+
+
+# -----------------------------------------------------------------------------
+# Android Gradle Project Staging
+
+if(ANDROID)
+  include(build_files/cmake/platform/platform_android_gradle.cmake)
 endif()
 
 

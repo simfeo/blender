@@ -10,9 +10,17 @@ if(NOT WITH_LIBS_PRECOMPILED)
   unset(LIBDIR)
 else()
   if(NOT DEFINED LIBDIR AND ANDROID)
-    set(LIBDIR_ANDROID ${CMAKE_SOURCE_DIR}/lib/android_arm64)
+    # Map the Android ABI onto Blender's own architecture naming conventions,
+    # matching the directory the dependency builder harvests into.
+    if(ANDROID_ABI STREQUAL "arm64-v8a")
+      set(LIBDIR_ANDROID ${CMAKE_SOURCE_DIR}/lib/android_arm64)
+    elseif(ANDROID_ABI STREQUAL "x86_64")
+      set(LIBDIR_ANDROID ${CMAKE_SOURCE_DIR}/lib/android_x64)
+    else()
+      message(FATAL_ERROR "Unsupported Android ABI \"${ANDROID_ABI}\".")
+    endif()
 
-    file(GLOB LIBDIR_RESULT ${ANDROID_LIBDIR}/*)
+    file(GLOB LIBDIR_RESULT ${LIBDIR_ANDROID}/*)
     list(LENGTH LIBDIR_RESULT LIBDIR_LEN)
 
     if(NOT LIBDIR_LEN EQUAL 0)
@@ -169,7 +177,12 @@ endif()
 
 if(WITH_VULKAN_BACKEND)
   if(DEFINED LIBDIR)
-    if(NOT ANDROID)  # Android provides its own Vulkan Loader
+    if(ANDROID)
+      # Android provides its own Vulkan Loader, however we still require SPIR-V headers
+      # for shader name injection (since PR !162006). Manually set Vulkan include dirs
+      # in this sense, only contains SPIR-V headers on Android.
+      set(VULKAN_INCLUDE_DIRS "${LIBDIR}/vulkan/include")
+    else()
       if(NOT EXISTS "${LIBDIR}/vulkan")
         message(FATAL_ERROR "${LIBDIR}/vulkan is missing!")
       endif()
@@ -318,7 +331,7 @@ if(WITH_OPENAL)
 
   if(ANDROID AND OPENAL_FOUND)
     # Android NDK OpenSL ES library required by OpenAL
-    list(APPEND PLATFORM_LINKLIBS -lopensles)
+    list(APPEND PLATFORM_LINKLIBS -lOpenSLES)
   endif()
 endif()
 
@@ -1138,7 +1151,7 @@ unset(_IS_LINKER_DEFAULT)
 # Avoid conflicts with Mesa llvmpipe, Luxrender, and other plug-ins that may
 # use the same libraries as Blender with a different version or build options.
 set(PLATFORM_SYMBOLS_MAP ${CMAKE_SOURCE_DIR}/source/creator/symbols_unix.map)
-set(PLATFORM_LINKFLAGS_SYMBOL_HIDING "-Wl,--version-script='${PLATFORM_SYMBOLS_MAP}'")
+set(PLATFORM_LINKFLAGS_SYMBOL_HIDING "-Wl,--version-script=\"${PLATFORM_SYMBOLS_MAP}\"")
 
 # Don't use position independent executable for portable install since file
 # browsers can't properly detect blender as an executable then. Still enabled

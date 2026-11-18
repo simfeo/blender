@@ -341,13 +341,16 @@ if(WITH_PYTHON_MODULE)
   endif()
 
 elseif(ANDROID)
-  # NativeActivity loads libblender.so and calls android_main (via the glue's
-  # ANativeActivity_onCreate). Build a shared library rather than an executable.
+  list(APPEND SRC
+    creator_android.cc
+  )
+  list(APPEND LIB
+    bf::dependencies::optional::sdl
+  )
+
+  # Creates `libblender.so`, loaded by SDLActivity from the APK, which then calls
+  # the Android specific SDL main entry point in creator_android.cc.
   add_library(blender SHARED ${SRC})
-  set_target_properties(blender PROPERTIES OUTPUT_NAME blender)
-  # Force-keep the glue entry point (only the Android runtime references it),
-  # which pulls in android_main and the JNI bridge from bf_intern_ghost.
-  target_link_options(blender PRIVATE -Wl,-u,ANativeActivity_onCreate)
 else()
   add_executable(blender ${EXETYPE} ${SRC})
   if(WITH_CPU_CHECK)
@@ -2101,7 +2104,6 @@ endif()
 # -----------------------------------------------------------------------------
 # Setup link libraries
 
-add_dependencies(blender ${MAKESDNA_DEPENDENCY})
 target_link_libraries(blender PRIVATE ${LIB})
 unset(LIB)
 

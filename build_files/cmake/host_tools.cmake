@@ -25,16 +25,23 @@ if(CMAKE_CROSSCOMPILING)
   set(HOST_C_COMPILER "" CACHE STRING "C compiler for the host code generation tools")
   set(HOST_CXX_COMPILER "" CACHE STRING "C++ compiler for the host code generation tools")
 
-  # Forward every WITH_* cache variable so the host build's preprocessor
-  # state matches the target build's.
-  get_cmake_property(_host_tools_all_cache_vars CACHE_VARIABLES)
+  # These tools are built for and executed on the host, so they carry the host executable
+  # suffix rather than the target one CMAKE_EXECUTABLE_SUFFIX would give.
+  if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
+    set(HOST_TOOLS_EXE_SUFFIX ".exe")
+  else()
+    set(HOST_TOOLS_EXE_SUFFIX "")
+  endif()
+
+  # Forward every WITH_* variables so the host_tools build options match the target build.
+  get_cmake_property(_target_build_all_vars VARIABLES)
   set(_host_tools_forwarded_args "")
-  foreach(_v IN LISTS _host_tools_all_cache_vars)
+  foreach(_v IN LISTS _target_build_all_vars)
     if(_v MATCHES "^WITH_")
       list(APPEND _host_tools_forwarded_args "-D${_v}=${${_v}}")
     endif()
   endforeach()
-  unset(_host_tools_all_cache_vars)
+  unset(_target_build_all_vars)
 
   if(HOST_C_COMPILER)
     list(APPEND _host_tools_forwarded_args "-DCMAKE_C_COMPILER=${HOST_C_COMPILER}")
@@ -50,10 +57,10 @@ if(CMAKE_CROSSCOMPILING)
     --target shader_tool
   )
   set(_host_tools_byproducts
-    ${HOST_TOOLS_BIN_DIR}/makesdna
-    ${HOST_TOOLS_BIN_DIR}/makesrna
-    ${HOST_TOOLS_BIN_DIR}/datatoc
-    ${HOST_TOOLS_BIN_DIR}/shader_tool
+    ${HOST_TOOLS_BIN_DIR}/makesdna${HOST_TOOLS_EXE_SUFFIX}
+    ${HOST_TOOLS_BIN_DIR}/makesrna${HOST_TOOLS_EXE_SUFFIX}
+    ${HOST_TOOLS_BIN_DIR}/datatoc${HOST_TOOLS_EXE_SUFFIX}
+    ${HOST_TOOLS_BIN_DIR}/shader_tool${HOST_TOOLS_EXE_SUFFIX}
   )
 
   # Unlike other targets, msgfmt depends on WITH_INTERNATIONAL
@@ -62,7 +69,7 @@ if(CMAKE_CROSSCOMPILING)
       --target msgfmt
     )
     list(APPEND _host_tools_byproducts
-      ${HOST_TOOLS_BIN_DIR}/msgfmt
+      ${HOST_TOOLS_BIN_DIR}/msgfmt${HOST_TOOLS_EXE_SUFFIX}
     )
   endif()
 
@@ -89,17 +96,21 @@ if(CMAKE_CROSSCOMPILING)
   unset(_host_tools_targets)
   unset(_host_tools_byproducts)
 
-  set(MAKESDNA_EXECUTABLE     ${HOST_TOOLS_BIN_DIR}/makesdna)
-  set(MAKESRNA_EXECUTABLE     ${HOST_TOOLS_BIN_DIR}/makesrna)
-  set(DATATOC_EXECUTABLE      ${HOST_TOOLS_BIN_DIR}/datatoc)
-  set(SHADER_TOOL_EXECUTABLE  ${HOST_TOOLS_BIN_DIR}/shader_tool)
-  set(MSGFMT_EXECUTABLE       ${HOST_TOOLS_BIN_DIR}/msgfmt)
+  set(MAKESDNA_EXECUTABLE     ${HOST_TOOLS_BIN_DIR}/makesdna${HOST_TOOLS_EXE_SUFFIX})
+  set(MAKESRNA_EXECUTABLE     ${HOST_TOOLS_BIN_DIR}/makesrna${HOST_TOOLS_EXE_SUFFIX})
+  set(DATATOC_EXECUTABLE      ${HOST_TOOLS_BIN_DIR}/datatoc${HOST_TOOLS_EXE_SUFFIX})
+  set(SHADER_TOOL_EXECUTABLE  ${HOST_TOOLS_BIN_DIR}/shader_tool${HOST_TOOLS_EXE_SUFFIX})
+  set(MSGFMT_EXECUTABLE       ${HOST_TOOLS_BIN_DIR}/msgfmt${HOST_TOOLS_EXE_SUFFIX})
 
-  set(MAKESDNA_DEPENDENCY     host_tools)
-  set(MAKESRNA_DEPENDENCY     host_tools)
-  set(DATATOC_DEPENDENCY      host_tools)
-  set(SHADER_TOOL_DEPENDENCY  host_tools)
-  set(MSGFMT_DEPENDENCY       host_tools)
+  # For code generation tools, depend on both:
+  #   - `host_tools`, which provides *ordering* only, ensuring host tools are rebuilt before custom command tool generation targets.
+  #   - The actual tool executable, ensuring the tool is re-executed (and re-generates its files) if it was rebuilt.
+  # Only depending on `host_tools` ensure tools are rebuilt first but doesn't cause them to be re-executed on changes.
+  set(MAKESDNA_DEPENDENCY     host_tools ${MAKESDNA_EXECUTABLE})
+  set(MAKESRNA_DEPENDENCY     host_tools ${MAKESRNA_EXECUTABLE})
+  set(DATATOC_DEPENDENCY      host_tools ${DATATOC_EXECUTABLE})
+  set(SHADER_TOOL_DEPENDENCY  host_tools ${SHADER_TOOL_EXECUTABLE})
+  set(MSGFMT_DEPENDENCY       host_tools ${MSGFMT_EXECUTABLE})
 else()
   set(MAKESDNA_EXECUTABLE     "$<TARGET_FILE:makesdna>")
   set(MAKESRNA_EXECUTABLE     "$<TARGET_FILE:makesrna>")

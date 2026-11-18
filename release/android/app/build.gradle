@@ -29,7 +29,8 @@ android {
         targetSdkVersion = 36
 
         ndk {
-            abiFilters 'arm64-v8a'
+            // Corresponds to the CMake ANDROID_ABI, defined in platform_android_toolchain.cmake.
+            abiFilters project.property('blenderAbi').toString()
         }
     }
 
@@ -49,7 +50,9 @@ android {
 
     buildTypes {
         release {
+            // For development: Keep release build debuggable, allowing for package file access (among others).
             signingConfig = signingConfigs.debug
+            debuggable = true
         }
     }
 }

@@ -39,7 +39,16 @@ Other Convenience Targets
                     These must be manually removed from 'lib/' to go back to using the pre-compiled libraries.
 
 Cross-Compilation Targets
-   * android:       Build for Android via cross-compilation, applies to regular Blender builds and `deps` dependency builds.
+   When cross-compiling the build directory is suffixed with the target architecture.
+   For example 'make android x64 release' builds in '../build_android_x64_release'.
+   All targets below apply to both regular `all` Blender builds and `deps` dependency builds.
+
+   * android:       Build for Android via cross-compilation.
+
+   The target architecture may be selected by combining it with one of the architecture goals below.
+
+   * arm64:         Target the 64-bit ARM architecture (Android ABI 'arm64-v8a', default).
+   * x64:           Target the 64-bit x86 architecture (Android ABI 'x86_64').
 
 Project Files
    Generate project files for development environments.
@@ -197,15 +206,37 @@ BLENDER_DIR:=$(shell pwd -P)
 BUILD_TYPE:=Release
 BLENDER_IS_PYTHON_MODULE:=
 
+CMAKE_CONFIG_ENV:=
+
 # Android cross-compilation.
 ifneq "$(findstring android, $(MAKECMDGOALS))" ""
 	TARGET_OS:=Android
 	TARGET_OS_NCASE:=android
-	TARGET_CPU:=arm64
+	IS_CROSSCOMPILING:=1
 
+	# Target architecture selection, defaults to 64-bit ARM when no architecture goal is given.
+	TARGET_CPU:=$(strip $(filter arm64 x64, $(MAKECMDGOALS)))
+	ifeq ($(TARGET_CPU),)
+		TARGET_CPU:=arm64
+	endif
+
+	# Map the target architecture onto its Android ABI name, passed to the toolchain file below.
+	# See https://developer.android.com/ndk/guides/abis for the list of Android ABI names.
+	ifeq ($(TARGET_CPU),arm64)
+		ANDROID_ABI:=arm64-v8a
+	else
+		ANDROID_ABI:=x86_64
+	endif
+
+	# The pre-defined CMake config/cache files loaded by this Makefile are loaded *before* the Android toolchain file,
+	# which is only loaded on the first project() call. As such, these files cannot use the `ANDROID` variable.
+	# Provide an alternative environment variable for configuration scripts to use.
+	CMAKE_CONFIG_ENV:=BLENDER_TARGET_ANDROID=ON
+
+	# Use our own Android CMake toolchain file wrapper.
 	ANDROID_TOOLCHAIN_FILE:=$(BLENDER_DIR)/build_files/cmake/platform/platform_android_toolchain.cmake
-
-	CMAKE_CROSSCOMPILE_CONFIG_ARGS:=-DCMAKE_TOOLCHAIN_FILE=$(ANDROID_TOOLCHAIN_FILE)
+	CMAKE_CROSSCOMPILE_CONFIG_ARGS:=-DCMAKE_TOOLCHAIN_FILE=$(ANDROID_TOOLCHAIN_FILE) \
+									-DANDROID_ABI=$(ANDROID_ABI)
 
 	ifdef ANDROID_NDK_ROOT
 		CMAKE_CROSSCOMPILE_CONFIG_ARGS:=$(CMAKE_CROSSCOMPILE_CONFIG_ARGS) \
@@ -238,14 +269,25 @@ endif
 CMAKE_CONFIG_ARGS := $(BUILD_CMAKE_ARGS)
 
 ifndef BUILD_DIR
-	BUILD_DIR:=$(shell dirname "$(BLENDER_DIR)")/build_$(TARGET_OS_NCASE)
+	BUILD_DIR_BASE:=$(shell dirname "$(BLENDER_DIR)")/build_$(TARGET_OS_NCASE)
+
+	# When cross-compiling, several target architectures may be built from the same host for the
+	# same target OS. Suffix the Blender build directory with the target architecture so their
+	# CMake caches don't collide. Dependency build directories are already architecture specific.
+	ifdef IS_CROSSCOMPILING
+		BUILD_DIR:=$(BUILD_DIR_BASE)_$(TARGET_CPU)
+	else
+		BUILD_DIR:=$(BUILD_DIR_BASE)
+	endif
+else
+	BUILD_DIR_BASE:=$(BUILD_DIR)
 endif
 
 # Dependencies DIR's
 DEPS_SOURCE_DIR:=$(BLENDER_DIR)/build_files/build_environment
 
 ifndef DEPS_BUILD_DIR
-	DEPS_BUILD_DIR:=$(BUILD_DIR)/deps_$(TARGET_CPU)
+	DEPS_BUILD_DIR:=$(BUILD_DIR_BASE)/deps_$(TARGET_CPU)
 endif
 
 ifndef DEPS_INSTALL_DIR
@@ -416,7 +458,8 @@ endif
 # Macro for configuring cmake
 #
 
-CMAKE_CONFIG = cmake $(CMAKE_CONFIG_ARGS) \
+CMAKE_COMMAND = $(CMAKE_CONFIG_ENV) cmake
+CMAKE_CONFIG = $(CMAKE_COMMAND) $(CMAKE_CONFIG_ARGS) \
 					 $(CMAKE_CROSSCOMPILE_CONFIG_ARGS) \
                      -S"$(BLENDER_DIR)" \
                      -B"$(BUILD_DIR)" \
@@ -429,10 +472,11 @@ CMAKE_CONFIG = cmake $(CMAKE_CONFIG_ARGS) \
 
 # X11 specific.
 ifdef DISPLAY
-	CMAKE_CONFIG_TOOL = cmake-gui
+	CMAKE_CONFIG_TOOL_NAME = cmake-gui
 else
-	CMAKE_CONFIG_TOOL = ccmake
+	CMAKE_CONFIG_TOOL_NAME = ccmake
 endif
+CMAKE_CONFIG_TOOL = $(CMAKE_CONFIG_ENV) $(CMAKE_CONFIG_TOOL_NAME)
 
 
 # -----------------------------------------------------------------------------
@@ -496,7 +540,7 @@ deps: .FORCE
 	@echo
 	@echo Configuring dependencies in \"$(DEPS_BUILD_DIR)\", install to \"$(DEPS_INSTALL_DIR)\"
 
-	@cmake $(CMAKE_DEPS_CROSSCOMPILE_CONFIG_ARGS) \
+	@$(CMAKE_COMMAND) $(CMAKE_DEPS_CROSSCOMPILE_CONFIG_ARGS) \
 	       -S"$(DEPS_SOURCE_DIR)" \
 	       -B"$(DEPS_BUILD_DIR)" \
 	       -DHARVEST_TARGET=$(DEPS_INSTALL_DIR)
@@ -510,10 +554,31 @@ deps: .FORCE
 
 
 # -----------------------------------------------------------------------------
-# Cross-compilation targets
+# Cross-compilation targets and info banner
 
-android: .FORCE
-	@echo "Building for Android from host $(HOST_OS)."
+# Ensure the banner is displayed *before* normal Blender (`all`) and `deps` builds.
+ifdef IS_CROSSCOMPILING
+all deps: _cross_compile_info
+endif
+
+_cross_compile_info: .FORCE
+	@echo "Building for $(TARGET_OS) ($(TARGET_CPU)) from host $(HOST_OS)."
+
+# Platform targets
+android: _cross_compile_info
+
+# Allow simple `make <target_os>` invocations to build Blender, while making sure `make deps <target_os>` doesn't
+# also trigger an additional Blender build. Filter-out cross-compilation specifiers and only build if nothing remains.
+ifeq ($(strip $(filter-out android arm64 x64,$(MAKECMDGOALS))),)  # Compare with nothing.
+android: all
+endif
+
+# Target architecture selection goals, only meaningful combined with a cross-compilation
+# target such as `android`. When cross-compiling, make these targets silent via `@:`.
+arm64 x64: .FORCE
+ifdef IS_CROSSCOMPILING
+	@:
+endif
 
 
 # -----------------------------------------------------------------------------
@@ -561,7 +626,7 @@ project_qtcreator: .FORCE
 	$(PYTHON) tools/utils_ide/cmake_qtcreator_project.py --build-dir "$(BUILD_DIR)"
 
 project_eclipse: .FORCE
-	cmake -G"Eclipse CDT4 - Unix Makefiles" -S"$(BLENDER_DIR)" -B"$(BUILD_DIR)"
+	$(CMAKE_COMMAND) -G"Eclipse CDT4 - Unix Makefiles" -S"$(BLENDER_DIR)" -B"$(BUILD_DIR)"
 
 
 # -----------------------------------------------------------------------------
@@ -674,7 +739,7 @@ source_archive: .FORCE
 	@$(PYTHON) ./build_files/utils/make_source_archive.py
 
 source_archive_complete: .FORCE
-	@cmake \
+	@$(CMAKE_COMMAND) \
 	    -S "$(BLENDER_DIR)/build_files/build_environment" -B"$(BUILD_DIR)/source_archive" \
 	    -DCMAKE_BUILD_TYPE_INIT:STRING=$(BUILD_TYPE) -DPACKAGE_USE_UPSTREAM_SOURCES=OFF -DPACKAGE_DOWNLOAD_ONLY=ON
 # This assumes the CMake build_environment `PACKAGE_DIR` variable wasn't modified:

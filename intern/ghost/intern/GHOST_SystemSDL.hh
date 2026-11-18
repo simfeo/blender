@@ -60,6 +60,12 @@ class GHOST_SystemSDL : public GHOST_System {
   GHOST_TSuccess disposeContext(GHOST_IContext *context) override;
 
  private:
+#ifdef WITH_VULKAN_BACKEND
+  static bool SDLCALL vulkanLifecycleEventWatch(void *userdata, SDL_Event *event);
+
+  Uint32 vulkan_surface_recreation_event_ = 0;
+#endif
+
   GHOST_TSuccess init() override;
 
   GHOST_IWindow *createWindow(const char *title,
@@ -79,6 +85,9 @@ class GHOST_SystemSDL : public GHOST_System {
   bool generateWindowExposeEvents();
 
   void processEvent(SDL_Event *sdl_event);
+  void processPenEvent(const SDL_Event &sdl_event);
+
+  GHOST_TabletData pen_tablet_data_ = {};
 
   /** The vector of windows that need to be updated. */
   std::vector<GHOST_WindowSDL *> dirty_windows_;
