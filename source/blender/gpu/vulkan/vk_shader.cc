@@ -1522,6 +1522,12 @@ VkPipeline VKShader::ensure_and_get_graphics_pipeline(
       graphics_info, use_static_cache, vk_pipeline_base_, name_get(), pipeline_created);
 
   UNUSED_VARS_NDEBUG(pipeline_created);
+  if (vk_pipeline == VK_NULL_HANDLE && !graphics_pipeline_failed_warned_) {
+    graphics_pipeline_failed_warned_ = true;
+    CLOG_WARN(&LOG,
+              "Graphics pipeline for `%s` could not be created; its draws will be skipped",
+              name_get().c_str());
+  }
 #ifndef NDEBUG
   if (has_precompiled_pipelines_ && pipeline_created) {
     /* Sanity check: Used to detect mismatches between shader create info states and actual used

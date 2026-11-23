@@ -85,6 +85,9 @@ class VKDrawNode : public VKDrawNodeInfo<VKNodeType::DRAW,
                       Span<uint8_t> storage_push_constants,
                       VKBoundPipelines &r_bound_pipelines) override
   {
+    if (data.graphics.pipeline_data.vk_pipeline == VK_NULL_HANDLE) {
+      return;
+    }
     vk_pipeline_dynamic_graphics_build_commands(command_buffer, data.graphics, r_bound_pipelines);
     vk_pipeline_data_build_commands(command_buffer,
                                     data.graphics.pipeline_data,
