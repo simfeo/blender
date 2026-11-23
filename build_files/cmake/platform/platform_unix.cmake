@@ -532,7 +532,30 @@ if(WITH_EMBREE)
 endif()
 add_bundled_libraries(embree/lib)
 
-if(WITH_OPENIMAGEDENOISE)
+if(ANDROID AND WITH_OPENIMAGEDENOISE)
+  # The prebuilt OIDN is shared and dlopens its CPU module by a versioned name,
+  # which an APK never installs, so device creation fails. Link the static build
+  # from build_files/android/build_oidn.sh instead; default to its install prefix.
+  get_filename_component(_oidn_default_root
+    "${CMAKE_SOURCE_DIR}/../blender_build_android/oidn-deps/install-2.5.0" ABSOLUTE)
+  if(NOT ANDROID_OIDN_ROOT AND EXISTS "${_oidn_default_root}/lib/libOpenImageDenoise.a")
+    set(ANDROID_OIDN_ROOT "${_oidn_default_root}" CACHE PATH "Static OpenImageDenoise install")
+  endif()
+  unset(_oidn_default_root)
+endif()
+
+if(WITH_OPENIMAGEDENOISE AND ANDROID AND ANDROID_OIDN_ROOT)
+  # The static build is split across archives whose link order matters; its own
+  # CMake package encodes that graph and pulls in TBB. find_package re-roots
+  # under LIBDIR where the shared package would win, so name the directory.
+  file(GLOB _oidn_package_dir "${ANDROID_OIDN_ROOT}/lib/cmake/OpenImageDenoise*")
+  set(OpenImageDenoise_DIR ${_oidn_package_dir} CACHE PATH "" FORCE)
+  unset(_oidn_package_dir)
+  find_package(OpenImageDenoise CONFIG REQUIRED)
+  set(OPENIMAGEDENOISE_INCLUDE_DIRS ${ANDROID_OIDN_ROOT}/include)
+  set(OPENIMAGEDENOISE_LIBRARIES OpenImageDenoise)
+  set(OPENIMAGEDENOISE_FOUND ON)
+elseif(WITH_OPENIMAGEDENOISE)
   find_package_wrapper(OpenImageDenoise)
   set_and_warn_library_found("OpenImageDenoise" OPENIMAGEDENOISE_FOUND WITH_OPENIMAGEDENOISE)
   add_bundled_libraries(openimagedenoise/lib)
