@@ -2972,20 +2972,16 @@ void wm_window_raise(wmWindow *win)
 /** \name Window Buffers
  * \{ */
 
-bool wm_window_swap_buffer_acquire(wmWindow *win)
+void wm_window_swap_buffer_acquire(wmWindow *win)
 {
   GHOST_IWindow *ghost_window = static_cast<GHOST_IWindow *>(win->runtime->ghostwin);
   ghost_window->swapBufferAcquire();
-  return !ghost_window->getDrawingContext()->canReuseBackBuffer();
 }
 
 void wm_window_swap_buffer_release(wmWindow *win)
 {
   GHOST_IWindow *ghost_window = static_cast<GHOST_IWindow *>(win->runtime->ghostwin);
   ghost_window->swapBufferRelease();
-#if defined(__ANDROID__) && defined(WITH_VULKAN_BACKEND)
-  win->runtime->last_present_time = BLI_time_now_seconds();
-#endif
 }
 
 void wm_window_set_swap_interval(wmWindow *win, int interval)
