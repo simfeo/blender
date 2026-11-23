@@ -1844,6 +1844,13 @@ void blo_do_versions_userdef(UserDef *userdef)
     }
   }
 
+  /* Android demo override: Add Poly Haven remote asset library. */
+  BKE_preferences_remote_asset_library_add(
+      userdef, "Poly Haven", "https://api.polyhaven.com/bl_repo", nullptr);
+
+  /* Android demo override: Always enable Python script auto-execution. */
+  userdef->flag &= ~USER_SCRIPT_AUTOEXEC_DISABLE;
+
   /**
    * Always bump subversion in BKE_blender_version.h when adding versioning
    * code here, and wrap it inside a USER_VERSION_ATLEAST check.

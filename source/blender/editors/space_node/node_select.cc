@@ -163,7 +163,7 @@ bNode *node_under_mouse_get(const SpaceNode &snode, const float2 mouse)
   return nullptr;
 }
 
-static bool is_position_over_node_or_socket(SpaceNode &snode, ARegion &region, const float2 &mouse)
+bool node_or_socket_isect_mouse(SpaceNode &snode, ARegion &region, const float2 &mouse)
 {
   if (node_under_mouse_get(snode, mouse)) {
     return true;
@@ -184,7 +184,7 @@ static bool is_event_over_node_or_socket(const bContext &C, const wmEvent &event
 
   float2 mouse;
   ui::view2d_region_to_view(&region.v2d, mval.x, mval.y, &mouse.x, &mouse.y);
-  return is_position_over_node_or_socket(snode, region, mouse);
+  return node_or_socket_isect_mouse(snode, region, mouse);
 }
 
 void node_socket_select(bNode *node, bNodeSocket &sock)

@@ -925,8 +925,10 @@ bool popup_menu_end_or_cancel(bContext *C, PopupMenu *pup);
 Layout *popup_menu_layout(PopupMenu *pup);
 
 void popup_menu_reports(bContext *C, ReportList *reports) ATTR_NONNULL();
-wmOperatorStatus popup_menu_invoke(bContext *C, const char *idname, ReportList *reports)
-    ATTR_NONNULL(1, 2);
+wmOperatorStatus popup_menu_invoke(bContext *C,
+                                   const char *idname,
+                                   ReportList *reports,
+                                   const int anchor_xy[2] = nullptr) ATTR_NONNULL(1, 2);
 
 /**
  * If \a block is displayed in a popup menu, tag it for closing.
@@ -939,6 +941,9 @@ void popup_menu_close(const Block *block, bool is_cancel = false);
  * block. Convenience since the block may not be available.
  */
 void popup_menu_close_from_but(const Button *but, bool is_cancel = false);
+
+/** Close an open menu by its type identifier, returning whether it was found. */
+bool popup_menu_close_by_name(bContext *C, wmWindow *win, const char *idname);
 
 /**
  * Allow setting menu return value from externals.
@@ -1156,6 +1161,7 @@ void blocklist_free_inactive(const bContext *C, ARegion *region);
  */
 void UI_screen_free_active_but_highlight(const bContext *C, bScreen *screen);
 void UI_region_free_active_but_all(bContext *C, ARegion *region);
+void UI_region_clear_hover(const bContext *C, ARegion *region);
 
 void block_region_set(Block *block, ARegion *region);
 

@@ -233,6 +233,17 @@ static wmOperatorStatus view_pan_exec(bContext *C, wmOperator *op)
 /* set up modal operator and relevant settings */
 static wmOperatorStatus view_pan_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
+  ScrArea *area = CTX_wm_area(C);
+  ARegion *region = CTX_wm_region(C);
+  /* A one-finger touch pans most 2D views while also emulating a regular drag. Asset items need
+   * that drag without moving their containing view, so these views retain two-finger panning. */
+  if (((area && area->spacetype == SPACE_FILE) ||
+       (region && region->regiontype == RGN_TYPE_ASSET_SHELF)) &&
+      (event->flag & WM_EVENT_TOUCH_ONE_FINGER))
+  {
+    return OPERATOR_FINISHED;
+  }
+
   wmWindow *window = CTX_wm_window(C);
 
   /* set up customdata */
@@ -2156,6 +2167,9 @@ static wmOperatorStatus scroller_activate_modal(bContext *C, wmOperator *op, con
  * should have occurred, so check if it happened in scrollbar */
 static wmOperatorStatus scroller_activate_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
+  if (event->flag & WM_EVENT_TOUCH) {
+    return OPERATOR_PASS_THROUGH;
+  }
   ARegion *region = CTX_wm_region(C);
   View2D *v2d = &region->v2d;
 

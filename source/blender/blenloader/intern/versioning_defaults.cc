@@ -325,6 +325,26 @@ static void blo_update_defaults_screen(bScreen *screen,
       }
     }
   }
+
+  /* Android demo Grease Pencil templates overrides
+   *  - Use solid view (EEVEE lags)
+   *  - Lock View rotation to prevent 1 finger orbiting from exiting the camera. */
+  if (app_template && STR_ELEM(app_template, "2D_Animation", "Storyboarding")) {
+    for (ScrArea &area : screen->areabase) {
+      if (area.spacetype == SPACE_VIEW3D) {
+        View3D *v3d = area.spacedata.first_as<View3D>();
+
+        v3d->shading.type = OB_SOLID;
+
+        for (ARegion &region : area.regionbase) {
+          if (region.regiontype == RGN_TYPE_WINDOW) {
+            RegionView3D *rv3d = static_cast<RegionView3D *>(region.regiondata);
+            rv3d->viewlock |= RV3D_LOCK_ROTATION;
+          }
+        }
+      }
+    }
+  }
 }
 
 void BLO_update_defaults_workspace(WorkSpace *workspace, const char *app_template)

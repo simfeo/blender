@@ -57,6 +57,12 @@ class GHOST_IContext {
    */
   virtual GHOST_TSuccess swapBufferAcquire() = 0;
 
+  /** Whether the previous frame can be reused after #swapBufferAcquire. */
+  virtual bool canReuseBackBuffer() const
+  {
+    return false;
+  }
+
   /**
    * Swaps front and back buffers of a window.
    * \return A boolean success indicator.

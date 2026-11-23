@@ -14,6 +14,8 @@
 
 #include "WM_api.hh"
 
+#include "RNA_access.hh"
+
 #include "ED_screen.hh"
 
 #include "view3d_intern.hh"
@@ -369,7 +371,30 @@ static wmOperatorStatus viewrotate_invoke_impl(bContext *C,
 
 static wmOperatorStatus viewrotate_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
-  return view3d_navigate_invoke_impl(C, op, event, &ViewOpsType_rotate);
+  if (event->type == MOUSEROTATE && (event->flag & WM_EVENT_TOUCH_TWO_FINGERS)) {
+    RegionView3D *rv3d = CTX_wm_region_view3d(C);
+    if (rv3d->persp != RV3D_CAMOB || CTX_data_mode_enum(C) != CTX_MODE_PAINT_GREASE_PENCIL) {
+      return OPERATOR_CANCELLED;
+    }
+
+    /* Trackpad touch rotation events use five units per degree. */
+    const float angle = DEG2RADF(float(event->xy[0] - event->prev_xy[0]) / 5.0f);
+    PointerRNA ptr = WM_operator_properties_create("VIEW3D_OT_view_roll");
+    RNA_float_set(&ptr, "angle", angle);
+    const wmOperatorStatus ret = WM_operator_name_call(
+        C, "VIEW3D_OT_view_roll", wm::OpCallContext::ExecDefault, &ptr, nullptr);
+    WM_operator_properties_free(&ptr);
+    return ret;
+  }
+
+  /* Depending on the navigation preferences, unmodified trackpad-pan events can be mapped to
+   * view rotation. Two-finger touch panning always moves the view. */
+  const ViewOpsType *nav_type = (event->flag & WM_EVENT_TOUCH_TWO_FINGERS) ? &ViewOpsType_move :
+                                                                             &ViewOpsType_rotate;
+  if (!nav_type->poll_fn(C)) {
+    return OPERATOR_CANCELLED;
+  }
+  return view3d_navigate_invoke_impl(C, op, event, nav_type);
 }
 
 void VIEW3D_OT_rotate(wmOperatorType *ot)
@@ -382,7 +407,9 @@ void VIEW3D_OT_rotate(wmOperatorType *ot)
   /* API callbacks. */
   ot->invoke = viewrotate_invoke;
   ot->modal = view3d_navigate_modal_fn;
-  ot->poll = view3d_rotation_poll;
+  /* Android demo workaround: Two-finger touch events mapped to rotation pan or roll instead.
+   * Check the navigation locks in invoke, once the gesture type is known. */
+  ot->poll = ED_operator_region_view3d_active;
   ot->cancel = view3d_navigate_cancel_fn;
 
   /* flags */

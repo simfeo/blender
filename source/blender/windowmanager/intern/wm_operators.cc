@@ -113,6 +113,7 @@
 #include "wm_event_system.hh"
 #include "wm_event_types.hh"
 #include "wm_files.hh"
+#include "wm_modifier_wheel.hh"
 #include "wm_window.hh"
 
 #ifdef WITH_XR_OPENXR
@@ -2700,6 +2701,7 @@ struct RadialControl {
   gpu::Texture *texture = nullptr;
   ListBaseT<wmPaintCursor> orig_paintcursors = {};
   bool use_secondary_tex = false;
+  bool wait_for_pen = false;
   void *cursor = nullptr;
   NumInput num_input = {};
   int init_event = 0;
@@ -2923,6 +2925,9 @@ static void radial_control_paint_cursor(bContext *C,
                                         void *customdata)
 {
   RadialControl *rc = static_cast<RadialControl *>(customdata);
+  if (rc->wait_for_pen) {
+    return;
+  }
   const uiStyle *style = ui::style_get();
   const uiFontStyle *fstyle = &style->widget;
   const int fontid = fstyle->uifont_id;
@@ -3386,6 +3391,7 @@ static wmOperatorStatus radial_control_invoke(bContext *C, wmOperator *op, const
   }
 
   rc->current_value = rc->initial_value;
+  rc->wait_for_pen = RNA_boolean_get(op->ptr, "use_pen");
   radial_control_set_initial_mouse(rc, event);
   radial_control_set_tex(rc);
 
@@ -3454,6 +3460,20 @@ static void radial_control_cancel(bContext *C, wmOperator *op)
 static wmOperatorStatus radial_control_modal(bContext *C, wmOperator *op, const wmEvent *event)
 {
   RadialControl *rc = static_cast<RadialControl *>(op->customdata);
+  if (RNA_boolean_get(op->ptr, "use_pen") && ISMOUSE(event->type)) {
+    if (!WM_event_is_tablet(event) || (event->flag & WM_EVENT_CURSOR_REFRESH)) {
+      return OPERATOR_RUNNING_MODAL;
+    }
+    /* Ignore the menu selection's release and wait for a new press after positioning. */
+    if (ISMOUSE_BUTTON(event->type) && (event->val != KM_PRESS || rc->wait_for_pen)) {
+      return OPERATOR_RUNNING_MODAL;
+    }
+  }
+  if (rc->wait_for_pen && event->type == MOUSEMOVE) {
+    /* Menu selection may use touch. Place the control at the first pen position instead. */
+    radial_control_set_initial_mouse(rc, event);
+    rc->wait_for_pen = false;
+  }
   float new_value, dist = 0.0f, zoom[2];
   float delta[2];
   wmOperatorStatus ret = OPERATOR_RUNNING_MODAL;
@@ -3802,6 +3822,13 @@ static void WM_OT_radial_control(wmOperatorType *ot)
 
   prop = RNA_def_boolean(
       ot->srna, "release_confirm", false, "Confirm On Release", "Finish operation on key release");
+  RNA_def_property_flag(prop, PROP_SKIP_SAVE);
+
+  prop = RNA_def_boolean(ot->srna,
+                         "use_pen",
+                         false,
+                         "Use Pen",
+                         "Use pen input, placing the control at the first pen movement");
   RNA_def_property_flag(prop, PROP_SKIP_SAVE);
 }
 
@@ -4395,6 +4422,7 @@ static void WM_OT_stereo3d_set(wmOperatorType *ot)
 
 void wm_operatortypes_register()
 {
+  WM_operatortype_append(WM_OT_modifier_wheel_toggle);
   WM_operatortype_append(WM_OT_window_close);
   WM_operatortype_append(WM_OT_window_new);
   WM_operatortype_append(WM_OT_window_new_main);

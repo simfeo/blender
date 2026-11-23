@@ -15,6 +15,7 @@
 #include "DNA_windowmanager_types.h"
 
 #include "BLI_set.hh"
+#include "BLI_vector.hh"
 
 namespace blender {
 
@@ -203,6 +204,9 @@ struct WindowRuntime {
   /** Custom drawing callbacks. */
   ListBaseT<WindowDrawCB> drawcalls = {nullptr, nullptr};
 
+  /** Android demo: reuse the last frame between redraws to avoid GPU wake-up stalls. */
+  double last_present_time = 0.0;
+
   /** Gesture stuff. */
   ListBaseT<wmGesture> gesture = {nullptr, nullptr};
 
@@ -231,6 +235,66 @@ struct WindowRuntime {
    *   left/right modifiers then release one. See note in #wm_event_add_ghostevent for details.
    */
   wmEvent *eventstate = nullptr;
+
+  /**
+   * A one-finger touch drag generates mouse motion/button events and trackpad-style pan events.
+   * This mode determines which events are passed to Blender's handlers.
+   * In Navigate2D and Navigate3D modes, mouse events allow dragging gizmos but cannot activate
+   * selection tools. If a gizmo takes the drag, view navigation is suppressed.
+   */
+  enum class TouchDragMode {
+    /** Pass both mouse and pan events to the existing UI scrolling and dragging handlers. */
+    Default,
+    /** Pass mouse events and discard pan events, allowing content and widget dragging. */
+    Mouse,
+    /** Discard mouse and trackpad events for this touch drag. */
+    Ignore,
+    /** Navigate 2D editors: one finger pans, two fingers pan and zoom. */
+    Navigate2D,
+    /** Navigate the 3D viewport: one finger orbits, two fingers pan and zoom. */
+    Navigate3D,
+  };
+
+  struct ModifierWheel {
+    enum class Button { None, Handle, Ctrl, Shift, Alt, Favorites, Confirm, Cancel };
+    struct Contact {
+      uint64_t device, id;
+      Button button;
+      float start[2];
+      float center[2];
+      bool moved = false;
+      bool pointer = false;
+    };
+    bool enabled = false;
+    bool initialized = false;
+    bool collapsed = false;
+    bool show_confirm = false;
+    bool show_cancel = false;
+    /** Hide confirmation controls while drawing with the pen. */
+    bool pen_down = false;
+    float center[2] = {-1.0f, -1.0f};
+    uint8_t modifiers = 0;
+    Vector<Contact> contacts;
+    int pointer_xy[2] = {};
+    uint32_t pointer_buttons = 0;
+    /** Consume button releases even after the wheel is disabled. */
+    uint32_t captured_buttons = 0;
+    Button hover = Button::None;
+  } modifier_wheel;
+
+  /** Hardware modifiers are independent of the modifier wheel's latched keys. */
+  uint8_t physical_modifiers = 0;
+
+  /** Classification captured when a touch-screen drag begins. */
+  bool touch_drag_active = false;
+  TouchDragMode touch_drag_mode = TouchDragMode::Default;
+  /** A gizmo claimed the touch press, preventing view navigation for the rest of the drag. */
+  bool touch_gizmo_claimed = false;
+
+  /** Hover is disabled after touch input or pen proximity leave until the next pointer input. */
+  bool cursor_hover_enabled = true;
+  /** Whether the last pointer input came from the touchscreen. */
+  bool cursor_is_touch = false;
 
   /**
    * The time when the key is pressed in milliseconds (see #GHOST_IEvent::getTime).

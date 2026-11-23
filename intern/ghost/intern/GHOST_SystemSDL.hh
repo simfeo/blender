@@ -92,6 +92,53 @@ class GHOST_SystemSDL : public GHOST_System {
 
   GHOST_TabletData pen_tablet_data_ = {};
 
+#ifdef __ANDROID__
+  void processTouchEvent(const SDL_TouchFingerEvent &sdl_sub_evt);
+
+  struct TouchPoint {
+    SDL_TouchID touch_id;
+    SDL_FingerID finger_id;
+    float x;
+    float y;
+    float start_x;
+    float start_y;
+  };
+
+  enum class TouchGestureMode {
+    None,
+    TapPending,
+    MultiFingerTapPending,
+    /** Emit mouse events and trackpad-style motion for Blender to choose between. */
+    OneFingerDrag,
+    /** Continue with trackpad-style motion only after one finger of a two-finger gesture lifts. */
+    OneFingerTrackpadOnly,
+    TwoFingerNavigation,
+    Suppressed,
+  };
+
+  struct CapturedTouch {
+    SDL_TouchID touch_id;
+    SDL_FingerID finger_id;
+    SDL_WindowID window_id;
+  };
+  std::vector<CapturedTouch> captured_touches_;
+  std::vector<TouchPoint> active_touches_;
+  TouchGestureMode touch_gesture_mode_ = TouchGestureMode::None;
+  SDL_WindowID primary_touch_window_id_ = 0;
+  uint64_t multi_finger_tap_start_time_ms_ = 0;
+  uint8_t multi_finger_tap_count_ = 0;
+  float touch_start_x_ = 0.0f;
+  float touch_start_y_ = 0.0f;
+  float touch_previous_x_ = 0.0f;
+  float touch_previous_y_ = 0.0f;
+  float touch_previous_distance_ = 0.0f;
+  float touch_previous_angle_ = 0.0f;
+  int32_t touch_cursor_x_ = 0;
+  int32_t touch_cursor_y_ = 0;
+  /** Use the last touch position until mouse or pen input updates the cursor. */
+  bool use_touch_cursor_position_ = false;
+#endif
+
   /** The vector of windows that need to be updated. */
   std::vector<GHOST_WindowSDL *> dirty_windows_;
 };

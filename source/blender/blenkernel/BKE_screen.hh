@@ -123,7 +123,7 @@ struct SpaceType {
   /** Listeners can react to bContext changes. */
   void (*listener)(const wmSpaceTypeListenerParams *params);
 
-  /** Called when the mouse moves out of the area. */
+  /** Called when the pointer leaves the area or hover is cleared. */
   void (*deactivate)(ScrArea *area);
 
   /** Refresh context, called after file-reads, #ED_area_tag_refresh(). */

@@ -10406,7 +10406,7 @@ static Button *but_find_open_event(ARegion *region, const wmEvent *event)
 
 static int handle_button_over(bContext *C, const wmEvent *event, ARegion *region)
 {
-  if (event->type == MOUSEMOVE) {
+  if (event->type == MOUSEMOVE && CTX_wm_window(C)->runtime->cursor_hover_enabled) {
     const bool labeledit = event->modifier & KM_CTRL;
     /* Allow buttons to be activated to show the tool-tip,
      * then force-disable them if they're not considered interactive
@@ -11119,7 +11119,7 @@ static int handle_uilist_event(bContext *C, const wmEvent *event, ARegion *regio
 }
 
 /* Handle mouse hover for Views and UiList rows. */
-static int handle_viewlist_items_hover(const wmEvent *event, ARegion *region)
+static int handle_viewlist_items_hover(const bContext *C, const wmEvent *event, ARegion *region)
 {
   const bool has_list = !region->ui_lists.is_empty();
   const bool has_view = [&]() {
@@ -11140,6 +11140,9 @@ static int handle_viewlist_items_hover(const wmEvent *event, ARegion *region)
   Button *highlight_row_but = [&]() -> Button * {
     if (Button *but = view_item_find_search_highlight(region)) {
       return but;
+    }
+    if (!CTX_wm_window(C)->runtime->cursor_hover_enabled) {
+      return nullptr;
     }
     if (Button *but = view_item_find_mouse_over(region, event->xy)) {
       return but;
@@ -11943,7 +11946,8 @@ static int handle_menu_event(bContext *C,
         /* Initial press before starting to drag. */
         WM_cursor_set(win, PopupTitleDragCursor);
       }
-      else if (event->type == MOUSEMOVE && !win->modalcursor) {
+      else if (event->type == MOUSEMOVE && win->runtime->cursor_hover_enabled && !win->modalcursor)
+      {
         /* Hover over draggable area. */
         WM_cursor_set(win, PopupTitleHoverCursor);
       }
@@ -11994,7 +11998,7 @@ static int handle_menu_event(bContext *C,
     }
   }
   else if (event->type == TIMER && event->customdata == menu->scrolltimer) {
-    if (!menu_scroll_test(block, {mx, my})) {
+    if (!win->runtime->cursor_hover_enabled || !menu_scroll_test(block, {mx, my})) {
       WM_event_timer_remove(CTX_wm_manager(C), win, menu->scrolltimer);
       menu->scrolltimer = nullptr;
     }
@@ -12005,7 +12009,7 @@ static int handle_menu_event(bContext *C,
   }
   else {
     /* for mouse_motion_towards_block */
-    if (event->type == MOUSEMOVE) {
+    if (event->type == MOUSEMOVE && win->runtime->cursor_hover_enabled) {
       if (block->flag & (BLOCK_MOVEMOUSE_QUIT | BLOCK_POPOVER)) {
         mouse_motion_towards_init(menu, event->xy);
       }
@@ -12541,7 +12545,9 @@ static int handle_menu_event(bContext *C,
       else {
 
         /* check mouse moving outside of the menu */
-        if (inside == false && (block->flag & (BLOCK_MOVEMOUSE_QUIT | BLOCK_POPOVER))) {
+        if (win->runtime->cursor_hover_enabled && inside == false &&
+            (block->flag & (BLOCK_MOVEMOUSE_QUIT | BLOCK_POPOVER)))
+        {
           SafetyRect *saferct;
 
           mouse_motion_towards_check(block, menu, event->xy, is_parent_inside == false);
@@ -13012,6 +13018,13 @@ static int handle_menus_recursive(bContext *C,
   int retval = WM_UI_HANDLER_CONTINUE;
   bool do_towards_reinit = false;
 
+  if ((event->flag & WM_EVENT_TOUCH_ONE_FINGER) && ELEM(event->type, MOUSEPAN, MOUSEROTATE)) {
+    /* A one-finger touch drag emits both mouse motion and a trackpad-style event. Menus use the
+     * mouse stream to follow the finger. Handling both events would wrongly flicker selection
+     * between the finger and gesture-origin positions. */
+    return WM_UI_HANDLER_BREAK;
+  }
+
   /* check if we have a submenu, and handle events for it first */
   Button *but = region_find_active_but(menu->region);
   HandleButtonData *data = (but) ? but->active : nullptr;
@@ -13038,7 +13051,9 @@ static int handle_menus_recursive(bContext *C,
           C, event, submenu, level + 1, is_parent_inside || inside, is_menu, false);
     }
   }
-  else if (!but && event->val == KM_PRESS && event->type == LEFTMOUSE) {
+  else if (!but && event->val == KM_PRESS && event->type == LEFTMOUSE &&
+           (event->flag & WM_EVENT_TOUCH_ONE_FINGER) == 0)
+  {
     for (Block &block : menu->region->runtime->uiblocks) {
       if (block.panel) {
         int mx = event->xy[0];
@@ -13128,7 +13143,7 @@ static int handle_menus_recursive(bContext *C,
   }
 
   if (!menu->retvalue) {
-    handle_viewlist_items_hover(event, menu->region);
+    handle_viewlist_items_hover(C, event, menu->region);
   }
   /* Handle mouse clicks on overlapping view item button. */
   handle_view_item_event(C, event, but, menu->region);
@@ -13203,7 +13218,7 @@ static int region_handler(bContext *C, const wmEvent *event, void * /*userdata*/
 
   /* Always do this, to reliably update view and UI-list item highlighting, even if
    * the mouse hovers a button nested in the item (it's an overlapping layout). */
-  handle_viewlist_items_hover(event, region);
+  handle_viewlist_items_hover(C, event, region);
   if (retval == WM_UI_HANDLER_CONTINUE) {
     retval = handle_view_item_event(C, event, but, region);
   }
@@ -13356,7 +13371,8 @@ static int handler_region_menu(bContext *C, const wmEvent *event, void * /*userd
     /* handle activated button events */
     HandleButtonData *data = but->active;
 
-    if ((data->state == BUTTON_STATE_MENU_OPEN) &&
+    if (CTX_wm_window(C)->runtime->cursor_hover_enabled &&
+        (data->state == BUTTON_STATE_MENU_OPEN) &&
         /* Make sure this popup isn't dragging a button.
          * can happen with popovers (see #67882). */
         (region_find_active_but(data->menu->region) == nullptr) &&
@@ -13922,6 +13938,27 @@ void UI_screen_free_active_but_highlight(const bContext *C, bScreen *screen)
         }
       }
     }
+  }
+}
+
+void UI_region_clear_hover(const bContext *C, ARegion *region)
+{
+  bool changed = false;
+  for (Block &block : region->runtime->uiblocks) {
+    for (Button &but : block.buttons()) {
+      if (but.active && but.active->state == BUTTON_STATE_HIGHLIGHT &&
+          but.active->menu == nullptr && but.active->searchbox == nullptr)
+      {
+        button_active_free(C, &but);
+      }
+      if (but.flag & UI_HOVER) {
+        but.flag &= ~UI_HOVER;
+        changed = true;
+      }
+    }
+  }
+  if (changed) {
+    ED_region_tag_redraw_no_rebuild(region);
   }
 }
 

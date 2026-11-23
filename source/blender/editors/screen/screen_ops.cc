@@ -1069,11 +1069,17 @@ static void area_actionzone_get_rect(AZone *az, rcti *r_rect)
   }
 }
 
-static AZone *area_actionzone_refresh_xy(ScrArea *area, const int xy[2], const bool test_only)
+static AZone *area_actionzone_refresh_xy(ScrArea *area,
+                                         const int xy[2],
+                                         const bool test_only,
+                                         const bool cursor_hover_enabled = true)
 {
   AZone *az = nullptr;
 
   for (az = area->actionzones.first(); az; az = az->next) {
+    if (!cursor_hover_enabled && az->type == AZONE_REGION_SCROLL) {
+      continue;
+    }
     rcti az_rect;
     area_actionzone_get_rect(az, &az_rect);
     if (BLI_rcti_isect_pt_v(&az_rect, xy)) {
@@ -1265,9 +1271,9 @@ AZone *ED_area_actionzone_find_xy(ScrArea *area, const int xy[2])
   return area_actionzone_refresh_xy(area, xy, true);
 }
 
-AZone *ED_area_azones_update(ScrArea *area, const int xy[2])
+AZone *ED_area_azones_update(ScrArea *area, const int xy[2], const bool cursor_hover_enabled)
 {
-  return area_actionzone_refresh_xy(area, xy, false);
+  return area_actionzone_refresh_xy(area, xy, false, cursor_hover_enabled);
 }
 
 static void actionzone_exit(wmOperator *op)
@@ -1282,7 +1288,7 @@ static void actionzone_exit(wmOperator *op)
 }
 
 /* send EVT_ACTIONZONE event */
-static void actionzone_apply(bContext *C, wmOperator *op, int type)
+static void actionzone_apply(bContext *C, wmOperator *op, int type, const wmEvent *source_event)
 {
   wmWindow *win = CTX_wm_window(C);
 
@@ -1303,7 +1309,7 @@ static void actionzone_apply(bContext *C, wmOperator *op, int type)
   }
 
   event.val = KM_NOTHING;
-  event.flag = eWM_EventFlag(0);
+  event.flag = source_event->flag & WM_EVENT_TOUCH;
   event.customdata = op->customdata;
   event.customdata_free = true;
   op->customdata = nullptr;
@@ -1333,13 +1339,13 @@ static wmOperatorStatus actionzone_invoke(bContext *C, wmOperator *op, const wmE
 
   /* Region azones directly react on mouse clicks. */
   if (ELEM(sad->az->type, AZONE_REGION, AZONE_FULLSCREEN, AZONE_REGION_QUAD)) {
-    actionzone_apply(C, op, sad->az->type);
+    actionzone_apply(C, op, sad->az->type, event);
     actionzone_exit(op);
     return OPERATOR_FINISHED;
   }
 
   if (sad->az->type == AZONE_AREA && sad->modifier == 0) {
-    actionzone_apply(C, op, sad->az->type);
+    actionzone_apply(C, op, sad->az->type, event);
     actionzone_exit(op);
     return OPERATOR_FINISHED;
   }
@@ -1458,7 +1464,7 @@ static wmOperatorStatus actionzone_modal(bContext *C, wmOperator *op, const wmEv
         /* second area, for join when (sa1 != sa2) */
         sad->sa2 = BKE_screen_find_area_xy(screen, SPACE_TYPE_ANY, event->xy);
         /* apply sends event */
-        actionzone_apply(C, op, sad->az->type);
+        actionzone_apply(C, op, sad->az->type, event);
         actionzone_exit(op);
 
         return OPERATOR_FINISHED;
@@ -3314,6 +3320,9 @@ static void region_scale_exit(wmOperator *op)
   screen_modal_action_end();
 }
 
+static void region_scale_validate_size(RegionMoveData *rmd);
+static void region_scale_toggle_hidden(bContext *C, RegionMoveData *rmd, bool do_fade);
+
 static wmOperatorStatus region_scale_invoke(bContext *C, wmOperator *op, const wmEvent *event)
 {
   sActionzoneData *sad = static_cast<sActionzoneData *>(event->customdata);
@@ -3379,6 +3388,23 @@ static wmOperatorStatus region_scale_invoke(bContext *C, wmOperator *op, const w
     }
 
     CLAMP(rmd->maxsize, 0, 1000);
+
+    /* Touch taps open collapsed regions without starting a resize operation. */
+    if ((event->flag & WM_EVENT_TOUCH) &&
+        (rmd->region->flag & (RGN_FLAG_HIDDEN | RGN_FLAG_TOO_SMALL)))
+    {
+      if (rmd->region->flag & RGN_FLAG_HIDDEN) {
+        region_scale_toggle_hidden(C, rmd, true);
+      }
+      else {
+        region_scale_validate_size(rmd);
+      }
+      ED_area_tag_redraw(rmd->area);
+      WM_event_add_notifier(C, NC_SCREEN | NA_EDITED, nullptr);
+      MEM_delete(rmd);
+      op->customdata = nullptr;
+      return OPERATOR_FINISHED;
+    }
 
     rmd->win = CTX_wm_window(C);
     rmd->draw_callback = WM_draw_cb_activate(CTX_wm_window(C), region_scale_draw_cb, op);

@@ -36,6 +36,7 @@ set(SRC
   intern/wm_keymap.cc
   intern/wm_keymap_utils.cc
   intern/wm_menu_type.cc
+  intern/wm_modifier_wheel.cc
   intern/wm_operator_props.cc
   intern/wm_operator_type.cc
   intern/wm_operator_utils.cc
@@ -77,6 +78,7 @@ set(SRC
   wm_event_system.hh
   wm_event_types.hh
   wm_files.hh
+  wm_modifier_wheel.hh
   wm_surface.hh
   wm_window.hh
   intern/wm_platform_support.hh

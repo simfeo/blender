@@ -782,6 +782,10 @@ wmGizmo *wm_gizmomap_highlight_find(wmGizmoMap *gzmap,
                                     const wmEvent *event,
                                     int *r_part)
 {
+  if (!CTX_wm_window(C)->runtime->cursor_hover_enabled) {
+    return nullptr;
+  }
+
   wmWindowManager *wm = CTX_wm_manager(C);
   wmGizmo *gz = nullptr;
   Vector<wmGizmo *, 128> visible_3d_gizmos;
@@ -1157,19 +1161,30 @@ void wm_gizmomap_modal_set(
 
     if (C) {
       wmWindow *win = CTX_wm_window(C);
-      if (gzmap->gzmap_context.event_xy[0] != INT_MAX) {
-        /* Check if some other part of Blender (typically operators)
-         * have adjusted the grab mode since it was set.
-         * If so: warp, so we have a predictable outcome. */
-        if (gzmap->gzmap_context.event_grabcursor == win->grabcursor) {
-          WM_cursor_grab_disable(win, gzmap->gzmap_context.event_xy);
+      const bool is_touch = win->runtime->touch_gizmo_claimed;
+      if (is_touch) {
+        if (gzmap->gzmap_context.event_xy[0] != INT_MAX) {
+          /* Touch has no cursor to restore. Releasing at the gizmo's initial position would
+           * synthesize mouse motion there and recreate its hover state. */
+          WM_cursor_grab_disable(win, nullptr);
         }
-        else {
-          WM_cursor_warp(win, UNPACK2(gzmap->gzmap_context.event_xy));
+        wm_gizmomap_highlight_set(gzmap, C, nullptr, 0);
+      }
+      else {
+        if (gzmap->gzmap_context.event_xy[0] != INT_MAX) {
+          /* Check if some other part of Blender (typically operators)
+           * have adjusted the grab mode since it was set.
+           * If so: warp, so we have a predictable outcome. */
+          if (gzmap->gzmap_context.event_grabcursor == win->grabcursor) {
+            WM_cursor_grab_disable(win, gzmap->gzmap_context.event_xy);
+          }
+          else {
+            WM_cursor_warp(win, UNPACK2(gzmap->gzmap_context.event_xy));
+          }
         }
+        WM_event_add_mousemove(win);
       }
       ED_region_tag_redraw_editor_overlays(CTX_wm_region(C));
-      WM_event_add_mousemove(win);
     }
 
     gzmap->gzmap_context.event_xy[0] = INT_MAX;

@@ -262,8 +262,94 @@ static void handle_operator_asset_reference_props(const bContext &C,
   WM_operator_properties_free(&opptr);
 }
 
+static const char *screen_user_menu_delete_operator(const eContextObjectMode mode)
+{
+  switch (mode) {
+    case CTX_MODE_EDIT_MESH:
+      return "MESH_OT_delete";
+    case CTX_MODE_EDIT_CURVE:
+    case CTX_MODE_EDIT_SURFACE:
+      return "CURVE_OT_delete";
+    case CTX_MODE_EDIT_TEXT:
+      return "FONT_OT_delete";
+    case CTX_MODE_EDIT_ARMATURE:
+      return "ARMATURE_OT_delete";
+    case CTX_MODE_EDIT_METABALL:
+      return "MBALL_OT_delete_metaelems";
+    case CTX_MODE_EDIT_CURVES:
+      return "CURVES_OT_delete";
+    case CTX_MODE_EDIT_GREASE_PENCIL:
+    case CTX_MODE_PAINT_GREASE_PENCIL:
+      return "GREASE_PENCIL_OT_delete";
+    case CTX_MODE_EDIT_POINTCLOUD:
+      return "POINTCLOUD_OT_delete";
+    default:
+      return "OBJECT_OT_delete";
+  }
+}
+
 static void screen_user_menu_draw(const bContext *C, Menu *menu)
 {
+  /* Android demo: Fixed quick favorites overrides for demo purposes. */
+  if (CTX_wm_view3d(C)) {
+    ui::Layout &layout = *menu->layout;
+    const eContextObjectMode mode = CTX_data_mode_enum(C);
+    layout.operator_context_set(wm::OpCallContext::InvokeRegionWin);
+
+    if (ELEM(mode, CTX_MODE_SCULPT, CTX_MODE_PAINT_GREASE_PENCIL)) {
+      PointerRNA ptr = layout.op("WM_OT_radial_control", "Brush Size", ICON_NONE);
+
+      if (mode == CTX_MODE_SCULPT) {
+        RNA_string_set(&ptr, "data_path_primary", "tool_settings.sculpt.brush.size");
+        RNA_string_set(
+            &ptr, "data_path_secondary", "tool_settings.sculpt.unified_paint_settings.size");
+        RNA_string_set(&ptr, "use_secondary", "tool_settings.sculpt.brush.use_unified_size");
+        RNA_string_set(&ptr, "rotation_path", "tool_settings.sculpt.brush.texture_slot.angle");
+        RNA_string_set(&ptr, "color_path", "tool_settings.sculpt.brush.cursor_color_add");
+        RNA_string_set(&ptr, "image_id", "tool_settings.sculpt.brush");
+      }
+      else if (mode == CTX_MODE_PAINT_GREASE_PENCIL) {
+        RNA_string_set(&ptr, "data_path_primary", "tool_settings.gpencil_paint.brush.size");
+      }
+
+      RNA_boolean_set(&ptr, "use_pen", true);
+
+      ptr = layout.op("WM_OT_call_asset_shelf_popover", "Select Brush", ICON_NONE);
+      const char *asset_shelf_popover_mode = mode == CTX_MODE_SCULPT ?
+                                                 "VIEW3D_AST_brush_sculpt" :
+                                                 "VIEW3D_AST_brush_gpencil_paint";
+      RNA_string_set(&ptr, "name", asset_shelf_popover_mode);
+
+      layout.separator();
+
+      if (mode == CTX_MODE_SCULPT) {
+        layout.op("OBJECT_OT_voxel_remesh", std::nullopt, ICON_NONE);
+        layout.op("PAINT_OT_mask_flood_fill", "Clear Mask", ICON_NONE);
+
+        layout.separator();
+      }
+      else if (mode == CTX_MODE_PAINT_GREASE_PENCIL) {
+        ptr = layout.op("VIEW3D_OT_view_roll_set", "Reset Roll", ICON_NONE);
+        RNA_float_set(&ptr, "angle", 0.0f);
+        layout.op("VIEW3D_OT_view_flip", std::nullopt, ICON_NONE);
+
+        layout.separator();
+      }
+    }
+
+    if (ELEM(mode, CTX_MODE_OBJECT, CTX_MODE_EDIT_MESH)) {
+      layout.op("VIEW3D_OT_localview", std::nullopt, ICON_NONE);
+    }
+    if (mode == CTX_MODE_EDIT_CURVE) {
+      layout.op("CURVE_OT_select_all", "Select All Curves", ICON_NONE);
+    }
+    PointerRNA ptr = layout.op(screen_user_menu_delete_operator(mode), "Delete", ICON_NONE);
+    if (mode == CTX_MODE_EDIT_CURVE) {
+      RNA_enum_set_identifier(nullptr, &ptr, "type", "VERT");
+    }
+    return;
+  }
+
   /* Enable when we have the ability to edit menus. */
   const bool show_missing = false;
   char label[512];

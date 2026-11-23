@@ -48,6 +48,10 @@ void WM_tooltip_timer_init_ex(
 {
   WM_tooltip_timer_clear(C, win);
 
+  if (!win->runtime->cursor_hover_enabled) {
+    return;
+  }
+
   bScreen *screen = WM_window_get_active_screen(win);
   wmWindowManager *wm = CTX_wm_manager(C);
   if (screen->tool_tip == nullptr) {

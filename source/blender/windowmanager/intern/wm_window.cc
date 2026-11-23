@@ -72,6 +72,7 @@
 #include "wm_draw.hh"
 #include "wm_event_system.hh"
 #include "wm_files.hh"
+#include "wm_modifier_wheel.hh"
 #include "wm_window.hh"
 #include "wm_window_private.hh"
 #ifdef WITH_XR_OPENXR
@@ -898,7 +899,7 @@ static void wm_window_update_eventstate_modifiers(wmWindowManager *wm,
       wm_ghost_modifier_query(MOD_SIDE_RIGHT),
   };
   const uint8_t keymodifier = keymodifier_sided[0] | keymodifier_sided[1];
-  const uint8_t keymodifier_eventstate = win->runtime->eventstate->modifier;
+  const uint8_t keymodifier_eventstate = win->runtime->physical_modifiers;
   if (keymodifier != keymodifier_eventstate) {
     GHOST_TEventKeyData kdata{};
     kdata.key = GHOST_kKeyUnknown;
@@ -1070,6 +1071,7 @@ static void wm_window_ghostwindow_add(wmWindowManager *wm,
     ghost_window->setUserData(win); /* Pointer back. */
 
     wm_window_ensure_eventstate(win);
+    wm_modifier_wheel_init(win);
 
     /* Store actual window size in blender window. */
     /* WIN32: gives undefined window size when minimized. */
@@ -1868,9 +1870,13 @@ static bool ghost_event_proc(const GHOST_IEvent *ghost_event, GHOST_TUserDataPtr
   if (wm_virtual_keyboard_ghost_event(wm, win, type, data)) {
     return true;
   }
+  if (wm_modifier_wheel_event(wm, win, type, data, event_time_ms)) {
+    return true;
+  }
 
   switch (type) {
     case GHOST_kEventWindowDeactivate: {
+      wm_modifier_wheel_release(win, event_time_ms);
       wm_window_update_eventstate_modifiers_clear(wm, win, event_time_ms);
 
       wm_event_add_ghostevent(wm, win, type, data, event_time_ms);
@@ -1911,7 +1917,7 @@ static bool ghost_event_proc(const GHOST_IEvent *ghost_event, GHOST_TUserDataPtr
       event.type = MOUSEMOVE;
       event.val = KM_NOTHING;
       copy_v2_v2_int(event.prev_xy, event.xy);
-      event.flag = eWM_EventFlag(0);
+      event.flag = WM_EVENT_CURSOR_REFRESH;
 
       WM_event_add(win, &event);
 
@@ -2966,16 +2972,20 @@ void wm_window_raise(wmWindow *win)
 /** \name Window Buffers
  * \{ */
 
-void wm_window_swap_buffer_acquire(wmWindow *win)
+bool wm_window_swap_buffer_acquire(wmWindow *win)
 {
   GHOST_IWindow *ghost_window = static_cast<GHOST_IWindow *>(win->runtime->ghostwin);
   ghost_window->swapBufferAcquire();
+  return !ghost_window->getDrawingContext()->canReuseBackBuffer();
 }
 
 void wm_window_swap_buffer_release(wmWindow *win)
 {
   GHOST_IWindow *ghost_window = static_cast<GHOST_IWindow *>(win->runtime->ghostwin);
   ghost_window->swapBufferRelease();
+#if defined(__ANDROID__) && defined(WITH_VULKAN_BACKEND)
+  win->runtime->last_present_time = BLI_time_now_seconds();
+#endif
 }
 
 void wm_window_set_swap_interval(wmWindow *win, int interval)

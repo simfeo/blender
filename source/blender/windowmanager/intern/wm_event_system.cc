@@ -20,6 +20,7 @@
 #include "DNA_listBase.h"
 #include "DNA_scene_types.h"
 #include "DNA_screen_types.h"
+#include "DNA_space_types.h"
 #include "DNA_userdef_types.h"
 #include "DNA_windowmanager_types.h"
 
@@ -59,8 +60,11 @@
 #include "ED_geometry.hh"
 #include "ED_info.hh"
 #include "ED_markers.hh"
+#include "ED_node.hh"
 #include "ED_render.hh"
 #include "ED_screen.hh"
+#include "ED_screen_types.hh"
+#include "ED_time_scrub_ui.hh"
 #include "ED_undo.hh"
 #include "ED_util.hh"
 #include "ED_view3d.hh"
@@ -84,6 +88,7 @@
 #include "wm.hh"
 #include "wm_event_system.hh"
 #include "wm_event_types.hh"
+#include "wm_modifier_wheel.hh"
 #include "wm_surface.hh"
 #include "wm_window.hh"
 #include "wm_window_private.hh"
@@ -3170,6 +3175,24 @@ static eHandlerActionFlag wm_handlers_do_keymap_with_keymap_handler(
 {
   eHandlerActionFlag action = WM_HANDLER_CONTINUE;
 
+  const ARegion *region = CTX_wm_region(C);
+  if (keymap && (event->flag & WM_EVENT_TOUCH) && event->type == LEFTMOUSE &&
+      CTX_wm_region_view3d(C) && handlers == &region->runtime->handlers)
+  {
+    /* Touch can select, but drawing and brush tools require a pen or mouse. */
+    const bToolRef *tool = WM_toolsystem_ref_from_context(C);
+    if (tool && tool->runtime &&
+        ((tool->runtime->flag & TOOLREF_FLAG_USE_BRUSHES) || STR_ELEM(tool->idname,
+                                                                      "builtin.draw",
+                                                                      "builtin.annotate",
+                                                                      "builtin.annotate_line",
+                                                                      "builtin.annotate_polygon",
+                                                                      "builtin.annotate_eraser")))
+    {
+      return WM_HANDLER_BREAK;
+    }
+  }
+
   if (keymap == nullptr) {
     /* Only callback is allowed to have nullptr key-maps. */
     BLI_assert(handler->dynamic.keymap_fn);
@@ -3306,6 +3329,9 @@ static eHandlerActionFlag wm_handlers_do_gizmo_handler(bContext *C,
    * Get the highlight again in case the user dragged off the gizmo. */
   const bool is_event_drag = (event->val == KM_PRESS_DRAG);
   const bool is_event_modifier = ISKEYMODIFIER(event->type);
+  const bool is_touch_navigation = (event->flag & WM_EVENT_TOUCH_NAVIGATION) != 0;
+  const bool is_touch_press = (event->flag & WM_EVENT_TOUCH) && event->type == LEFTMOUSE &&
+                              event->val == KM_PRESS;
   /* Only keep the highlight if the gizmo becomes modal as result of event handling.
    * Without this check, even un-handled drag events will set the highlight if the drag
    * was initiated over a gizmo. */
@@ -3359,10 +3385,10 @@ static eHandlerActionFlag wm_handlers_do_gizmo_handler(bContext *C,
 
   /* Handle gizmo highlighting. */
   if ((prev.gz_modal == nullptr) &&
-      ((event->type == MOUSEMOVE) || is_event_modifier || is_event_drag))
+      ((event->type == MOUSEMOVE) || is_event_modifier || is_event_drag || is_touch_press))
   {
     handle_highlight = true;
-    if (is_event_modifier || is_event_drag) {
+    if (is_event_modifier || is_event_drag || is_touch_press) {
       handle_keymap = true;
     }
   }
@@ -3405,6 +3431,9 @@ static eHandlerActionFlag wm_handlers_do_gizmo_handler(bContext *C,
 
     wm_gizmomap_highlight_handled(gzmap);
   }
+
+  const bool touch_gizmo_hit = is_touch_press && gz != nullptr &&
+                               (gz->flag & WM_GIZMO_HIDDEN_KEYMAP) == 0;
 
   /* Don't use from now on. */
   bool is_event_handle_all = gz && (gz->flag & WM_GIZMO_EVENT_HANDLE_ALL);
@@ -3483,6 +3512,20 @@ static eHandlerActionFlag wm_handlers_do_gizmo_handler(bContext *C,
     if (action == WM_HANDLER_CONTINUE) {
       action |= WM_HANDLER_BREAK | WM_HANDLER_MODAL;
     }
+  }
+
+  if (touch_gizmo_hit) {
+    /* Reserve the touch as soon as its press hits a gizmo. This keeps deferred drag motion from
+     * becoming viewport navigation and lets modal teardown avoid restoring mouse hover. */
+    CTX_wm_window(C)->runtime->touch_gizmo_claimed = true;
+  }
+
+  /* Let gizmos claim the mouse-style events before using the paired trackpad events for
+   * view navigation. Keep unclaimed mouse events out of selection and tool key-maps. */
+  if (is_touch_navigation && (ISMOUSE_MOTION(event->type) || ISMOUSE_BUTTON(event->type)) &&
+      (action & WM_HANDLER_BREAK) == 0)
+  {
+    action |= WM_HANDLER_BREAK | WM_HANDLER_MODAL;
   }
 
   /* Restore the area. */
@@ -4241,6 +4284,53 @@ static eHandlerActionFlag wm_event_do_handlers_area_regions(bContext *C,
   return wm_event_do_region_handlers(C, event, region_hovered);
 }
 
+static void wm_event_region_hover_clear(bContext *C, ARegion *region)
+{
+  ui::UI_region_clear_hover(C, region);
+  if (region->runtime->gizmo_map && WM_gizmo_highlight_set(region->runtime->gizmo_map, nullptr)) {
+    ED_region_tag_redraw_no_rebuild(region);
+  }
+}
+
+static void wm_event_scrollbar_hover_clear(ScrArea *area)
+{
+  for (AZone &az : area->actionzones) {
+    if (az.type == AZONE_REGION_SCROLL) {
+      char &alpha = az.direction == AZ_SCROLL_HOR ? az.region->v2d.alpha_hor :
+                                                    az.region->v2d.alpha_vert;
+      if (alpha != 0) {
+        alpha = 0;
+        ED_region_tag_redraw_no_rebuild(az.region);
+      }
+      az.alpha = 0.0f;
+    }
+  }
+}
+
+static void wm_event_cursor_hover_clear(bContext *C, wmWindow *win)
+{
+  win->runtime->cursor_hover_enabled = false;
+  win->event_queue_consecutive_gesture_type = EVENT_NONE;
+  WM_event_consecutive_data_free(win);
+
+  bScreen *screen = WM_window_get_active_screen(win);
+  WM_tooltip_clear(C, win);
+  screen->do_draw_paintcursor = true;
+
+  ED_screen_areas_iter (win, screen, area) {
+    if (area->type && area->type->deactivate) {
+      area->type->deactivate(area);
+    }
+    wm_event_scrollbar_hover_clear(area);
+    for (ARegion &region : area->regionbase) {
+      wm_event_region_hover_clear(C, &region);
+    }
+  }
+  for (ARegion &region : screen->regionbase) {
+    wm_event_region_hover_clear(C, &region);
+  }
+}
+
 void wm_event_do_handlers(bContext *C)
 {
   PRF_scope(ProfileCategory::Core);
@@ -4282,7 +4372,47 @@ void wm_event_do_handlers(bContext *C)
         break;
       }
 
+      if (event->type == EVT_MODIFIER_WHEEL_MENU) {
+        wm_modifier_wheel_popup(C, &win, event->xy);
+        BLI_remlink(&win.runtime->event_queue, event);
+        wm_event_free(event);
+        continue;
+      }
+
+      if (event->type == EVT_CURSOR_HOVER_CLEAR) {
+        CTX_wm_window_set(C, &win);
+        wm_event_cursor_hover_clear(C, &win);
+        BLI_remlink(&win.runtime->event_queue, event);
+        wm_event_free(event);
+        continue;
+      }
+      /* Mouse moves generated for UI refreshes must not restore hover after touch input. */
+      if (!(event->flag & WM_EVENT_CURSOR_REFRESH) && ISMOUSE(event->type)) {
+        const bool is_touch = (event->flag & WM_EVENT_TOUCH) != 0;
+        if (is_touch && !win.runtime->cursor_is_touch) {
+          ED_screen_areas_iter (&win, screen, area) {
+            wm_event_scrollbar_hover_clear(area);
+          }
+        }
+        win.runtime->cursor_is_touch = is_touch;
+        win.runtime->cursor_hover_enabled = true;
+      }
+
       eHandlerActionFlag action = WM_HANDLER_CONTINUE;
+
+      const bool is_touch_navigation = (event->flag & WM_EVENT_TOUCH_NAVIGATION) != 0;
+      if (is_touch_navigation && ISMOUSE_MOTION(event->type) &&
+          !win.runtime->touch_gizmo_claimed &&
+          ELEM(win.event_queue_consecutive_gesture_type, MOUSEROTATE, MOUSEPAN))
+      {
+        /* Keep the initial mouse move so gizmos can establish hover and capture the following
+         * press. Once trackpad navigation has started without a gizmo capture, later
+         * mouse moves are redundant. Filter them before both consecutive-gesture bookkeeping and
+         * gizmo GPU hit-testing, without replacing the last handled navigation event. */
+        BLI_remlink(&win.runtime->event_queue, event);
+        wm_event_free(event);
+        continue;
+      }
 
       /* Force handling drag if a key is pressed even if the drag threshold has not been met.
        * Needed so tablet actions (which typically use a larger threshold) can click-drag
@@ -4340,6 +4470,15 @@ void wm_event_do_handlers(bContext *C)
 
       CTX_wm_window_set(C, &win);
 
+      if (is_touch_navigation && win.runtime->touch_gizmo_claimed &&
+          ELEM(event->type, MOUSEROTATE, MOUSEPAN))
+      {
+        /* The mouse-motion stream drives the active gizmo. Do not also navigate the view. */
+        BLI_remlink(&win.runtime->event_queue, event);
+        wm_event_free_last_handled(&win, event);
+        continue;
+      }
+
 #ifdef WITH_XR_OPENXR
       if (event->type == EVT_XR_ACTION) {
         wm_event_handle_xrevent(wm, &win, event, C);
@@ -4394,6 +4533,14 @@ void wm_event_do_handlers(bContext *C)
         return;
       }
 
+      if (is_touch_navigation && (ISMOUSE_MOTION(event->type) || ISMOUSE_BUTTON(event->type)) &&
+          (CTX_wm_region(C) == nullptr || CTX_wm_region(C)->runtime->gizmo_map == nullptr))
+      {
+        /* With no gizmo map to claim the mouse-style half of this gesture, keep it away from
+         * ordinary mouse key-maps. The trackpad half will perform view navigation. */
+        action |= WM_HANDLER_BREAK;
+      }
+
       /* Check for a tool-tip. */
       if (screen == WM_window_get_active_screen(&win)) {
         if (screen->tool_tip && screen->tool_tip->timer) {
@@ -4409,7 +4556,7 @@ void wm_event_do_handlers(bContext *C)
       if ((action & WM_HANDLER_BREAK) == 0) {
         /* NOTE: setting sub-window active should be done here,
          * after modal handlers have been done. */
-        if (event->type == MOUSEMOVE) {
+        if (event->type == MOUSEMOVE && win.runtime->cursor_hover_enabled) {
           /* State variables in screen, cursors.
            * Also used in `wm_draw.cc`, fails for modal handlers though. */
           ED_screen_set_active_region(C, &win, event->xy);
@@ -4439,7 +4586,10 @@ void wm_event_do_handlers(bContext *C)
           /* Update action-zones if needed,
            * done here because it needs to be independent from redraws. */
           if (area->flag & AREA_FLAG_ACTIONZONES_UPDATE) {
-            ED_area_azones_update(area, event->xy);
+            ED_area_azones_update(area,
+                                  event->xy,
+                                  win.runtime->cursor_hover_enabled &&
+                                      !win.runtime->cursor_is_touch);
           }
 
           if (wm_event_inside_rect(event, &area->totrct)) {
@@ -4504,6 +4654,10 @@ void wm_event_do_handlers(bContext *C)
         wm_region_tag_draw_on_gizmo_delay_refresh_for_tweak(&win);
       }
 
+      if ((event->flag & WM_EVENT_TOUCH) && event->type == LEFTMOUSE && event->val == KM_RELEASE) {
+        win.runtime->touch_gizmo_claimed = false;
+      }
+
       /* Update previous mouse position for following events to use. */
       copy_v2_v2_int(win.runtime->eventstate->prev_xy, event->xy);
 
@@ -4520,7 +4674,7 @@ void wm_event_do_handlers(bContext *C)
       tevent.val = KM_NOTHING;
       tevent.prev_xy[0] = tevent.xy[0];
       tevent.prev_xy[1] = tevent.xy[1];
-      tevent.flag = eWM_EventFlag(0);
+      tevent.flag = WM_EVENT_CURSOR_REFRESH;
       wm_event_add_intern(&win, &tevent);
       win.addmousemove = 0;
     }
@@ -5906,7 +6060,7 @@ static wmEvent *wm_event_add_mousemove(wmWindow *win, const wmEvent *event)
    * them for better performance. */
   if (event_last && event_last->type == MOUSEMOVE) {
     event_last->type = INBETWEEN_MOUSEMOVE;
-    event_last->flag = eWM_EventFlag(0);
+    event_last->flag &= WM_EVENT_CURSOR_REFRESH;
   }
 
   wmEvent *event_new = wm_event_add_intern(win, event);
@@ -5930,7 +6084,6 @@ static wmEvent *wm_event_add_mousemove_to_head(wmWindow *win)
   if (event_last) {
     tevent = *event_last;
 
-    tevent.flag = eWM_EventFlag(0);
     tevent.utf8_buf[0] = '\0';
 
     wm_event_custom_clear(&tevent);
@@ -5941,6 +6094,7 @@ static wmEvent *wm_event_add_mousemove_to_head(wmWindow *win)
 
   tevent.type = MOUSEMOVE;
   tevent.val = KM_NOTHING;
+  tevent.flag = WM_EVENT_CURSOR_REFRESH;
   copy_v2_v2_int(tevent.prev_xy, tevent.xy);
 
   wmEvent *event_new = wm_event_add_intern(win, &tevent);
@@ -5953,9 +6107,10 @@ static wmEvent *wm_event_add_mousemove_to_head(wmWindow *win)
 static wmEvent *wm_event_add_trackpad(wmWindow *win, const wmEvent *event, int deltax, int deltay)
 {
   /* Ignore in between trackpad events for performance, we only need high accuracy
-   * for painting with mouse moves, for navigation using the accumulated value is ok. */
+   * for painting with mouse moves, for navigation using the accumulated value is ok.
+   * Keep different touch gestures and scroll directions separate. */
   const wmEvent *event_last = win->runtime->event_queue.last();
-  if (event_last && event_last->type == event->type) {
+  if (event_last && event_last->type == event->type && event_last->flag == event->flag) {
     deltax += event_last->xy[0] - event_last->prev_xy[0];
     deltay += event_last->xy[1] - event_last->prev_xy[1];
 
@@ -6081,6 +6236,118 @@ static bool wm_event_is_ignorable_key_press(const wmWindow *win, const wmEvent &
   return wm_event_is_same_key_press(last_event, event);
 }
 
+static bke::WindowRuntime::TouchDragMode wm_touch_drag_start_mode(wmWindow *win,
+                                                                  const int32_t ghost_x,
+                                                                  const int32_t ghost_y,
+                                                                  const bool allow_widget_dragging)
+{
+  using TouchDragMode = bke::WindowRuntime::TouchDragMode;
+  int xy[2] = {ghost_x, ghost_y};
+  wm_cursor_position_from_ghost_screen_coords(win, &xy[0], &xy[1]);
+
+  const bScreen *screen = WM_window_get_active_screen(win);
+  if (screen == nullptr) {
+    return TouchDragMode::Default;
+  }
+  if (BKE_screen_find_region_xy(screen, RGN_TYPE_ANY, xy)) {
+    return TouchDragMode::Mouse;
+  }
+  ScrArea *area = BKE_screen_find_area_xy(screen, SPACE_TYPE_ANY, xy);
+  if (area == nullptr) {
+    return TouchDragMode::Default;
+  }
+
+  /* Screen edges belong to neighboring areas as well. Keep a touch-sized margin on the normal
+   * mouse-drag path so area resize/join action-zones are never interpreted as view navigation. */
+  const int edge_margin = int(4.0f * UI_SCALE_FAC);
+  if (xy[0] <= area->totrct.xmin + edge_margin || xy[0] >= area->totrct.xmax - edge_margin ||
+      xy[1] <= area->totrct.ymin + edge_margin || xy[1] >= area->totrct.ymax - edge_margin)
+  {
+    return TouchDragMode::Default;
+  }
+
+  ARegion *region = ED_area_find_region_xy_visual(area, RGN_TYPE_ANY, xy);
+  if (region && region->regiontype == RGN_TYPE_HUD) {
+    if (allow_widget_dragging) {
+      wmEvent event = {};
+      copy_v2_v2_int(event.xy, xy);
+      if (ui::but_find_mouse_over(region, &event)) {
+        return TouchDragMode::Mouse;
+      }
+    }
+    return TouchDragMode::Ignore;
+  }
+  if (region == nullptr || !ELEM(region->regiontype, RGN_TYPE_WINDOW, RGN_TYPE_PREVIEW)) {
+    return TouchDragMode::Default;
+  }
+  if (area->spacetype == SPACE_VIEW3D) {
+    return TouchDragMode::Navigate3D;
+  }
+  if (area->spacetype == SPACE_OUTLINER) {
+    return TouchDragMode::Navigate2D;
+  }
+
+  /* Keep item dragging and panel interaction on their existing event paths. */
+  if (region->runtime->type == nullptr ||
+      ELEM(area->spacetype, SPACE_FILE, SPACE_PROPERTIES, SPACE_USERPREF))
+  {
+    return TouchDragMode::Default;
+  }
+  if (!(region->runtime->type->keymapflag & ED_KEYMAP_VIEW2D) &&
+      !ELEM(area->spacetype, SPACE_IMAGE, SPACE_CLIP, SPACE_SEQ, SPACE_TEXT))
+  {
+    return TouchDragMode::Default;
+  }
+
+  if (allow_widget_dragging) {
+    wmEvent event = {};
+    copy_v2_v2_int(event.xy, xy);
+    if (ui::but_find_mouse_over(region, &event)) {
+      return TouchDragMode::Mouse;
+    }
+    if ((region->runtime->type->keymapflag & ED_KEYMAP_ANIMATION) &&
+        ED_time_scrub_event_in_region(region, &event))
+    {
+      return TouchDragMode::Mouse;
+    }
+    if (area->spacetype == SPACE_NODE) {
+      SpaceNode &snode = *reinterpret_cast<SpaceNode *>(area->spacedata.first());
+      float2 mouse;
+      ui::view2d_region_to_view(&region->v2d,
+                                xy[0] - region->winrct.xmin,
+                                xy[1] - region->winrct.ymin,
+                                &mouse.x,
+                                &mouse.y);
+      if (snode.edittree && ed::space_node::node_or_socket_isect_mouse(snode, *region, mouse)) {
+        return TouchDragMode::Mouse;
+      }
+    }
+  }
+  return TouchDragMode::Navigate2D;
+}
+
+void wm_event_modifier_wheel_set(wmWindow *win, const uint8_t modifiers, const uint64_t time)
+{
+  wmEvent *state = win->runtime->eventstate;
+  win->runtime->modifier_wheel.modifiers = modifiers;
+  const uint8_t effective = win->runtime->physical_modifiers | modifiers;
+  const wmEventType keys[] = {EVT_LEFTCTRLKEY, EVT_LEFTSHIFTKEY, EVT_LEFTALTKEY};
+  const wmEventModifierFlag flags[] = {KM_CTRL, KM_SHIFT, KM_ALT};
+  for (int i = 0; i < ARRAY_SIZE(keys); i++) {
+    if ((state->modifier ^ effective) & flags[i]) {
+      wmEvent event = *state;
+      event.type = keys[i];
+      event.val = (effective & flags[i]) ? KM_PRESS : KM_RELEASE;
+      event.flag = eWM_EventFlag(0);
+      event.utf8_buf[0] = '\0';
+      SET_FLAG_FROM_TEST(event.modifier, effective & flags[i], flags[i]);
+      wm_event_state_update_and_click_set_ex(
+          &event, time, state, &win->runtime->eventstate_prev_press_time_ms, true, false);
+      wm_event_add_intern(win, &event);
+    }
+  }
+}
+
 void wm_event_add_ghostevent(wmWindowManager *wm,
                              wmWindow *win,
                              const int type,
@@ -6153,9 +6420,33 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
 #endif
 
   switch (type) {
+    case GHOST_kEventCursorHoverClear:
+      /* Keep the cursor position used by popups opened by the preceding touch release. */
+      event.type = EVT_CURSOR_HOVER_CLEAR;
+      event.val = KM_NOTHING;
+      wm_event_add_intern(win, &event);
+      break;
     /* Mouse move, also to inactive window (X11 does this). */
     case GHOST_kEventCursorMove: {
       const GHOST_TEventCursorData *cd = static_cast<const GHOST_TEventCursorData *>(customdata);
+
+      if (cd->is_touch) {
+        event.flag |= WM_EVENT_TOUCH;
+      }
+      if (cd->is_touch_drag) {
+        using TouchDragMode = bke::WindowRuntime::TouchDragMode;
+        const TouchDragMode mode = win->runtime->touch_drag_active ?
+                                       win->runtime->touch_drag_mode :
+                                       wm_touch_drag_start_mode(
+                                           win, cd->touch_start_x, cd->touch_start_y, true);
+        if (mode == TouchDragMode::Ignore) {
+          break;
+        }
+        if (ELEM(mode, TouchDragMode::Navigate2D, TouchDragMode::Navigate3D)) {
+          event.flag |= WM_EVENT_TOUCH_NAVIGATION;
+        }
+        event.flag |= WM_EVENT_TOUCH_ONE_FINGER;
+      }
 
       copy_v2_v2_int(event.xy, &cd->x);
       wm_cursor_position_from_ghost_screen_coords(win, &event.xy[0], &event.xy[1]);
@@ -6181,6 +6472,7 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
         /* Use the modifier state of this window. */
         event_other.modifier = event.modifier;
         event_other.keymodifier = event.keymodifier;
+        event_other.flag |= event.flag & WM_EVENT_TOUCH;
 
         /* See comment for this operation on `event` for details. */
         event_other.prev_type = event_other.type;
@@ -6203,6 +6495,33 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
       const GHOST_TEventTrackpadData *pd = static_cast<const GHOST_TEventTrackpadData *>(
           customdata);
 
+      const bool is_one_finger_touch_pan = pd->subtype == GHOST_kTrackpadEventScroll &&
+                                           pd->numFingers == 1;
+      using TouchDragMode = bke::WindowRuntime::TouchDragMode;
+      /* Without a paired mouse drag, the remaining finger after a pinch keeps navigating. */
+      TouchDragMode mode = TouchDragMode::Default;
+      if (pd->numFingers != 0) {
+        event.flag |= WM_EVENT_TOUCH;
+        mode = is_one_finger_touch_pan && win->runtime->touch_drag_active ?
+                   win->runtime->touch_drag_mode :
+                   wm_touch_drag_start_mode(win, pd->x, pd->y, false);
+        if (ELEM(mode, TouchDragMode::Navigate2D, TouchDragMode::Navigate3D)) {
+          /* Touch navigation uses the finger count, prevent clash with active modifier wheel
+           * modifiers. */
+          event.modifier = wmEventModifierFlag(0);
+        }
+      }
+      if (mode == TouchDragMode::Ignore ||
+          (is_one_finger_touch_pan && mode == TouchDragMode::Mouse))
+      {
+        break;
+      }
+      if (ELEM(pd->subtype, GHOST_kTrackpadEventMagnify, GHOST_kTrackpadEventRotate) &&
+          pd->numFingers == 2 && !ELEM(mode, TouchDragMode::Navigate2D, TouchDragMode::Navigate3D))
+      {
+        break;
+      }
+
       int delta[2] = {pd->deltaX, -pd->deltaY};
       switch (pd->subtype) {
         case GHOST_kTrackpadEventMagnify:
@@ -6218,18 +6537,43 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
           break;
         case GHOST_kTrackpadEventScroll:
         default:
-          event.type = MOUSEPAN;
+          if (is_one_finger_touch_pan && mode == TouchDragMode::Navigate3D) {
+            /* View rotation consumes trackpad deltas in the opposite direction to a direct
+             * pointer drag. */
+            event.type = MOUSEROTATE;
+            delta[0] = -delta[0];
+            delta[1] = -delta[1];
+          }
+          else {
+            event.type = MOUSEPAN;
+          }
           break;
       }
 
       copy_v2_v2_int(event.xy, &pd->x);
       wm_cursor_position_from_ghost_screen_coords(win, &event.xy[0], &event.xy[1]);
-      copy_v2_v2_int(event_state->xy, event.xy);
+      /* A one-finger touch pan is deliberately positioned at its gesture origin so it keeps
+       * routing to the editor where scrolling began. Its paired cursor event still follows the
+       * finger, however, and owns the logical pointer position. Do not rewind that position to
+       * the origin after every pan event, as UI redraws would alternate hover between both
+       * coordinates (especially visible while horizontally scrolling thin headers). */
+      if (!is_one_finger_touch_pan) {
+        copy_v2_v2_int(event_state->xy, event.xy);
+      }
       event.val = KM_NOTHING;
 
       /* The direction is inverted from the device due to system preferences. */
       if (pd->isDirectionInverted) {
         event.flag |= WM_EVENT_SCROLL_INVERT;
+      }
+      if (pd->numFingers == 1) {
+        event.flag |= WM_EVENT_TOUCH_ONE_FINGER;
+        if (ELEM(mode, TouchDragMode::Navigate2D, TouchDragMode::Navigate3D)) {
+          event.flag |= WM_EVENT_TOUCH_NAVIGATION;
+        }
+      }
+      else if (pd->numFingers == 2) {
+        event.flag |= WM_EVENT_TOUCH_TWO_FINGERS;
       }
 
 #if !defined(WIN32) && !defined(__APPLE__)
@@ -6252,10 +6596,49 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
       wm_event_add_trackpad(win, &event, delta[0], delta[1]);
       break;
     }
+    case GHOST_kEventTwoFingerTap:
+      event.type = TOUCH_TWO_FINGER_TAP;
+      event.val = KM_PRESS;
+      wm_event_add_intern(win, &event);
+      break;
+    case GHOST_kEventThreeFingerTap:
+      event.type = TOUCH_THREE_FINGER_TAP;
+      event.val = KM_PRESS;
+      wm_event_add_intern(win, &event);
+      break;
+    case GHOST_kEventFourFingerTap:
+      event.type = TOUCH_FOUR_FINGER_TAP;
+      event.val = KM_PRESS;
+      wm_event_add_intern(win, &event);
+      break;
     /* Mouse button. */
     case GHOST_kEventButtonDown:
     case GHOST_kEventButtonUp: {
       const GHOST_TEventButtonData *bd = static_cast<const GHOST_TEventButtonData *>(customdata);
+
+      if (bd->is_touch) {
+        event.flag |= WM_EVENT_TOUCH;
+      }
+      if (bd->is_touch_drag) {
+        event.flag |= WM_EVENT_TOUCH_ONE_FINGER;
+        if (type == GHOST_kEventButtonDown) {
+          win->runtime->touch_drag_mode = wm_touch_drag_start_mode(
+              win, bd->touch_start_x, bd->touch_start_y, true);
+          win->runtime->touch_drag_active = true;
+        }
+
+        using TouchDragMode = bke::WindowRuntime::TouchDragMode;
+        const TouchDragMode mode = win->runtime->touch_drag_mode;
+        if (type == GHOST_kEventButtonUp) {
+          win->runtime->touch_drag_active = false;
+        }
+        if (mode == TouchDragMode::Ignore) {
+          break;
+        }
+        if (ELEM(mode, TouchDragMode::Navigate2D, TouchDragMode::Navigate3D)) {
+          event.flag |= WM_EVENT_TOUCH_NAVIGATION;
+        }
+      }
 
       /* Get value and type from GHOST.
        *
@@ -6403,6 +6786,9 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
        * To my knowledge users never reported a bug relating to these limitations so
        * it seems reasonable to keep the current logic. */
 
+      if (ISKEYMODIFIER(event.type)) {
+        event.modifier = wmEventModifierFlag(win->runtime->physical_modifiers);
+      }
       switch (event.type) {
         case EVT_LEFTSHIFTKEY:
         case EVT_RIGHTSHIFTKEY: {
@@ -6453,6 +6839,15 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
              * it shouldn't harm to clear it. */
             event_state->keymodifier = event.keymodifier = EVENT_NONE;
           }
+          break;
+        }
+      }
+
+      if (ISKEYMODIFIER(event.type)) {
+        win->runtime->physical_modifiers = event.modifier;
+        event.modifier |= wmEventModifierFlag(win->runtime->modifier_wheel.modifiers);
+        /* Releasing a hardware key must not release a key still held by the wheel. */
+        if (win->runtime->modifier_wheel.modifiers && event.modifier == event_state->modifier) {
           break;
         }
       }
@@ -7097,6 +7492,16 @@ bool WM_window_modal_keymap_status_draw(bContext *C, wmWindow *win, ui::Layout &
     }
 
     const int num_items_used = template_status_bar_modal_item(&row, op, keymap, items + i);
+    if (num_items_used == 1) {
+      const wmKeyMapItem *kmi = WM_modalkeymap_find_propvalue(keymap, items[i].value);
+      if (kmi && kmi->val != KM_RELEASE && kmi->keymodifier == EVENT_NONE &&
+          kmi->shift != KM_MOD_HELD && kmi->ctrl != KM_MOD_HELD && kmi->alt != KM_MOD_HELD &&
+          kmi->oskey != KM_MOD_HELD && kmi->hyper != KM_MOD_HELD)
+      {
+        win->runtime->modifier_wheel.show_confirm |= kmi->type == EVT_RETKEY;
+        win->runtime->modifier_wheel.show_cancel |= kmi->type == EVT_ESCKEY;
+      }
+    }
     if (num_items_used > 0) {
       /* Skip items in case consecutive items were merged. */
       i += num_items_used - 1;

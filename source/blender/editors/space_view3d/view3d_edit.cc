@@ -506,17 +506,14 @@ void VIEW3D_OT_zoom_camera_1_to_1(wmOperatorType *ot)
  * Sets the roll of the view to an angle.
  * \{ */
 
-static void view3d_set_view_angle(ARegion *region, View3D *v3d, const float input_angle)
+static void view3d_set_view_angle(ARegion *region, const float input_angle)
 {
   RegionView3D *rv3d = static_cast<RegionView3D *>(region->regiondata);
   const float angle = angle_wrap_rad(input_angle);
 
   if (rv3d->persp == RV3D_CAMOB) {
-    const bool is_camera_lock = ED_view3d_camera_lock_check(v3d, rv3d);
-    if (!is_camera_lock) {
-      rv3d->camroll = angle;
-      return;
-    }
+    rv3d->camroll = angle;
+    return;
   }
 
   const float horizon_plane[3] = {0.0f, 0.0f, 1.0f};
@@ -531,16 +528,14 @@ static void view3d_set_view_angle(ARegion *region, View3D *v3d, const float inpu
 
 static wmOperatorStatus view3d_set_roll_exec(bContext *C, wmOperator *op)
 {
-  View3D *v3d;
-  ARegion *region;
+  View3D *v3d = CTX_wm_view3d(C);
+  ARegion *region = CTX_wm_region(C);
 
   const float angle = RNA_float_get(op->ptr, "angle");
 
-  /* no nullptr check is needed, poll checks */
-  ED_view3d_context_user_region(C, &v3d, &region);
   ED_view3d_smooth_view_force_finish(C, v3d, region);
 
-  view3d_set_view_angle(region, v3d, angle);
+  view3d_set_view_angle(region, angle);
   ED_region_tag_redraw(region);
 
   return OPERATOR_FINISHED;
@@ -555,7 +550,7 @@ void VIEW3D_OT_view_roll_set(wmOperatorType *ot)
 
   /* API callbacks. */
   ot->exec = view3d_set_roll_exec;
-  ot->poll = ED_operator_rv3d_user_region_poll;
+  ot->poll = ED_operator_region_view3d_active;
 
   /* properties */
   ot->prop = RNA_def_float(ot->srna, "angle", 0, -FLT_MAX, FLT_MAX, "Roll", "", -FLT_MAX, FLT_MAX);
@@ -583,12 +578,11 @@ static const EnumPropertyItem prop_flip_directions[] = {
 
 static wmOperatorStatus view3d_flip_view_exec(bContext *C, wmOperator *op)
 {
-  View3D *v3d;
-  ARegion *region;
+  View3D *v3d = CTX_wm_view3d(C);
+  ARegion *region = CTX_wm_region(C);
 
   const FlipDirection direction = FlipDirection(RNA_enum_get(op->ptr, "direction"));
 
-  ED_view3d_context_user_region(C, &v3d, &region);
   ED_view3d_smooth_view_force_finish(C, v3d, region);
 
   RegionView3D *rv3d = static_cast<RegionView3D *>(region->regiondata);
@@ -611,7 +605,7 @@ void VIEW3D_OT_view_flip(wmOperatorType *ot)
   ot->idname = "VIEW3D_OT_view_flip";
 
   ot->exec = view3d_flip_view_exec;
-  ot->poll = view3d_camera_user_poll;
+  ot->poll = ED_operator_region_view3d_active;
 
   ot->prop = RNA_def_enum(ot->srna,
                           "direction",

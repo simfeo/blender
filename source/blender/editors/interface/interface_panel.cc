@@ -2239,6 +2239,18 @@ static int panel_drag_collapse_handler(bContext *C, const wmEvent *event, void *
   PanelDragCollapseHandle *dragcol_data = static_cast<PanelDragCollapseHandle *>(userdata);
   short retval = WM_UI_HANDLER_CONTINUE;
 
+  if (event->flag & WM_EVENT_TOUCH_ONE_FINGER) {
+    /* One-finger motion scrolls View2D regions. If a panel drag handler was activated before the
+     * gesture crossed its threshold, discard it instead of toggling every crossed panel. */
+    WM_event_remove_ui_handler(&win->runtime->modalhandlers,
+                               panel_drag_collapse_handler,
+                               panel_drag_collapse_handler_remove,
+                               dragcol_data,
+                               true);
+    panel_drag_collapse_handler_remove(C, dragcol_data);
+    return WM_UI_HANDLER_CONTINUE;
+  }
+
   switch (event->type) {
     case MOUSEMOVE:
       panel_drag_collapse(C, dragcol_data, event->xy);
@@ -2681,6 +2693,13 @@ int handler_panel_region(bContext *C,
                          ARegion *region,
                          const Button *active_but)
 {
+  /* A one-finger touch drag also emits a mouse press for dragging non-scrollable UI. Once the
+   * gesture has crossed the drag threshold, prefer View2D scrolling over expanding/collapsing
+   * panels beneath the finger. A tap uses an untagged mouse event and remains unchanged. */
+  if (event->type == LEFTMOUSE && (event->flag & WM_EVENT_TOUCH_ONE_FINGER)) {
+    return WM_UI_HANDLER_CONTINUE;
+  }
+
   if (event->val == KM_RELEASE) {
     return WM_UI_HANDLER_CONTINUE;
   }

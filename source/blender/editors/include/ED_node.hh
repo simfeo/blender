@@ -66,6 +66,9 @@ void snode_set_context(const bContext &C);
 
 VectorSet<bNode *> get_selected_nodes(bNodeTree &node_tree);
 
+/** Test if mouse intersects with node/socket bounds in view coordinates. */
+bool node_or_socket_isect_mouse(SpaceNode &snode, ARegion &region, const float2 &mouse);
+
 /**
  * \param is_new_node: If the node was just inserted, it is allowed to be inserted in a link, even
  * if it is linked already (after link-drag-search).

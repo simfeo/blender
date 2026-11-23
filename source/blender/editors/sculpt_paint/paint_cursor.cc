@@ -38,6 +38,7 @@
 #include "BKE_paint.hh"
 #include "BKE_paint_types.hh"
 #include "BKE_screen.hh"
+#include "BKE_wm_runtime.hh"
 
 #include "NOD_texture.h"
 
@@ -971,6 +972,10 @@ static bool paint_cursor_context_init(bContext *C,
     return false;
   }
   pcontext.mode = BKE_paintmode_get_active_from_context(C);
+  /* Touch gestures navigate the view instead of positioning the brush. */
+  if (pcontext.win->runtime->cursor_is_touch) {
+    return false;
+  }
   if (pcontext.mode == PaintMode::Sculpt) {
     pcontext.sd = CTX_data_tool_settings(C)->sculpt;
   }

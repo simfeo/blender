@@ -112,9 +112,9 @@ void wm_window_raise(wmWindow *win);
 void wm_window_lower(wmWindow *win);
 void wm_window_set_size(wmWindow *win, int width, int height);
 /**
- * \brief Push rendered buffer to the screen.
+ * Acquire a backbuffer and return whether it needs redrawing before presentation.
  */
-void wm_window_swap_buffer_acquire(wmWindow *win);
+bool wm_window_swap_buffer_acquire(wmWindow *win);
 void wm_window_swap_buffer_release(wmWindow *win);
 void wm_window_set_swap_interval(wmWindow *win, int interval);
 bool wm_window_get_swap_interval(wmWindow *win, int *r_interval);

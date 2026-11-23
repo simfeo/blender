@@ -934,9 +934,10 @@ struct UserDef_SpaceData {
  * #UserDef_SpaceData.)
  */
 struct UserDef_FileSpaceData {
-  eFileDisplayType display_type = FILE_VERTICALDISPLAY; /* FileSelectParams.display */
-  eFileSortType sort_type = FILE_SORT_ALPHA;            /* FileSelectParams.sort */
-  int thumbnail_size = 96;                              /* FileSelectParams.thumbnail_size */
+  /* Android demo: Override File Browser default file display mode to thumbnails. */
+  eFileDisplayType display_type = FILE_IMGDISPLAY; /* FileSelectParams.display */
+  eFileSortType sort_type = FILE_SORT_ALPHA;       /* FileSelectParams.sort */
+  int thumbnail_size = 96;                         /* FileSelectParams.thumbnail_size */
   eFileDetails details_flags = FILE_DETAILS_SIZE |
                                FILE_DETAILS_DATETIME; /* FileSelectParams.details_flags */
   char _pad[5] = {};
@@ -1031,9 +1032,10 @@ struct UserDef {
   /** UserDef has separate do-version handling, and can be read from other files. */
   int versionfile = 0, subversionfile = 0;
 
+  /* Android demo overrides: Always allow online access and auto-execute Python scripts. */
   eUserPref_Flag flag = USER_AUTOSAVE | USER_TOOLTIPS | USER_RELPATHS | USER_RELEASECONFIRM |
-                        USER_SCRIPT_AUTOEXEC_DISABLE | USER_NONEGFRAMES | USER_FILECOMPRESS |
-                        USER_HIDE_DOT_DATABLOCK;
+                        USER_NONEGFRAMES | USER_FILECOMPRESS | USER_HIDE_DOT_DATABLOCK |
+                        USER_INTERNET_ALLOW;
   /** #eDupli_ID_Flags. */
   unsigned int dupflag = USER_DUP_MESH | USER_DUP_CURVE | USER_DUP_SURF | USER_DUP_LATTICE |
                          USER_DUP_FONT | USER_DUP_MBALL | USER_DUP_LAMP | USER_DUP_ARM |
@@ -1081,12 +1083,14 @@ struct UserDef {
   /** Space around each area. Inter-editor gap width. */
   char border_width = USER_BORDER_WIDTH_DEFAULT;
 
+  /* Android demo change (USER_AREA_CORNER_HANDLE), to be replaced with a proper tablet setting
+   * override system. */
   eUserpref_MiniAxisType mini_axis_type = USER_MINI_AXIS_TYPE_GIZMO;
   eUserpref_UI_Flag uiflag = USER_FILTERFILEEXTS | USER_DRAWVIEWINFO | USER_PLAINMENUS |
                              USER_LOCK_CURSOR_ADJUST | USER_DEPTH_CURSOR | USER_AUTOPERSP |
                              USER_NODE_AUTO_OFFSET | USER_GLOBALUNDO | USER_SHOW_GIZMO_NAVIGATE |
                              USER_SHOW_VIEWPORTNAME | USER_SHOW_FPS | USER_CONTINUOUS_MOUSE |
-                             USER_SAVE_PROMPT;
+                             USER_SAVE_PROMPT | USER_AREA_CORNER_HANDLE;
   eUserpref_UI_Flag2 uiflag2 = USER_REGION_OVERLAP;
   eUserpref_GPU_Flag gpu_flag = USER_GPU_FLAG_OVERLAY_SMOOTH_WIRE |
                                 USER_GPU_FLAG_SUBDIVISION_EVALUATION;
@@ -1120,6 +1124,7 @@ struct UserDef {
    * In most cases this should not be used directly it is an offset used to calculate `pixelsize`
    * which should be used to define the line width.
    */
+  /* Android demo: Set default UI Line Width setting to 1 (Thick). */
   int ui_line_width = 0;
   /** Runtime, full DPI divided by `pixelsize`. */
   int dpi = 0;
