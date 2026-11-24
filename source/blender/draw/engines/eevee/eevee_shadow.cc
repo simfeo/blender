@@ -583,7 +583,8 @@ void ShadowModule::init()
       data_.use_debug_cost, bool32_t(inst_.debug_mode == eDebugMode::DEBUG_SHADOW_ATOMIC_COST));
 
   bool update_lights = false;
-  bool enable_shadow = (scene.eevee.flag & SCE_EEVEE_SHADOW_ENABLED) != 0;
+  bool enable_shadow = (scene.eevee.flag & SCE_EEVEE_SHADOW_ENABLED) != 0 &&
+                       !GPU_eevee_shadows_broken();
   bool use_jitter = enable_shadow &&
                     (inst_.is_image_render ||
                      (!inst_.is_navigating && !inst_.is_transforming && !inst_.is_playback &&

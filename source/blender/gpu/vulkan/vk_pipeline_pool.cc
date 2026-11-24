@@ -165,6 +165,9 @@ static VkPipeline vk_compute_pipeline_noop(VKDevice &device,
   if (name.startswith("subdiv_")) {
     GPU_subdivision_evaluation_set_broken();
   }
+  if (name.startswith("eevee_shadow_")) {
+    GPU_eevee_shadows_set_broken();
+  }
   return vk_pipeline;
 }
 

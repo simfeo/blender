@@ -61,6 +61,9 @@ bool GPU_depth_blitting_workaround();
 /** True once the driver has refused a subdivision evaluation compute pipeline. */
 bool GPU_subdivision_evaluation_broken();
 void GPU_subdivision_evaluation_set_broken();
+/** True once the driver has refused one of the EEVEE shadow compute pipelines. */
+bool GPU_eevee_shadows_broken();
+void GPU_eevee_shadows_set_broken();
 bool GPU_use_main_context_workaround();
 bool GPU_use_hq_normals_workaround();
 /** When true, the front-buffer cannot be read from (unsupported configuration). */

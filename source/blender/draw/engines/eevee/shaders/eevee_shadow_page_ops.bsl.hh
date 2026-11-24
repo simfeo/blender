@@ -121,16 +121,14 @@ struct PageAllocator {
     pages_cached_buf[page_index].y = new_tile_index;
   }
 
-  void find_first_valid(uint &src, uint dst)
+  /* Returns by value: PowerVR's compiler fails on the inout version inlined into nested loops. */
+  uint find_first_valid(uint src, uint dst)
   {
-    for (uint i = src; i < dst; i++) {
-      if (pages_cached_buf[i % max_page].x != uint(-1)) {
-        src = i;
-        return;
-      }
+    uint i = src;
+    while (i < dst && pages_cached_buf[i % max_page].x == uint(-1)) {
+      i++;
     }
-
-    src = dst;
+    return i;
   }
 
   void free_cached_page(uint page_index)
@@ -169,7 +167,7 @@ struct PageAllocator {
     uint src = pages_infos_buf.page_cached_start;
     uint end = pages_infos_buf.page_cached_end;
 
-    find_first_valid(src, end);
+    src = find_first_valid(src, end);
 
 #if 0 /* Debug */
     if (!check_heap_integrity(0, pages_infos_buf.page_free_count, uint(-1))) {
@@ -181,7 +179,7 @@ struct PageAllocator {
      * allocation. Avoid defragmenting to then free them. */
     for (; additional_pages > 0 && src < end; additional_pages--) {
       free_cached_page(src % max_page);
-      find_first_valid(src, end);
+      src = find_first_valid(src, end);
     }
 
     /* Defragment page in "old" range. */
@@ -200,7 +198,7 @@ struct PageAllocator {
         pages_cached_buf[dst % max_page] = pages_cached_buf[src % max_page];
         pages_cached_buf[src % max_page] = uint2(~0u);
 
-        find_first_valid(src, dst);
+        src = find_first_valid(src, dst);
       }
     }
 

@@ -68,6 +68,10 @@ struct GPUCapabilities {
    * some of them, and a substituted do-nothing pipeline leaves the evaluated surface
    * empty. Subdivision then has to be evaluated on the CPU instead. */
   bool subdivision_evaluation_broken = false;
+  /* Set when the driver refused an EEVEE shadow compute pipeline (PowerVR rejects the page
+   * defrag one). Those passes also reset indirect draw and dispatch buffers, so a do-nothing
+   * substitute lets the counts grow every frame until the GPU hangs. Shadows get disabled. */
+  bool eevee_shadows_broken = false;
   /** Reading the front-buffer is unreliable, see #GPU_frontbuffer_read_workaround. */
   bool frontbuffer_read_workaround = false;
 

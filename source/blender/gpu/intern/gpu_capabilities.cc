@@ -170,6 +170,16 @@ void GPU_subdivision_evaluation_set_broken()
   GCaps.subdivision_evaluation_broken = true;
 }
 
+bool GPU_eevee_shadows_broken()
+{
+  return GCaps.eevee_shadows_broken;
+}
+
+void GPU_eevee_shadows_set_broken()
+{
+  GCaps.eevee_shadows_broken = true;
+}
+
 bool GPU_use_main_context_workaround()
 {
   return GCaps.use_main_context_workaround;
