@@ -474,6 +474,7 @@ System properties, read once at startup.
 | `debug.blender.tu_debug` | Turnip `TU_DEBUG` flags. Defaults to `sysmem`, which disables tiling. |
 | `debug.blender.lowmem` | Force the low-memory device tier. |
 | `debug.blender.renderdiv` | Render-scale divisor; `2` renders at half resolution. |
+| `debug.blender.widget_shadow` | `0` skips the UI drop shadow, `1` draws it (default). The shader was rewritten to avoid the Adreno 740 constant-array indexing that used to fail at pipeline creation; keep `0` as an emergency switch for a driver that still refuses it. |
 
 ```bash
 adb shell setprop debug.blender.log 1

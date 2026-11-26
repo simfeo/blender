@@ -10,7 +10,12 @@
 #include "vk_backend.hh"
 #include "vk_device.hh"
 
+#include "CLG_log.h"
+
 namespace blender::gpu::render_graph {
+
+static CLG_LogRef LOG = {"gpu.vulkan"};
+
 VKCommandBufferWrapper::VKCommandBufferWrapper(VkCommandBuffer vk_command_buffer,
                                                const VolkDeviceTable &functions,
                                                const VKExtensions &extensions,
@@ -25,6 +30,9 @@ VKCommandBufferWrapper::VKCommandBufferWrapper(VkCommandBuffer vk_command_buffer
 
 void VKCommandBufferWrapper::begin_recording()
 {
+  /* A new command buffer starts without a pipeline bound. In particular, do not inherit the
+   * "invalid pipeline" state left by a failed draw in the previous recording. */
+  pipeline_valid_ = true;
   VkCommandBufferBeginInfo vk_command_buffer_begin_info = {
       VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
       nullptr,
@@ -41,6 +49,18 @@ void VKCommandBufferWrapper::end_recording()
 void VKCommandBufferWrapper::bind_pipeline(VkPipelineBindPoint pipeline_bind_point,
                                            VkPipeline pipeline)
 {
+  pipeline_valid_ = pipeline != VK_NULL_HANDLE;
+  if (!pipeline_valid_) {
+    /* The shader compiler already reported why; this only says the effect is being dropped
+     * instead of the process. */
+    static bool warned = false;
+    if (!warned) {
+      warned = true;
+      CLOG_WARN(&LOG,
+                "Binding a graphics/compute pipeline that failed to create, skipping its draws");
+    }
+    return;
+  }
   functions->vkCmdBindPipeline(vk_command_buffer_, pipeline_bind_point, pipeline);
 }
 
@@ -83,6 +103,9 @@ void VKCommandBufferWrapper::draw(uint32_t vertex_count,
                                   uint32_t first_vertex,
                                   uint32_t first_instance)
 {
+  if (!pipeline_valid_) {
+    return;
+  }
   functions->vkCmdDraw(
       vk_command_buffer_, vertex_count, instance_count, first_vertex, first_instance);
 }
@@ -93,6 +116,9 @@ void VKCommandBufferWrapper::draw_indexed(uint32_t index_count,
                                           int32_t vertex_offset,
                                           uint32_t first_instance)
 {
+  if (!pipeline_valid_) {
+    return;
+  }
   functions->vkCmdDrawIndexed(
       vk_command_buffer_, index_count, instance_count, first_index, vertex_offset, first_instance);
 }
@@ -102,6 +128,9 @@ void VKCommandBufferWrapper::draw_indirect(VkBuffer buffer,
                                            uint32_t draw_count,
                                            uint32_t stride)
 {
+  if (!pipeline_valid_) {
+    return;
+  }
   functions->vkCmdDrawIndirect(vk_command_buffer_, buffer, offset, draw_count, stride);
 }
 
@@ -110,6 +139,9 @@ void VKCommandBufferWrapper::draw_indexed_indirect(VkBuffer buffer,
                                                    uint32_t draw_count,
                                                    uint32_t stride)
 {
+  if (!pipeline_valid_) {
+    return;
+  }
   functions->vkCmdDrawIndexedIndirect(vk_command_buffer_, buffer, offset, draw_count, stride);
 }
 
@@ -117,11 +149,17 @@ void VKCommandBufferWrapper::dispatch(uint32_t group_count_x,
                                       uint32_t group_count_y,
                                       uint32_t group_count_z)
 {
+  if (!pipeline_valid_) {
+    return;
+  }
   functions->vkCmdDispatch(vk_command_buffer_, group_count_x, group_count_y, group_count_z);
 }
 
 void VKCommandBufferWrapper::dispatch_indirect(VkBuffer buffer, VkDeviceSize offset)
 {
+  if (!pipeline_valid_) {
+    return;
+  }
   functions->vkCmdDispatchIndirect(vk_command_buffer_, buffer, offset);
 }
 

@@ -7,7 +7,12 @@
  */
 
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
+
+#ifdef __ANDROID__
+#  include <sys/system_properties.h>
+#endif
 
 #include "DNA_color_types.h"
 #include "DNA_curve_types.h"
@@ -2591,10 +2596,32 @@ void draw_but_TRACKPREVIEW(ARegion *region,
 
 /* ****************************************************** */
 
+/**
+ * Is the drop shadow effect wanted?
+ *
+ * The shader no longer indexes a constant array with a vertex attribute, so the Adreno 740 link
+ * failure that used to take the process down is gone. `debug.blender.widget_shadow` remains as an
+ * override for A/B testing and as an emergency switch for a driver that still refuses the shader
+ * (0 = skip, 1 = draw).
+ */
+static bool widget_shadow_enabled()
+{
+  static const bool enabled = []() -> bool {
+#ifdef __ANDROID__
+    char value[PROP_VALUE_MAX] = {};
+    if (__system_property_get("debug.blender.widget_shadow", value) > 0 && value[0] != '\0') {
+      return std::atoi(value) != 0;
+    }
+#endif
+    return true;
+  }();
+  return enabled;
+}
+
 void draw_dropshadow(
     const rctf *rct, const float radius, const float width, const float aspect, const float alpha)
 {
-  if (width == 0.0f) {
+  if (width == 0.0f || !widget_shadow_enabled()) {
     return;
   }
 

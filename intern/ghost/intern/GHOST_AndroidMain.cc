@@ -12,15 +12,22 @@
 #include "GHOST_ISystem.hh"
 #include "GHOST_SystemAndroid.hh"
 
+#include <android/input.h>
 #include <android/log.h>
 #include <android_native_app_glue.h>
 #include <cerrno>
+#include <chrono>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <jni.h>
+#include <mutex>
 #include <pthread.h>
 #include <string>
 #include <sys/stat.h>
+#include <sys/system_properties.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 #include <vector>
 
@@ -114,6 +121,149 @@ static void ghost_android_redirect_stdio()
   }
 }
 
+/* -------------------------------------------------------------------- */
+/** \name Test/session log
+ *
+ * `debug.blender.testlog=1` opens a line-buffered session log next to the startup log and mirrors
+ * it to logcat under the `blender-test` tag. It records lifecycle, input, slow frames and the
+ * launch arguments, so a functional test can say what the app was doing when a failure happened
+ * even when the process dies before the next screenshot.
+ * \{
+ */
+
+static FILE *g_test_log = nullptr;
+static std::mutex g_test_log_mutex;
+
+static bool ghost_android_testlog_enabled()
+{
+  static const bool enabled = []() {
+    char value[PROP_VALUE_MAX] = {};
+    return __system_property_get("debug.blender.testlog", value) > 0 && atoi(value) != 0;
+  }();
+  return enabled;
+}
+
+static void ghost_android_testlog_v(const char *category, const char *fmt, va_list args)
+{
+  if (g_test_log == nullptr) {
+    return;
+  }
+  char message[1024];
+  vsnprintf(message, sizeof(message), fmt, args);
+
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  struct tm local_tm;
+  localtime_r(&ts.tv_sec, &local_tm);
+  char stamp[32];
+  strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &local_tm);
+
+  const long tid = long(syscall(SYS_gettid));
+  std::lock_guard<std::mutex> lock(g_test_log_mutex);
+  fprintf(g_test_log,
+          "%s.%03ld tid=%ld [%s] %s\n",
+          stamp,
+          long(ts.tv_nsec / 1000000),
+          tid,
+          category,
+          message);
+  /* Flushed per line: the interesting failures are the ones that end the process. */
+  fflush(g_test_log);
+  __android_log_print(ANDROID_LOG_INFO, "blender-test", "[%s] %s", category, message);
+}
+
+static void ghost_android_testlog(const char *category, const char *fmt, ...)
+{
+  if (g_test_log == nullptr) {
+    return;
+  }
+  va_list args;
+  va_start(args, fmt);
+  ghost_android_testlog_v(category, fmt, args);
+  va_end(args);
+}
+
+static void ghost_android_testlog_init(android_app *app)
+{
+  if (!ghost_android_testlog_enabled()) {
+    return;
+  }
+  const char *dirs[] = {
+      "/sdcard/Download/Blender",
+      app != nullptr && app->activity != nullptr ? app->activity->externalDataPath : nullptr,
+  };
+  for (const char *dir : dirs) {
+    if (dir == nullptr || dir[0] == '\0') {
+      continue;
+    }
+    mkdir(dir, 0770);
+    const std::string path = std::string(dir) + "/blender-test.log";
+    g_test_log = fopen(path.c_str(), "a");
+    if (g_test_log == nullptr) {
+      continue;
+    }
+    char model[PROP_VALUE_MAX] = {};
+    char release[PROP_VALUE_MAX] = {};
+    char sdk[PROP_VALUE_MAX] = {};
+    char abi[PROP_VALUE_MAX] = {};
+    __system_property_get("ro.product.model", model);
+    __system_property_get("ro.build.version.release", release);
+    __system_property_get("ro.build.version.sdk", sdk);
+    __system_property_get("ro.product.cpu.abilist", abi);
+    ghost_android_testlog("session",
+                          "start model=%s android=%s sdk=%s abi=%s page=%ld path=%s",
+                          model,
+                          release,
+                          sdk,
+                          abi,
+                          long(sysconf(_SC_PAGESIZE)),
+                          path.c_str());
+    return;
+  }
+}
+
+static const char *ghost_android_cmd_name(int32_t cmd)
+{
+  switch (cmd) {
+    case APP_CMD_INIT_WINDOW:
+      return "INIT_WINDOW";
+    case APP_CMD_TERM_WINDOW:
+      return "TERM_WINDOW";
+    case APP_CMD_WINDOW_RESIZED:
+      return "WINDOW_RESIZED";
+    case APP_CMD_WINDOW_REDRAW_NEEDED:
+      return "WINDOW_REDRAW_NEEDED";
+    case APP_CMD_CONTENT_RECT_CHANGED:
+      return "CONTENT_RECT_CHANGED";
+    case APP_CMD_CONFIG_CHANGED:
+      return "CONFIG_CHANGED";
+    case APP_CMD_GAINED_FOCUS:
+      return "GAINED_FOCUS";
+    case APP_CMD_LOST_FOCUS:
+      return "LOST_FOCUS";
+    case APP_CMD_PAUSE:
+      return "PAUSE";
+    case APP_CMD_RESUME:
+      return "RESUME";
+    case APP_CMD_START:
+      return "START";
+    case APP_CMD_STOP:
+      return "STOP";
+    case APP_CMD_LOW_MEMORY:
+      return "LOW_MEMORY";
+    case APP_CMD_INPUT_CHANGED:
+      return "INPUT_CHANGED";
+    case APP_CMD_SAVE_STATE:
+      return "SAVE_STATE";
+    case APP_CMD_DESTROY:
+      return "DESTROY";
+    default:
+      return "UNKNOWN";
+  }
+}
+
+/** \} */
+
 /* An app process inherits no TMPDIR from zygote, so BLI_temp_directory_path_get
  * falls back to "/tmp", which does not exist on Android. Everything written to
  * the temp directory then fails silently, including auto-save and the quit.blend
@@ -139,10 +289,18 @@ struct bContext;
 /* Implemented in creator: runs Blender init + WM_main_entry, hands C back. */
 int GHOST_android_launch(int argc, const char **argv);
 void WM_main_loop_body(bContext *C);
+bool WM_autosave_write_background(bContext *C);
+void RE_FreeGPUTextureCaches();
 }  // namespace blender
 
 static blender::bContext *g_context = nullptr;
 static bool g_blender_launched = false;
+/* Set while the activity is paused. The loop stops calling into Blender and blocks on the event
+ * queue, so a backgrounded app costs nothing. */
+static bool g_paused = false;
+/* Switching between two apps fires PAUSE/RESUME repeatedly; the auto-save is not free on a large
+ * scene, so it runs at most once per this interval. */
+static std::chrono::steady_clock::time_point g_last_background_save;
 
 namespace blender {
 /* Called by the creator once init finished, to hand the context to the loop. */
@@ -158,33 +316,97 @@ static GHOST_SystemAndroid *android_system()
 }
 
 /* Read optional launch arguments from <internalDataPath>/blender_args.txt.
- * Returns an empty vector when the file is absent, which keeps the built-in defaults. */
+ * Returns an empty vector when the file is absent, which keeps the built-in defaults.
+ *
+ * `debug.blender.testargs=1` also accepts /sdcard/Download/blender_args.txt. The functional test
+ * harness needs to drive `--python` without run-as, which requires a debuggable APK; keeping the
+ * external path behind a property means a normal install still only reads app-private files. */
 static std::vector<std::string> ghost_android_read_launch_args(android_app *app)
 {
   std::vector<std::string> args;
   if (app == nullptr || app->activity == nullptr || app->activity->internalDataPath == nullptr) {
     return args;
   }
-  const std::string path = std::string(app->activity->internalDataPath) + "/blender_args.txt";
-  FILE *file = fopen(path.c_str(), "r");
-  if (file == nullptr) {
+
+  std::vector<std::string> paths;
+  char testargs[PROP_VALUE_MAX] = {};
+  if (__system_property_get("debug.blender.testargs", testargs) > 0 && atoi(testargs) != 0) {
+    paths.emplace_back("/sdcard/Download/blender_args.txt");
+  }
+  paths.emplace_back(std::string(app->activity->internalDataPath) + "/blender_args.txt");
+
+  for (const std::string &path : paths) {
+    FILE *file = fopen(path.c_str(), "r");
+    if (file == nullptr) {
+      continue;
+    }
+    char token[512];
+    while (fscanf(file, "%511s", token) == 1) {
+      args.push_back(token);
+    }
+    fclose(file);
+    __android_log_print(ANDROID_LOG_INFO,
+                        "blender",
+                        "[BlenderAndroid] %zu launch argument(s) from %s",
+                        args.size(),
+                        path.c_str());
+    ghost_android_testlog("launch", "args_file=%s count=%zu", path.c_str(), args.size());
     return args;
   }
-  char token[512];
-  while (fscanf(file, "%511s", token) == 1) {
-    args.push_back(token);
-  }
-  fclose(file);
-  __android_log_print(ANDROID_LOG_INFO,
-                      "blender",
-                      "[BlenderAndroid] %zu launch argument(s) from %s",
-                      args.size(),
-                      path.c_str());
   return args;
+}
+
+/* Android can reclaim a backgrounded app at any moment: no dialog, no chance to run an exit
+ * handler, and on low-memory devices that is the normal way an app ends. Blender's own recovery
+ * path is the auto-save file, so write one on the way out. */
+static void ghost_android_save_before_background()
+{
+  if (g_context == nullptr) {
+    return;
+  }
+  const auto now = std::chrono::steady_clock::now();
+  if (now - g_last_background_save < std::chrono::seconds(10)) {
+    return;
+  }
+  g_last_background_save = now;
+  if (blender::WM_autosave_write_background(g_context)) {
+    __android_log_print(ANDROID_LOG_INFO, "blender", "Auto-save written before backgrounding");
+  }
+  else {
+    __android_log_print(ANDROID_LOG_WARN, "blender", "Auto-save before backgrounding failed");
+  }
+}
+
+/* BlenderActivity unpacks the runtime on a background thread, because doing it on the UI thread
+ * made first launch show Android's "not responding" dialog. Nothing on this thread can run before
+ * those files exist, and this is not the UI thread, so waiting here costs nothing. */
+static void ghost_android_wait_for_runtime(android_app *app)
+{
+  const char *path = getenv("BLENDER_ANDROID_READY_FILE");
+  if (path == nullptr || path[0] == '\0') {
+    /* An APK built before the runtime moved off the UI thread. Nothing to wait for. */
+    return;
+  }
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(180);
+  struct stat marker;
+  while (stat(path, &marker) != 0) {
+    if (app->destroyRequested) {
+      return;
+    }
+    if (std::chrono::steady_clock::now() >= deadline) {
+      /* Better a parse error from Python than a splash screen that never ends. */
+      __android_log_print(
+          ANDROID_LOG_WARN, "blender", "Runtime still missing after 180s, starting anyway: %s", path);
+      return;
+    }
+    usleep(50 * 1000);
+  }
+  __android_log_print(ANDROID_LOG_INFO, "blender", "[BlenderAndroid] runtime ready");
 }
 
 static void on_app_cmd(android_app *app, int32_t cmd)
 {
+  ghost_android_testlog("lifecycle", "%s (%d)", ghost_android_cmd_name(cmd), cmd);
   switch (cmd) {
     case APP_CMD_GAINED_FOCUS:
       if (GHOST_ISystem::getSystem()) {
@@ -196,6 +418,26 @@ static void on_app_cmd(android_app *app, int32_t cmd)
       if (GHOST_ISystem::getSystem()) {
         android_system()->handleWindowFocus(false);
       }
+      break;
+
+    /* Paused: save, then stop driving Blender. The surface is gone by now (TERM_WINDOW came
+     * first), so there is nothing to draw and the loop blocks on the queue instead of spinning. */
+    case APP_CMD_PAUSE:
+      g_paused = true;
+      ghost_android_save_before_background();
+      break;
+
+    case APP_CMD_RESUME:
+    case APP_CMD_START:
+      g_paused = false;
+      break;
+
+    /* The system is short on memory. Give back what can be rebuilt -- the render result and
+     * compositor GPU caches -- rather than wait to be killed. Unused, not everything: the caches
+     * of a running job must stay. */
+    case APP_CMD_LOW_MEMORY:
+      blender::RE_FreeGPUTextureCaches();
+      __android_log_print(ANDROID_LOG_INFO, "blender", "Low memory: released cached GPU resources");
       break;
 
     case APP_CMD_INIT_WINDOW:
@@ -241,7 +483,9 @@ static void on_app_cmd(android_app *app, int32_t cmd)
         }
         for (const char *arg : argv) {
           __android_log_print(ANDROID_LOG_INFO, "blender", "[BlenderAndroid] argv: %s", arg);
+          ghost_android_testlog("launch", "argv=%s", arg);
         }
+        ghost_android_wait_for_runtime(app);
         blender::GHOST_android_launch(int(argv.size()), argv.data());
         /* A later tap arrives through onNewIntent and must not find a stale path. */
         unsetenv("BLENDER_ANDROID_OPEN_FILE");
@@ -274,6 +518,25 @@ static void on_app_cmd(android_app *app, int32_t cmd)
 
 static int32_t on_input_event(android_app * /*app*/, AInputEvent *event)
 {
+  if (g_test_log != nullptr) {
+    const int32_t type = AInputEvent_getType(event);
+    if (type == AINPUT_EVENT_TYPE_KEY) {
+      ghost_android_testlog("input",
+                            "key code=%d action=%d",
+                            int(AKeyEvent_getKeyCode(event)),
+                            int(AKeyEvent_getAction(event)));
+    }
+    else if (type == AINPUT_EVENT_TYPE_MOTION) {
+      const int32_t action = AMotionEvent_getAction(event);
+      /* Moves are continuous; down/up/cancel/pointer changes mark the interesting transitions. */
+      if ((action & AMOTION_EVENT_ACTION_MASK) != AMOTION_EVENT_ACTION_MOVE) {
+        ghost_android_testlog("input",
+                              "motion action=%d pointers=%d",
+                              int(action),
+                              int(AMotionEvent_getPointerCount(event)));
+      }
+    }
+  }
   if (!GHOST_ISystem::getSystem()) {
     return 0;
   }
@@ -340,6 +603,7 @@ extern "C" void android_main(struct android_app *app)
   ghost_android_redirect_stdio();
   ghost_android_tempdir_set(app);
   GHOST_SystemAndroid::setAndroidApp(app);
+  ghost_android_testlog_init(app);
   app->onAppCmd = on_app_cmd;
   app->onInputEvent = on_input_event;
 
@@ -351,7 +615,7 @@ extern "C" void android_main(struct android_app *app)
      * runs the whole init inside `source->process` and sets `g_context`
      * mid-drain, so the timeout must be re-evaluated after each event rather
      * than captured once — otherwise the loop blocks forever and never renders. */
-    int timeout = g_context ? 0 : -1;
+    int timeout = (g_context != nullptr && !g_paused) ? 0 : -1;
     while (ALooper_pollOnce(timeout, nullptr, &events, (void **)&source) >= 0) {
       if (source) {
         source->process(app, source);
@@ -359,13 +623,28 @@ extern "C" void android_main(struct android_app *app)
       if (app->destroyRequested) {
         return;
       }
-      if (g_context) {
-        timeout = 0;
-      }
+      timeout = (g_context != nullptr && !g_paused) ? 0 : -1;
     }
 
-    if (g_context) {
+    const bool running = (g_context != nullptr && !g_paused);
+    static bool was_running = false;
+    if (running != was_running) {
+      was_running = running;
+      ghost_android_testlog("loop",
+                            "running=%d context=%d paused=%d",
+                            int(running),
+                            int(g_context != nullptr),
+                            int(g_paused));
+    }
+    if (running) {
+      const auto loop_start = std::chrono::steady_clock::now();
       blender::WM_main_loop_body(g_context);
+      const auto loop_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::steady_clock::now() - loop_start)
+                               .count();
+      if (loop_ms > 200) {
+        ghost_android_testlog("frame", "slow frame %lld ms", (long long)loop_ms);
+      }
     }
   }
 }

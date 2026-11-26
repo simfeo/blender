@@ -58,7 +58,16 @@ void vk_pipeline_data_build_commands(VKCommandBufferInterface &command_buffer,
                                      VkPipelineBindPoint vk_pipeline_bind_point,
                                      VkShaderStageFlags vk_shader_stage_flags)
 {
-  if (assign_if_different(r_bound_pipeline.vk_pipeline, pipeline_data.vk_pipeline)) {
+  if (pipeline_data.vk_pipeline == VK_NULL_HANDLE) {
+    /* The pipeline map has already reported why creation failed. Notify the command buffer
+     * explicitly: assign_if_different below would not call bind_pipeline when both the previously
+     * bound and the new handle are null, leaving the wrapper's "pipeline is valid" state set from
+     * an earlier draw. The wrapper intercepts the null handle and never forwards it to the
+     * driver; its draws and dispatches are skipped until a valid pipeline is bound again. */
+    r_bound_pipeline.vk_pipeline = VK_NULL_HANDLE;
+    command_buffer.bind_pipeline(vk_pipeline_bind_point, VK_NULL_HANDLE);
+  }
+  else if (assign_if_different(r_bound_pipeline.vk_pipeline, pipeline_data.vk_pipeline)) {
     command_buffer.bind_pipeline(vk_pipeline_bind_point, r_bound_pipeline.vk_pipeline);
   }
 
